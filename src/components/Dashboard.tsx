@@ -1,133 +1,135 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { 
-  LayoutDashboard, 
-  Settings, 
-  AlertTriangle, 
-  BarChart3, 
-  FileText, 
-  Activity,
-  Heart,
-  Bell,
-  Wifi,
-  Zap,
-  Thermometer,
-  Pause,
-  Sun,
-  Moon
+  LayoutDashboard, Settings, AlertTriangle, BarChart3, 
+  FileText, Activity, Heart, Bell, Wifi, Zap, Thermometer, 
+  Pause, Sun, Moon, MessageSquare, X
 } from 'lucide-react';
 import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
+  ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
+import Chat from './Chat';
 import './Dashboard.css';
 
-// ═══ Types ═══
 interface SensorData {
-  node:      string;
-  courant:   number;
-  vibX:      number;
-  vibY:      number;
-  vibZ:      number;
-  rpm:       number;
-  ts?:       number;
+  node: string; courant: number;
+  vibX: number; vibY: number; vibZ: number; rpm: number;
 }
-
 interface ChartPoint {
-  time:   string;
-  vibX:   number;
-  vibY:   number;
-  vibZ:   number;
-  courant: number;
-  rpm:    number;
+  time: string; vibX: number; vibY: number; vibZ: number;
+  courant: number; rpm: number;
+}
+interface Alert {
+  id: number;
+  type: 'critical' | 'warning';
+  message: string;
+  node: string;
+  time: string;
 }
 
 const MAX_POINTS = 20;
-const socket = io('http://localhost:5000');
+const socket = io('http://localhost:5000', { transports: ['websocket'] });
+
+const generateSimData = (): SensorData => ({
+  node: 'ESP32-NODE-01',
+  courant: parseFloat((10 + Math.sin(Date.now() / 3000) * 5 + Math.random()).toFixed(2)),
+  vibX:    parseFloat((1.5 + Math.sin(Date.now() / 2000) * 0.8 + Math.random() * 0.3).toFixed(2)),
+  vibY:    parseFloat((1.2 + Math.cos(Date.now() / 2500) * 0.6 + Math.random() * 0.2).toFixed(2)),
+  vibZ:    parseFloat((0.8 + Math.sin(Date.now() / 1800) * 0.4 + Math.random() * 0.2).toFixed(2)),
+  rpm:     parseFloat((1200 + Math.sin(Date.now() / 4000) * 200).toFixed(0)),
+});
 
 const Dashboard: React.FC = () => {
   const [darkMode, setDarkMode]       = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [connected, setConnected]     = useState(false);
   const [paused, setPaused]           = useState(false);
+  const [showChat, setShowChat]       = useState(false);
+  const [latest, setLatest]           = useState<SensorData>(generateSimData());
+  const [chartData, setChartData]     = useState<ChartPoint[]>([]);
+  const [alerts, setAlerts]           = useState<Alert[]>([]);
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
+  const [showAlerts, setShowAlerts]   = useState(false);
 
-  // Dernière donnée reçue
-  const [latest, setLatest] = useState<SensorData>({
-    node: 'ESP32-NODE-01', courant: 0, vibX: 0, vibY: 0, vibZ: 0, rpm: 0
-  });
+  // ═══ addPoint déclaré EN PREMIER ═══
+  const addPoint = useCallback((data: SensorData) => {
+    const timeLabel = new Date().toLocaleTimeString('fr-FR');
+    setChartData(prev => {
+      const newPoint: ChartPoint = {
+        time: timeLabel,
+        vibX: data.vibX, vibY: data.vibY, vibZ: data.vibZ,
+        courant: data.courant, rpm: data.rpm,
+      };
+      const updated = [...prev, newPoint];
+      return updated.length > MAX_POINTS ? updated.slice(-MAX_POINTS) : updated;
+    });
+  }, []);
 
-  // Historique pour les charts
-  const [chartData, setChartData] = useState<ChartPoint[]>([]);
-
-  // ═══ Horloge ═══
+  // Horloge
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // ═══ Socket.IO ═══
+  // Socket.IO
   useEffect(() => {
-    socket.on('connect', () => {
-      console.log('✅ Socket connecté');
-      setConnected(true);
-    });
-
-    socket.on('disconnect', () => {
-      console.log('❌ Socket déconnecté');
-      setConnected(false);
-    });
+    socket.on('connect',    () => setConnected(true));
+    socket.on('disconnect', () => setConnected(false));
 
     socket.on('sensor-data', (data: SensorData) => {
       if (paused) return;
-
       setLatest(data);
+      addPoint(data);
+    });
 
-      const now = new Date();
-      const timeLabel = now.toLocaleTimeString('fr-FR');
-
-      setChartData(prev => {
-        const newPoint: ChartPoint = {
-          time:    timeLabel,
-          vibX:    parseFloat(data.vibX.toFixed(2)),
-          vibY:    parseFloat(data.vibY.toFixed(2)),
-          vibZ:    parseFloat(data.vibZ.toFixed(2)),
-          courant: parseFloat(data.courant.toFixed(2)),
-          rpm:     data.rpm,
-        };
-        const updated = [...prev, newPoint];
-        return updated.length > MAX_POINTS ? updated.slice(-MAX_POINTS) : updated;
-      });
+    socket.on('alert', (alert: Omit<Alert, 'id' | 'time'>) => {
+      const newAlert: Alert = {
+        ...alert,
+        id: Date.now(),
+        time: new Date().toLocaleTimeString('fr-FR'),
+      };
+      setAlerts(prev => [newAlert, ...prev].slice(0, 20));
+      setUnreadAlerts(prev => prev + 1);
     });
 
     return () => {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('sensor-data');
+      socket.off('alert');
     };
-  }, [paused]);
+  }, [paused, addPoint]);
 
-  // Santé simulée basée sur les vibrations
+  // Simulation quand déconnecté
+  useEffect(() => {
+    if (connected) return;
+    const interval = setInterval(() => {
+      if (paused) return;
+      const sim = generateSimData();
+      setLatest(sim);
+      addPoint(sim);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [connected, paused, addPoint]);
+
   const sante = useMemo(() => {
     const vibTotal = latest.vibX + latest.vibY + latest.vibZ;
-    const score = Math.max(0, Math.min(100, 100 - vibTotal * 5));
-    return parseFloat(score.toFixed(1));
+    return parseFloat(Math.max(0, Math.min(100, 100 - vibTotal * 5)).toFixed(1));
   }, [latest]);
 
   const healthData = useMemo(() => [
-    { name: 'Rectifieuse', value: sante,      color: '#3b82f6' },
-    { name: 'Compresseur', value: sante - 10, color: '#06b6d4' },
+    { name: 'Rectifieuse', value: sante,                   color: '#3b82f6' },
+    { name: 'Compresseur', value: Math.max(0, sante - 10), color: '#06b6d4' },
   ], [sante]);
 
-  const toggleTheme  = useCallback(() => setDarkMode(prev => !prev), []);
-  const togglePaused = useCallback(() => setPaused(prev => !prev), []);
+  const toggleTheme  = useCallback(() => setDarkMode(p => !p), []);
+  const togglePaused = useCallback(() => setPaused(p => !p), []);
+
+  const handleOpenAlerts = () => {
+    setShowAlerts(p => !p);
+    setUnreadAlerts(0);
+  };
 
   return (
     <div className={`dashboard ${darkMode ? 'dark' : 'light'}`}>
@@ -154,28 +156,45 @@ const Dashboard: React.FC = () => {
         </nav>
       </aside>
 
-      {/* Main Content */}
+      {/* Main */}
       <main className="main-content">
-        {/* Header */}
         <header className="header">
           <div className="header-left">
             <div className="node-tabs">
               <span className="node-tab active">
-                <span className={`status-dot ${connected ? 'green' : 'red'}`}></span>
+                <span className={`status-dot ${connected ? 'green' : 'blue'}`}></span>
                 {latest.node}
               </span>
             </div>
             <div className="refresh-badge">
               <span className="refresh-icon">⟳</span>
-              <span>{connected ? 'Live MQTT' : 'Déconnecté'}</span>
+              <span>{connected ? '🟢 Live MQTT' : '🔵 Simulation'}</span>
             </div>
           </div>
           <div className="header-right">
             <div className="theme-toggle" onClick={toggleTheme}>
               {darkMode ? <Sun size={18} /> : <Moon size={18} />}
             </div>
-            <span className="mae-badge">RPM : {latest.rpm.toFixed(0)}</span>
-            <span className="latency-badge">I : {latest.courant.toFixed(2)} A</span>
+
+            {/* Bouton Alertes */}
+            <div className="alert-btn-wrapper" style={{ position: 'relative' }}>
+              <button className="pause-btn" style={{ background: 'linear-gradient(135deg, #f59e0b, #ef4444)' }} onClick={handleOpenAlerts}>
+                <Bell size={14} />
+                Alertes
+              </button>
+              {unreadAlerts > 0 && (
+                <span className="alert-badge">{unreadAlerts}</span>
+              )}
+            </div>
+
+            {/* Bouton Chat */}
+            <button className="pause-btn" style={{ background: 'linear-gradient(135deg, #0066ff, #00d4ff)' }} onClick={() => setShowChat(p => !p)}>
+              <MessageSquare size={14} />
+              Chat
+            </button>
+
+            <span className="mae-badge">RPM : {latest.rpm}</span>
+            <span className="latency-badge">I : {latest.courant} A</span>
             <button className="pause-btn" onClick={togglePaused}>
               <Pause size={14} />
               {paused ? 'Reprendre' : 'Pause'}
@@ -183,7 +202,6 @@ const Dashboard: React.FC = () => {
           </div>
         </header>
 
-        {/* Dashboard Content */}
         <div className="dashboard-content">
           <div className="page-header">
             <div>
@@ -192,15 +210,33 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="datetime">
               <div className="date">
-                {currentTime.toLocaleDateString('fr-FR', { 
-                  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' 
-                })}
+                {currentTime.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
               </div>
               <div className="time">{currentTime.toLocaleTimeString('fr-FR')}</div>
             </div>
           </div>
 
-          {/* Stats Cards */}
+          {/* Alertes Panel */}
+          {showAlerts && (
+            <div className="alerts-panel">
+              <div className="alerts-panel-header">
+                <span>🔔 Alertes ({alerts.length})</span>
+                <button onClick={() => setShowAlerts(false)}><X size={16} /></button>
+              </div>
+              {alerts.length === 0 ? (
+                <div className="alerts-empty">Aucune alerte pour le moment ✅</div>
+              ) : (
+                alerts.map(alert => (
+                  <div key={alert.id} className={`alert-item ${alert.type}`}>
+                    <span className="alert-msg">{alert.message}</span>
+                    <span className="alert-meta">{alert.node} • {alert.time}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Stats */}
           <div className="stats-grid">
             <div className="stat-card">
               <div className="stat-icon purple"><Settings size={20} /></div>
@@ -210,7 +246,6 @@ const Dashboard: React.FC = () => {
                 <span className="stat-trend up">▲ 100% disponibilité</span>
               </div>
             </div>
-
             <div className="stat-card">
               <div className="stat-icon pink"><Heart size={20} /></div>
               <div className="stat-content">
@@ -219,25 +254,23 @@ const Dashboard: React.FC = () => {
                 <span className="stat-trend stable">▲ Stable</span>
               </div>
             </div>
-
             <div className="stat-card">
               <div className="stat-icon orange"><Bell size={20} /></div>
               <div className="stat-content">
                 <span className="stat-label">Courant</span>
-                <div className="stat-value">{latest.courant.toFixed(1)}<span className="stat-unit">A</span></div>
-                <span className="stat-trend up">RPM : {latest.rpm.toFixed(0)}</span>
+                <div className="stat-value">{latest.courant}<span className="stat-unit">A</span></div>
+                <span className="stat-trend up">RPM : {latest.rpm}</span>
               </div>
             </div>
-
             <div className="stat-card">
               <div className="stat-icon green"><Wifi size={20} /></div>
               <div className="stat-content">
                 <span className="stat-label">Nœud ESP32</span>
                 <div className="stat-value">
-                  {connected ? '🟢' : '🔴'}
-                  <span className="stat-suffix">{connected ? 'Live' : 'Off'}</span>
+                  {connected ? '🟢' : '🔵'}
+                  <span className="stat-suffix">{connected ? 'Live' : 'Sim'}</span>
                 </div>
-                <span className="stat-badge">MQTT • HiveMQ</span>
+                <span className="stat-badge">{connected ? 'MQTT • HiveMQ' : 'Mode Simulation'}</span>
               </div>
             </div>
           </div>
@@ -250,15 +283,9 @@ const Dashboard: React.FC = () => {
                 <h3>Vibrations Temps Réel — ADXL345 (mm/s)</h3>
               </div>
               <div className="chart-legend">
-                <span className="legend-item">
-                  <span className="legend-color rectifieuse"></span>VibX
-                </span>
-                <span className="legend-item">
-                  <span className="legend-color compresseur"></span>VibY
-                </span>
-                <span className="legend-item">
-                  <span className="legend-color sct013"></span>VibZ
-                </span>
+                <span className="legend-item"><span className="legend-color rectifieuse"></span>VibX</span>
+                <span className="legend-item"><span className="legend-color compresseur"></span>VibY</span>
+                <span className="legend-item"><span className="legend-color sct013"></span>VibZ</span>
               </div>
               <ResponsiveContainer width="100%" height={250}>
                 <LineChart data={chartData}>
@@ -335,9 +362,11 @@ const Dashboard: React.FC = () => {
               </ResponsiveContainer>
             </div>
           </div>
-
         </div>
       </main>
+
+      {/* Chat */}
+      {showChat && <Chat onClose={() => setShowChat(false)} />}
     </div>
   );
 };

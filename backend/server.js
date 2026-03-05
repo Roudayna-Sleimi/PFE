@@ -18,10 +18,12 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(cors({ origin: 'http://localhost:5173' }));
 
+// ═══ MongoDB ═══
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connecté'))
   .catch(err => console.error('❌ MongoDB:', err));
 
+// ═══ Schemas ═══
 const userSchema = new mongoose.Schema({
   username:  { type: String, required: true, unique: true },
   password:  { type: String, required: true },
@@ -31,16 +33,21 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 const sensorSchema = new mongoose.Schema({
-  node:      String,
-  courant:   Number,
-  vibX:      Number,
-  vibY:      Number,
-  vibZ:      Number,
-  rpm:       Number,
+  node: String, courant: Number,
+  vibX: Number, vibY: Number, vibZ: Number, rpm: Number,
   createdAt: { type: Date, default: Date.now }
 });
 const SensorData = mongoose.model('SensorData', sensorSchema);
 
+// ═══ Chat Schema ═══
+const messageSchema = new mongoose.Schema({
+  username:  { type: String, required: true },
+  text:      { type: String, required: true },
+  createdAt: { type: Date, default: Date.now }
+});
+const Message = mongoose.model('Message', messageSchema);
+
+// ═══ Auth Middleware ═══
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: 'Token manquant' });
@@ -52,6 +59,7 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
+// ═══ Auth Routes ═══
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -85,6 +93,18 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// ═══ Chat Routes ═══
+// Récupérer les 50 derniers messages
+app.get('/api/chat/messages', authMiddleware, async (req, res) => {
+  try {
+    const messages = await Message.find().sort({ createdAt: -1 }).limit(50);
+    res.json(messages.reverse());
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+// ═══ Sensor History ═══
 app.get('/api/sensors/history', authMiddleware, async (req, res) => {
   try {
     const data = await SensorData.find().sort({ createdAt: -1 }).limit(50);
@@ -94,11 +114,12 @@ app.get('/api/sensors/history', authMiddleware, async (req, res) => {
   }
 });
 
+// ═══ MQTT ═══
 const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
 
 mqttClient.on('connect', () => {
   console.log('✅ MQTT connecté à HiveMQ');
-  mqttClient.subscribe('cncpulse/sensors', (err) => {
+  mqttClient.subscribe('cncpulse/sensors', err => {
     if (!err) console.log('📡 Abonné au topic: cncpulse/sensors');
   });
 });
@@ -106,17 +127,54 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', async (topic, message) => {
   try {
     const data = JSON.parse(message.toString());
-    console.log('📥 Reçu:', data);
     await SensorData.create(data);
     io.emit('sensor-data', data);
+
+    // ═══ Alertes automatiques ═══
+    const alerts = [];
+    if (data.courant > 20)
+      alerts.push({ type: 'critical', message: `⚡ Courant critique: ${data.courant}A`, node: data.node });
+    if (data.courant > 15)
+      alerts.push({ type: 'warning', message: `⚡ Courant élevé: ${data.courant}A`, node: data.node });
+    if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)
+      alerts.push({ type: 'critical', message: `📳 Vibration critique détectée!`, node: data.node });
+    if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)
+      alerts.push({ type: 'warning', message: `📳 Vibration élevée`, node: data.node });
+
+    alerts.forEach(alert => io.emit('alert', alert));
+
   } catch (err) {
-    console.error('❌ Erreur parsing MQTT:', err.message);
+    console.error('❌ Erreur MQTT:', err.message);
   }
 });
 
+// ═══ Socket.IO — Chat ═══
 io.on('connection', (socket) => {
-  console.log('🖥️ Dashboard connecté:', socket.id);
-  socket.on('disconnect', () => console.log('🖥️ Dashboard déconnecté'));
+  console.log('🖥️ Client connecté:', socket.id);
+
+  // Envoyer les messages récents à la connexion
+  Message.find().sort({ createdAt: -1 }).limit(50)
+    .then(messages => socket.emit('chat-history', messages.reverse()))
+    .catch(console.error);
+
+  // Recevoir un nouveau message
+  socket.on('send-message', async ({ username, text }) => {
+    try {
+      if (!text?.trim() || !username) return;
+      const msg = await Message.create({ username, text: text.trim() });
+      // Diffuser à tous les clients connectés
+      io.emit('new-message', {
+        _id: msg._id,
+        username: msg.username,
+        text: msg.text,
+        createdAt: msg.createdAt
+      });
+    } catch (err) {
+      console.error('❌ Erreur chat:', err.message);
+    }
+  });
+
+  socket.on('disconnect', () => console.log('🖥️ Client déconnecté:', socket.id));
 });
 
 const PORT = process.env.PORT || 5000;

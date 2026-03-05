@@ -38,7 +38,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       onLogin();
       navigate("/dashboard");
 
-    } catch (err) {
+    } catch (_err) {
       setError("Impossible de contacter le serveur.");
     } finally {
       setLoading(false);
