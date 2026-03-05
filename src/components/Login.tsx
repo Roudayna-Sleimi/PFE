@@ -1,90 +1,106 @@
 import React, { useState } from "react";
-import type { FormEvent, ChangeEvent } from "react";
-//import { useNavigate } from "react-router-dom";
-import "./Login.css";
+import { useNavigate } from "react-router-dom";
+import './Login.css';
 
-const Login: React.FC = () => {
-  const [email, setEmail] = useState<string>("");
-  const [password, setPassword] = useState<string>("");
-  const [error, setError] = useState<string>("");
-//const navigate = useNavigate();
+interface LoginProps {
+  onLogin: () => void;
+}
 
-  const handleLogin = (e: FormEvent<HTMLFormElement>): void => {
+const Login: React.FC<LoginProps> = ({ onLogin }) => {
+  const navigate = useNavigate();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    console.log("Login attempt:", email, password);
+    setLoading(true);
+    setError("");
 
-    if (email.trim() === "admin@cnc.com" && password === "123456") {
-      console.log("Success! Redirecting to /dashboard");
-      setError("");
-      // Solution 1: Navigation standard
-      window.location.href = "/dashboard";
+    try {
+      const res = await fetch("http://localhost:5000/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
 
-      // Solution 2 (décommentez si la 1 ne marche pas):
-      // window.location.href = "/dashboard";
-    } else {
-      console.log("Failed: Invalid credentials");
-      setError("Email ou mot de passe incorrect");
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.message || "Identifiants incorrects");
+        return;
+      }
+
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("username", data.username);
+
+      onLogin();
+      navigate("/dashboard");
+
+    } catch (err) {
+      setError("Impossible de contacter le serveur.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <div className="login-container">
-      <form className="login-form" onSubmit={handleLogin} noValidate>
+      <form className="login-form" onSubmit={handleSubmit}>
+
         <div className="form-header">
-          <span className="badge">Système Actif</span>
-          <h2>CNC-PULSE</h2>
-          <p className="subtitle">Interface de contrôle machine</p>
+          <div className="badge">CNC Pulse — Système Industriel</div>
+          <h2>Accès Sécurisé</h2>
+          <p className="subtitle">Supervision IoT Industrielle en Temps Réel</p>
         </div>
 
         <div className="input-group">
-          <label htmlFor="email">Identifiant</label>
+          <label htmlFor="username">👤 Identifiant</label>
           <div className="input-wrapper">
-            <span className="input-icon">✉</span>
+            <span className="input-icon">⚙</span>
             <input
-              id="email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              placeholder="admin@cnc.com"
-              value={email}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
+              id="username"
+              name="username"
+              type="text"
+              placeholder="Entrez votre identifiant"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
               required
+              autoComplete="username"
             />
           </div>
         </div>
 
         <div className="input-group">
-          <label htmlFor="password">Mot de passe</label>
+          <label htmlFor="password">🔒 Mot de passe</label>
           <div className="input-wrapper">
-            <span className="input-icon">🔒</span>
+            <span className="input-icon">●</span>
             <input
               id="password"
               name="password"
               type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
+              placeholder="Entrez votre mot de passe"
               value={password}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+              onChange={e => setPassword(e.target.value)}
               required
+              autoComplete="current-password"
             />
           </div>
         </div>
 
-        {error && (
-          <div className="error">
-            <span>⚠</span>
-            {error}
-          </div>
-        )}
+        {error && <div className="error">{error}</div>}
 
-        <button type="submit">Se connecter</button>
+        <button type="submit" disabled={loading}>
+          {loading ? "Connexion..." : "Se Connecter"}
+        </button>
 
         <div className="form-footer">
           <p className="help-text">
-            Problème de connexion ? <a href="#">Contactez le support</a>
+            Problème d'accès ? <a href="#">Contacter l'administrateur</a>
           </p>
         </div>
+
       </form>
     </div>
   );

@@ -1,19 +1,19 @@
-import React from "react";
+import React, { useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./components/Login";
-import Dashboard from "./components/Dashboard"; // Importer Dashboard
+import Dashboard from "./components/Dashboard";
 
-const App: React.FC = () => {
+function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/dashboard" element={<Dashboard />} /> {/* Route Dashboard */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/" element={<Login onLogin={() => setIsLoggedIn(true)} />} />
+        <Route path="/dashboard" element={isLoggedIn ? <Dashboard /> : <Navigate to="/" />} />
       </Routes>
     </Router>
   );
-};
+}
 
 export default App;

@@ -1,22 +1,16 @@
 /* Login.css - Design Professionnel CNC-PULSE */
 
-/* Remplacer la règle .login-container par : */
 .login-container {
   min-height: 100vh;
-  width: 100vw; /* Ajouter */
-  display: flex; /* Changer grid en flex */
-  justify-content: center;
-  align-items: center;
+  display: grid;
+  place-items: center;
   background: 
     radial-gradient(circle at 20% 50%, rgba(0, 212, 255, 0.05) 0%, transparent 50%),
     radial-gradient(circle at 80% 80%, rgba(0, 102, 255, 0.05) 0%, transparent 50%),
     linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0f172a 100%);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  position: fixed; /* Changer relative en fixed */
-  inset: 0; /* Couvre tout l'écran */
+  position: relative;
   overflow: hidden;
-  margin: 0; /* Reset margin */
-  padding: 0; /* Reset padding */
 }
 
 /* Grille technique en arrière-plan */
@@ -170,13 +164,8 @@
   gap: 6px;
 }
 
-.input-wrapper {
-  position: relative;
-}
-
 .login-form input {
-  width: 100%;
-  padding: 14px 16px 14px 44px;
+  padding: 14px 16px;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
@@ -185,7 +174,6 @@
   font-weight: 400;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   outline: none;
-  box-sizing: border-box;
 }
 
 .login-form input:hover {
@@ -205,6 +193,15 @@
   color: #475569;
 }
 
+/* Icônes dans les inputs (optionnel avec HTML modifié) */
+.input-wrapper {
+  position: relative;
+}
+
+.input-wrapper input {
+  padding-left: 44px;
+}
+
 .input-icon {
   position: absolute;
   left: 16px;
@@ -212,7 +209,6 @@
   transform: translateY(-50%);
   color: #64748b;
   font-size: 18px;
-  pointer-events: none;
 }
 
 /* Message d'erreur */
@@ -227,7 +223,6 @@
   color: #fca5a5;
   font-size: 13px;
   font-weight: 500;
-  margin: 0;
   animation: shake 0.5s ease-in-out;
 }
 
@@ -274,6 +269,7 @@
   transform: translateY(0);
 }
 
+/* Effet de brillance au survol */
 .login-form button::before {
   content: '';
   position: absolute;
@@ -318,6 +314,17 @@
 .help-text a:hover {
   color: #ffffff;
   text-decoration: underline;
+}
+
+/* Version statique pour impression */
+@media print {
+  .login-container {
+    background: white;
+  }
+  .login-form {
+    box-shadow: none;
+    border: 1px solid #ddd;
+  }
 }
 
 /* Responsive */
