@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { io } from 'socket.io-client';
+import { io, Socket } from 'socket.io-client';
 import { 
   LayoutDashboard, Settings, AlertTriangle, BarChart3, 
   FileText, Activity, Heart, Bell, Wifi, Zap, Thermometer, 
-  Pause, Sun, Moon, MessageSquare, X
+  Pause, Sun, Moon, X
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import Chat from './Chat';
 import './Dashboard.css';
 
 interface SensorData {
@@ -21,15 +20,11 @@ interface ChartPoint {
   courant: number; rpm: number;
 }
 interface Alert {
-  id: number;
-  type: 'critical' | 'warning';
-  message: string;
-  node: string;
-  time: string;
+  id: number; type: 'critical' | 'warning';
+  message: string; node: string; time: string;
 }
-
 const MAX_POINTS = 20;
-const socket = io('http://localhost:5000', { transports: ['websocket'] });
+const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
 
 const generateSimData = (): SensorData => ({
   node: 'ESP32-NODE-01',
@@ -41,18 +36,16 @@ const generateSimData = (): SensorData => ({
 });
 
 const Dashboard: React.FC = () => {
-  const [darkMode, setDarkMode]       = useState(true);
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [connected, setConnected]     = useState(false);
-  const [paused, setPaused]           = useState(false);
-  const [showChat, setShowChat]       = useState(false);
-  const [latest, setLatest]           = useState<SensorData>(generateSimData());
-  const [chartData, setChartData]     = useState<ChartPoint[]>([]);
-  const [alerts, setAlerts]           = useState<Alert[]>([]);
+  const [darkMode, setDarkMode]         = useState(true);
+  const [currentTime, setCurrentTime]   = useState(new Date());
+  const [connected, setConnected]       = useState(false);
+  const [paused, setPaused]             = useState(false);
+  const [latest, setLatest]             = useState<SensorData>(generateSimData());
+  const [chartData, setChartData]       = useState<ChartPoint[]>([]);
+  const [alerts, setAlerts]             = useState<Alert[]>([]);
   const [unreadAlerts, setUnreadAlerts] = useState(0);
-  const [showAlerts, setShowAlerts]   = useState(false);
+  const [showAlerts, setShowAlerts]     = useState(false);
 
-  // ═══ addPoint déclaré EN PREMIER ═══
   const addPoint = useCallback((data: SensorData) => {
     const timeLabel = new Date().toLocaleTimeString('fr-FR');
     setChartData(prev => {
@@ -66,42 +59,43 @@ const Dashboard: React.FC = () => {
     });
   }, []);
 
-  // Horloge
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Socket.IO
+  // ═══ Socket events stables (une seule fois) ═══
   useEffect(() => {
     socket.on('connect',    () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
 
+    socket.on('alert', (alert: Omit<Alert, 'id' | 'time'>) => {
+      const newAlert: Alert = { ...alert, id: Date.now(), time: new Date().toLocaleTimeString('fr-FR') };
+      setAlerts(prev => [newAlert, ...prev].slice(0, 20));
+      setUnreadAlerts(prev => prev + 1);
+    });
+
+
+    return () => {
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('alert');
+    };
+  }, []);
+
+  // ═══ Sensor data (dépend de paused) ═══
+  useEffect(() => {
     socket.on('sensor-data', (data: SensorData) => {
       if (paused) return;
       setLatest(data);
       addPoint(data);
     });
 
-    socket.on('alert', (alert: Omit<Alert, 'id' | 'time'>) => {
-      const newAlert: Alert = {
-        ...alert,
-        id: Date.now(),
-        time: new Date().toLocaleTimeString('fr-FR'),
-      };
-      setAlerts(prev => [newAlert, ...prev].slice(0, 20));
-      setUnreadAlerts(prev => prev + 1);
-    });
-
     return () => {
-      socket.off('connect');
-      socket.off('disconnect');
       socket.off('sensor-data');
-      socket.off('alert');
     };
   }, [paused, addPoint]);
 
-  // Simulation quand déconnecté
   useEffect(() => {
     if (connected) return;
     const interval = setInterval(() => {
@@ -133,7 +127,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className={`dashboard ${darkMode ? 'dark' : 'light'}`}>
-      {/* Sidebar */}
       <aside className="sidebar">
         <div className="logo">
           <div className="logo-icon"><Activity size={24} /></div>
@@ -156,7 +149,6 @@ const Dashboard: React.FC = () => {
         </nav>
       </aside>
 
-      {/* Main */}
       <main className="main-content">
         <header className="header">
           <div className="header-left">
@@ -171,31 +163,23 @@ const Dashboard: React.FC = () => {
               <span>{connected ? '🟢 Live MQTT' : '🔵 Simulation'}</span>
             </div>
           </div>
+
           <div className="header-right">
-            <div className="theme-toggle" onClick={toggleTheme}>
+            <div className="theme-toggle" onClick={toggleTheme} title="Thème">
               {darkMode ? <Sun size={18} /> : <Moon size={18} />}
             </div>
 
-            {/* Bouton Alertes */}
-            <div className="alert-btn-wrapper" style={{ position: 'relative' }}>
-              <button className="pause-btn" style={{ background: 'linear-gradient(135deg, #f59e0b, #ef4444)' }} onClick={handleOpenAlerts}>
+            <div className="alert-btn-wrapper">
+              <button className="pause-btn btn-alert" onClick={handleOpenAlerts} title="Alertes">
                 <Bell size={14} />
                 Alertes
               </button>
-              {unreadAlerts > 0 && (
-                <span className="alert-badge">{unreadAlerts}</span>
-              )}
+              {unreadAlerts > 0 && <span className="alert-badge">{unreadAlerts}</span>}
             </div>
-
-            {/* Bouton Chat */}
-            <button className="pause-btn" style={{ background: 'linear-gradient(135deg, #0066ff, #00d4ff)' }} onClick={() => setShowChat(p => !p)}>
-              <MessageSquare size={14} />
-              Chat
-            </button>
 
             <span className="mae-badge">RPM : {latest.rpm}</span>
             <span className="latency-badge">I : {latest.courant} A</span>
-            <button className="pause-btn" onClick={togglePaused}>
+            <button className="pause-btn" onClick={togglePaused} title={paused ? 'Reprendre' : 'Pause'}>
               <Pause size={14} />
               {paused ? 'Reprendre' : 'Pause'}
             </button>
@@ -216,12 +200,11 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Alertes Panel */}
           {showAlerts && (
             <div className="alerts-panel">
               <div className="alerts-panel-header">
                 <span>🔔 Alertes ({alerts.length})</span>
-                <button onClick={() => setShowAlerts(false)}><X size={16} /></button>
+                <button onClick={() => setShowAlerts(false)} title="Fermer"><X size={16} /></button>
               </div>
               {alerts.length === 0 ? (
                 <div className="alerts-empty">Aucune alerte pour le moment ✅</div>
@@ -236,7 +219,6 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
-          {/* Stats */}
           <div className="stats-grid">
             <div className="stat-card">
               <div className="stat-icon purple"><Settings size={20} /></div>
@@ -275,7 +257,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Charts Row 1 */}
           <div className="charts-row">
             <div className="chart-card large">
               <div className="chart-header">
@@ -328,7 +309,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Charts Row 2 */}
           <div className="charts-row">
             <div className="chart-card">
               <div className="chart-header">
@@ -365,8 +345,6 @@ const Dashboard: React.FC = () => {
         </div>
       </main>
 
-      {/* Chat */}
-      {showChat && <Chat onClose={() => setShowChat(false)} />}
     </div>
   );
 };

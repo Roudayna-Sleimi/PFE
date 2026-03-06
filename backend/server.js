@@ -39,11 +39,12 @@ const sensorSchema = new mongoose.Schema({
 });
 const SensorData = mongoose.model('SensorData', sensorSchema);
 
-// ═══ Chat Schema ═══
+// ═══ Chat Schema — TTL 24h ═══
 const messageSchema = new mongoose.Schema({
   username:  { type: String, required: true },
+  role:      { type: String, default: "user" },
   text:      { type: String, required: true },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now, expires: 86400 }
 });
 const Message = mongoose.model('Message', messageSchema);
 
@@ -93,17 +94,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ═══ Chat Routes ═══
-// Récupérer les 50 derniers messages
-app.get('/api/chat/messages', authMiddleware, async (req, res) => {
-  try {
-    const messages = await Message.find().sort({ createdAt: -1 }).limit(50);
-    res.json(messages.reverse());
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur' });
-  }
-});
-
 // ═══ Sensor History ═══
 app.get('/api/sensors/history', authMiddleware, async (req, res) => {
   try {
@@ -130,19 +120,18 @@ mqttClient.on('message', async (topic, message) => {
     await SensorData.create(data);
     io.emit('sensor-data', data);
 
-    // ═══ Alertes automatiques ═══
+    // Alertes automatiques
     const alerts = [];
     if (data.courant > 20)
       alerts.push({ type: 'critical', message: `⚡ Courant critique: ${data.courant}A`, node: data.node });
-    if (data.courant > 15)
+    else if (data.courant > 15)
       alerts.push({ type: 'warning', message: `⚡ Courant élevé: ${data.courant}A`, node: data.node });
     if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)
       alerts.push({ type: 'critical', message: `📳 Vibration critique détectée!`, node: data.node });
-    if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)
+    else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)
       alerts.push({ type: 'warning', message: `📳 Vibration élevée`, node: data.node });
 
     alerts.forEach(alert => io.emit('alert', alert));
-
   } catch (err) {
     console.error('❌ Erreur MQTT:', err.message);
   }
@@ -152,21 +141,29 @@ mqttClient.on('message', async (topic, message) => {
 io.on('connection', (socket) => {
   console.log('🖥️ Client connecté:', socket.id);
 
-  // Envoyer les messages récents à la connexion
-  Message.find().sort({ createdAt: -1 }).limit(50)
-    .then(messages => socket.emit('chat-history', messages.reverse()))
-    .catch(console.error);
+  // Historique sur demande — messages des 24 dernières heures
+  socket.on('get-history', async () => {
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const messages = await Message.find({ createdAt: { $gte: since } })
+        .sort({ createdAt: 1 })
+        .limit(100);
+      socket.emit('chat-history', messages);
+    } catch (err) {
+      console.error('❌ Erreur get-history:', err.message);
+    }
+  });
 
-  // Recevoir un nouveau message
-  socket.on('send-message', async ({ username, text }) => {
+  // Nouveau message
+  socket.on('send-message', async ({ username, role, text }) => {
     try {
       if (!text?.trim() || !username) return;
-      const msg = await Message.create({ username, text: text.trim() });
-      // Diffuser à tous les clients connectés
+      const msg = await Message.create({ username, role: role || 'user', text: text.trim() });
       io.emit('new-message', {
-        _id: msg._id,
-        username: msg.username,
-        text: msg.text,
+        _id:       msg._id,
+        username:  msg.username,
+        role:      msg.role,
+        text:      msg.text,
         createdAt: msg.createdAt
       });
     } catch (err) {
