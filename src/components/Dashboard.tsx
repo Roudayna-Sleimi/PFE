@@ -3,12 +3,13 @@ import { io, Socket } from 'socket.io-client';
 import { 
   LayoutDashboard, Settings, AlertTriangle, BarChart3, 
   FileText, Activity, Heart, Bell, Wifi, Zap, Thermometer, 
-  Pause, Sun, Moon, X
+  Pause, Sun, Moon, X, MessageSquare
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
+import MessagingPage from './Messagingpage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -23,6 +24,7 @@ interface Alert {
   id: number; type: 'critical' | 'warning';
   message: string; node: string; time: string;
 }
+
 const MAX_POINTS = 20;
 const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
 
@@ -36,15 +38,17 @@ const generateSimData = (): SensorData => ({
 });
 
 const Dashboard: React.FC = () => {
-  const [darkMode, setDarkMode]         = useState(true);
-  const [currentTime, setCurrentTime]   = useState(new Date());
-  const [connected, setConnected]       = useState(false);
-  const [paused, setPaused]             = useState(false);
-  const [latest, setLatest]             = useState<SensorData>(generateSimData());
-  const [chartData, setChartData]       = useState<ChartPoint[]>([]);
-  const [alerts, setAlerts]             = useState<Alert[]>([]);
-  const [unreadAlerts, setUnreadAlerts] = useState(0);
-  const [showAlerts, setShowAlerts]     = useState(false);
+  const [darkMode, setDarkMode]             = useState(true);
+  const [currentTime, setCurrentTime]       = useState(new Date());
+  const [connected, setConnected]           = useState(false);
+  const [paused, setPaused]                 = useState(false);
+  const [latest, setLatest]                 = useState<SensorData>(generateSimData());
+  const [chartData, setChartData]           = useState<ChartPoint[]>([]);
+  const [alerts, setAlerts]                 = useState<Alert[]>([]);
+  const [unreadAlerts, setUnreadAlerts]     = useState(0);
+  const [showAlerts, setShowAlerts]         = useState(false);
+  const [showMessaging, setShowMessaging]   = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   const addPoint = useCallback((data: SensorData) => {
     const timeLabel = new Date().toLocaleTimeString('fr-FR');
@@ -66,7 +70,13 @@ const Dashboard: React.FC = () => {
 
   // ═══ Socket events stables (une seule fois) ═══
   useEffect(() => {
-    socket.on('connect',    () => setConnected(true));
+    socket.on('connect', () => {
+      setConnected(true);
+      const username = localStorage.getItem('username');
+      const role     = localStorage.getItem('role');
+      if (username && role) socket.emit('user-online', { username, role });
+    });
+
     socket.on('disconnect', () => setConnected(false));
 
     socket.on('alert', (alert: Omit<Alert, 'id' | 'time'>) => {
@@ -75,11 +85,18 @@ const Dashboard: React.FC = () => {
       setUnreadAlerts(prev => prev + 1);
     });
 
+    socket.on('direct-message', (msg: { from: string }) => {
+      const currentUser = localStorage.getItem('username');
+      if (msg.from !== currentUser) {
+        setUnreadMessages(prev => prev + 1);
+      }
+    });
 
     return () => {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('alert');
+      socket.off('direct-message');
     };
   }, []);
 
@@ -90,10 +107,7 @@ const Dashboard: React.FC = () => {
       setLatest(data);
       addPoint(data);
     });
-
-    return () => {
-      socket.off('sensor-data');
-    };
+    return () => { socket.off('sensor-data'); };
   }, [paused, addPoint]);
 
   useEffect(() => {
@@ -123,6 +137,11 @@ const Dashboard: React.FC = () => {
   const handleOpenAlerts = () => {
     setShowAlerts(p => !p);
     setUnreadAlerts(0);
+  };
+
+  const handleOpenMessaging = () => {
+    setShowMessaging(true);
+    setUnreadMessages(0);
   };
 
   return (
@@ -175,6 +194,14 @@ const Dashboard: React.FC = () => {
                 Alertes
               </button>
               {unreadAlerts > 0 && <span className="alert-badge">{unreadAlerts}</span>}
+            </div>
+
+            <div className="alert-btn-wrapper">
+              <button className="pause-btn btn-chat" onClick={handleOpenMessaging} title="Messages">
+                <MessageSquare size={14} />
+                Messages
+              </button>
+              {unreadMessages > 0 && <span className="alert-badge">{unreadMessages}</span>}
             </div>
 
             <span className="mae-badge">RPM : {latest.rpm}</span>
@@ -345,6 +372,35 @@ const Dashboard: React.FC = () => {
         </div>
       </main>
 
+      {/* ═══ Messaging Overlay ═══ */}
+      {showMessaging && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 1000, background: '#0f172a',
+        }}>
+          <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+            <button
+              onClick={() => setShowMessaging(false)}
+              style={{
+                background: 'rgba(255,255,255,0.08)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                borderRadius: 8, padding: '8px 18px',
+                color: '#e2e8f0', cursor: 'pointer',
+                fontSize: 13, fontWeight: 600,
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <X size={14} /> Fermer
+            </button>
+          </div>
+          <MessagingPage
+            currentUsername={localStorage.getItem('username') || ''}
+            currentRole={localStorage.getItem('role') || 'user'}
+            token={localStorage.getItem('token') || ''}
+            socket={socket}
+          />
+        </div>
+      )}
     </div>
   );
 };

@@ -28,9 +28,23 @@ const userSchema = new mongoose.Schema({
   username:  { type: String, required: true, unique: true },
   password:  { type: String, required: true },
   role:      { type: String, default: 'admin' },
+  isOnline:  { type: Boolean, default: false },
+  lastSeen:  { type: Date, default: null },
+  socketId:  { type: String, default: null },
   createdAt: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
+
+// Direct Messages (1:1) — TTL 30 jours
+const directMessageSchema = new mongoose.Schema({
+  from:      { type: String, required: true },
+  fromRole:  { type: String, required: true },
+  to:        { type: String, required: true },
+  text:      { type: String, required: true },
+  read:      { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now, expires: 60 * 60 * 24 * 30 }
+});
+const DirectMessage = mongoose.model('DirectMessage', directMessageSchema);
 
 const sensorSchema = new mongoose.Schema({
   node: String, courant: Number,
@@ -94,6 +108,52 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// ═══ Users List ═══
+app.get('/api/users', authMiddleware, async (req, res) => {
+  try {
+    const users = await User.find({}, 'username role isOnline lastSeen');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+// ═══ Direct Messages ═══
+app.get('/api/messages/:targetUsername', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.user;
+    const { targetUsername } = req.params;
+    const messages = await DirectMessage.find({
+      $or: [
+        { from: username, to: targetUsername },
+        { from: targetUsername, to: username }
+      ]
+    }).sort({ createdAt: 1 }).limit(100);
+    await DirectMessage.updateMany(
+      { from: targetUsername, to: username, read: false },
+      { read: true }
+    );
+    res.json(messages);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+app.get('/api/messages/unread/counts', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.user;
+    const unread = await DirectMessage.aggregate([
+      { $match: { to: username, read: false } },
+      { $group: { _id: '$from', count: { $sum: 1 } } }
+    ]);
+    const counts = {};
+    unread.forEach(u => { counts[u._id] = u.count; });
+    res.json(counts);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
 // ═══ Sensor History ═══
 app.get('/api/sensors/history', authMiddleware, async (req, res) => {
   try {
@@ -137,9 +197,37 @@ mqttClient.on('message', async (topic, message) => {
   }
 });
 
-// ═══ Socket.IO — Chat ═══
+// ═══ Socket.IO ═══
+const connectedUsers = new Map(); // socketId -> { username, role }
+
 io.on('connection', (socket) => {
   console.log('🖥️ Client connecté:', socket.id);
+
+  // User comes online
+  socket.on('user-online', async ({ username, role }) => {
+    connectedUsers.set(socket.id, { username, role });
+    await User.updateOne({ username }, { isOnline: true, socketId: socket.id });
+    io.emit('user-status', { username, isOnline: true });
+  });
+
+  // ─── Direct Messages ───
+  socket.on('send-direct-message', async ({ from, fromRole, to, text }) => {
+    try {
+      if (!text?.trim()) return;
+      const msg = await DirectMessage.create({ from, fromRole, to, text: text.trim() });
+      const msgData = msg.toObject();
+      const recipientEntry = [...connectedUsers.entries()].find(([, u]) => u.username === to);
+      if (recipientEntry) io.to(recipientEntry[0]).emit('direct-message', msgData);
+      socket.emit('direct-message', msgData);
+    } catch (err) {
+      console.error('❌ Erreur DM:', err.message);
+    }
+  });
+
+  socket.on('mark-read', async ({ from, to }) => {
+    await DirectMessage.updateMany({ from, to, read: false }, { read: true });
+    socket.emit('messages-read', { from });
+  });
 
   // Historique sur demande — messages des 24 dernières heures
   socket.on('get-history', async () => {
@@ -171,7 +259,15 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => console.log('🖥️ Client déconnecté:', socket.id));
+  socket.on('disconnect', async () => {
+    const userData = connectedUsers.get(socket.id);
+    if (userData) {
+      connectedUsers.delete(socket.id);
+      await User.updateOne({ username: userData.username }, { isOnline: false, lastSeen: new Date(), socketId: null });
+      io.emit('user-status', { username: userData.username, isOnline: false, lastSeen: new Date().toISOString() });
+    }
+    console.log('🖥️ Client déconnecté:', socket.id);
+  });
 });
 
 const PORT = process.env.PORT || 5000;
