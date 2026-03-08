@@ -9,7 +9,8 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import MessagingPage from './Messagingpage';
+import MessagingPage from './MessagingPage';
+import MachinesPage from './MachinesPage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -20,11 +21,6 @@ interface ChartPoint {
   time: string; vibX: number; vibY: number; vibZ: number;
   courant: number; rpm: number;
 }
-interface Alert {
-  id: number; type: 'critical' | 'warning';
-  message: string; node: string; time: string;
-}
-
 const MAX_POINTS = 20;
 const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
 
@@ -44,11 +40,9 @@ const Dashboard: React.FC = () => {
   const [paused, setPaused]                 = useState(false);
   const [latest, setLatest]                 = useState<SensorData>(generateSimData());
   const [chartData, setChartData]           = useState<ChartPoint[]>([]);
-  const [alerts, setAlerts]                 = useState<Alert[]>([]);
-  const [unreadAlerts, setUnreadAlerts]     = useState(0);
-  const [showAlerts, setShowAlerts]         = useState(false);
   const [showMessaging, setShowMessaging]   = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [activePage, setActivePage] = useState<'dashboard' | 'machines'>('dashboard');
 
   const addPoint = useCallback((data: SensorData) => {
     const timeLabel = new Date().toLocaleTimeString('fr-FR');
@@ -79,12 +73,6 @@ const Dashboard: React.FC = () => {
 
     socket.on('disconnect', () => setConnected(false));
 
-    socket.on('alert', (alert: Omit<Alert, 'id' | 'time'>) => {
-      const newAlert: Alert = { ...alert, id: Date.now(), time: new Date().toLocaleTimeString('fr-FR') };
-      setAlerts(prev => [newAlert, ...prev].slice(0, 20));
-      setUnreadAlerts(prev => prev + 1);
-    });
-
     socket.on('direct-message', (msg: { from: string }) => {
       const currentUser = localStorage.getItem('username');
       if (msg.from !== currentUser) {
@@ -95,7 +83,6 @@ const Dashboard: React.FC = () => {
     return () => {
       socket.off('connect');
       socket.off('disconnect');
-      socket.off('alert');
       socket.off('direct-message');
     };
   }, []);
@@ -134,11 +121,6 @@ const Dashboard: React.FC = () => {
   const toggleTheme  = useCallback(() => setDarkMode(p => !p), []);
   const togglePaused = useCallback(() => setPaused(p => !p), []);
 
-  const handleOpenAlerts = () => {
-    setShowAlerts(p => !p);
-    setUnreadAlerts(0);
-  };
-
   const handleOpenMessaging = () => {
     setShowMessaging(true);
     setUnreadMessages(0);
@@ -158,8 +140,8 @@ const Dashboard: React.FC = () => {
           <div className="nav-section">
             <span className="nav-label">NAVIGATION</span>
             <ul>
-              <li className="active"><LayoutDashboard size={18} /><span>Tableau de Bord</span></li>
-              <li><Settings size={18} /><span>Machines</span></li>
+              <li className={activePage === 'dashboard' ? 'active' : ''} onClick={() => setActivePage('dashboard')} style={{cursor:'pointer'}}><LayoutDashboard size={18} /><span>Tableau de Bord</span></li>
+              <li className={activePage === 'machines' ? 'active' : ''} onClick={() => setActivePage('machines')} style={{cursor:'pointer'}}><Settings size={18} /><span>Machines</span></li>
               <li><AlertTriangle size={18} /><span>Alertes</span></li>
               <li><BarChart3 size={18} /><span>Analytics</span></li>
               <li><FileText size={18} /><span>Rapports</span></li>
@@ -189,14 +171,6 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="alert-btn-wrapper">
-              <button className="pause-btn btn-alert" onClick={handleOpenAlerts} title="Alertes">
-                <Bell size={14} />
-                Alertes
-              </button>
-              {unreadAlerts > 0 && <span className="alert-badge">{unreadAlerts}</span>}
-            </div>
-
-            <div className="alert-btn-wrapper">
               <button className="pause-btn btn-chat" onClick={handleOpenMessaging} title="Messages">
                 <MessageSquare size={14} />
                 Messages
@@ -213,7 +187,11 @@ const Dashboard: React.FC = () => {
           </div>
         </header>
 
+        {activePage === 'machines' ? (
+          <div style={{ flex: 1, overflowY: 'auto' }}><MachinesPage /></div>
+        ) : (
         <div className="dashboard-content">
+          <>
           <div className="page-header">
             <div>
               <h2>Tableau de Bord</h2>
@@ -226,25 +204,6 @@ const Dashboard: React.FC = () => {
               <div className="time">{currentTime.toLocaleTimeString('fr-FR')}</div>
             </div>
           </div>
-
-          {showAlerts && (
-            <div className="alerts-panel">
-              <div className="alerts-panel-header">
-                <span>🔔 Alertes ({alerts.length})</span>
-                <button onClick={() => setShowAlerts(false)} title="Fermer"><X size={16} /></button>
-              </div>
-              {alerts.length === 0 ? (
-                <div className="alerts-empty">Aucune alerte pour le moment ✅</div>
-              ) : (
-                alerts.map(alert => (
-                  <div key={alert.id} className={`alert-item ${alert.type}`}>
-                    <span className="alert-msg">{alert.message}</span>
-                    <span className="alert-meta">{alert.node} • {alert.time}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
 
           <div className="stats-grid">
             <div className="stat-card">
@@ -369,7 +328,9 @@ const Dashboard: React.FC = () => {
               </ResponsiveContainer>
             </div>
           </div>
+          </>
         </div>
+        )}
       </main>
 
       {/* ═══ Messaging Overlay ═══ */}
