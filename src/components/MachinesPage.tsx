@@ -64,38 +64,69 @@ const MachinesPage: React.FC = () => {
   if (selected) return <MachineDetail machine={selected} onBack={() => setSelected(null)} />;
 
   return (
-    <div className="machines-page">
-      <div className="machines-page-header">
-        <h2>Machines Industrielles</h2>
-        <p>Cliquez sur une machine pour afficher ses détails</p>
+    <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full">
+
+      {/* Header */}
+      <div className="mb-6">
+        <h2 className="text-2xl font-bold text-white mb-1">Machines Industrielles</h2>
+        <p className="text-sm text-slate-500">Cliquez sur une machine pour afficher ses détails</p>
       </div>
-      <div className="machines-list">
+
+      {/* Liste */}
+      <div className="flex flex-col gap-4">
         {MACHINES.map(m => {
           const st = statusStyle(m.status);
           return (
-            <div key={m.id} onClick={() => setSelected(m)} className="machine-card">
-              <div className="machine-card-inner">
-                <div className="machine-icon-box">
-                  {m.icon==='gear' ? <Settings size={22} color="#94a3b8"/> : <Wrench size={22} color="#94a3b8"/>}
+            <div
+              key={m.id}
+              onClick={() => setSelected(m)}
+              className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-5 cursor-pointer transition-all duration-300 hover:-translate-y-0.5 hover:border-[rgba(0,212,255,0.2)] hover:shadow-xl"
+            >
+              <div className="flex items-center gap-4">
+
+                {/* Icône */}
+                <div className="w-12 h-12 min-w-[48px] rounded-xl bg-slate-700/60 border border-white/[0.08] flex items-center justify-center flex-shrink-0">
+                  {m.icon === 'gear'
+                    ? <Settings size={22} color="#94a3b8" />
+                    : <Wrench   size={22} color="#94a3b8" />}
                 </div>
-                <div className="machine-info">
-                  <div className="machine-name">{m.name}</div>
-                  <div className="machine-model">{m.model}</div>
-                  <div className="machine-tags">
-                    <span className="machine-tag machine-tag-node">{m.node}</span>
-                    <span className="machine-tag machine-tag-ip">{m.ip}</span>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[15px] font-semibold text-white mb-0.5 truncate">{m.name}</div>
+                  <div className="text-xs text-slate-500 mb-2 truncate">{m.model}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {/* Node tag */}
+                    <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                      {m.node}
+                    </span>
+                    {/* IP tag */}
+                    <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-700/60 border border-white/[0.08] text-slate-400">
+                      {m.ip}
+                    </span>
+                    {/* Sensor tags — dynamic colors */}
                     {m.sensors.map(s => (
-                      <span key={s} className="machine-tag" style={{ background:(SC[s]||'#94a3b8')+'22', border:`1px solid ${(SC[s]||'#94a3b8')}55`, color:SC[s]||'#94a3b8' }}>{s}</span>
+                      <span key={s} className="px-2 py-0.5 rounded-md text-[11px] font-medium"
+                        style={{ background:(SC[s]||'#94a3b8')+'22', border:`1px solid ${(SC[s]||'#94a3b8')}55`, color: SC[s]||'#94a3b8' }}>
+                        {s}
+                      </span>
                     ))}
                   </div>
                 </div>
-                <div className="machine-side">
-                  <span className="machine-sante" style={{ color: santeColor(m.sante) }}>{m.sante}%</span>
-                  <span className="machine-status-badge" style={{ background:st.bg, border:`1px solid ${st.border}`, color:st.color }}>
-                    <span className="machine-status-dot" style={{ background:st.color }}/>{m.status}
+
+                {/* Side — santé + status */}
+                <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                  <span className="text-[22px] font-bold" style={{ color: santeColor(m.sante) }}>
+                    {m.sante}%
+                  </span>
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                    style={{ background: st.bg, border: `1px solid ${st.border}`, color: st.color }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />
+                    {m.status}
                   </span>
                 </div>
-                <ChevronRight size={18} color="#475569"/>
+
+                <ChevronRight size={18} color="#475569" className="flex-shrink-0" />
               </div>
             </div>
           );
