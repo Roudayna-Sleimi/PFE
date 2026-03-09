@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { 
-  LayoutDashboard, Settings, AlertTriangle, BarChart3, 
-  FileText, Activity, Heart, Bell, Wifi, Zap, Thermometer, 
-  Pause, Sun, Moon, X, MessageSquare
-} from 'lucide-react';
+import {LayoutDashboard, Settings, Activity, Heart, Bell, Wifi, Zap, Thermometer, 
+  Pause, Sun, Moon, X, MessageSquare} from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
@@ -140,11 +137,9 @@ const Dashboard: React.FC = () => {
           <div className="nav-section">
             <span className="nav-label">NAVIGATION</span>
             <ul>
-              <li className={activePage === 'dashboard' ? 'active' : ''} onClick={() => setActivePage('dashboard')} style={{cursor:'pointer'}}><LayoutDashboard size={18} /><span>Tableau de Bord</span></li>
-              <li className={activePage === 'machines' ? 'active' : ''} onClick={() => setActivePage('machines')} style={{cursor:'pointer'}}><Settings size={18} /><span>Machines</span></li>
-              <li><AlertTriangle size={18} /><span>Alertes</span></li>
-              <li><BarChart3 size={18} /><span>Analytics</span></li>
-              <li><FileText size={18} /><span>Rapports</span></li>
+              <li className={activePage === 'dashboard' ? 'active' : ''} onClick={() => setActivePage('dashboard')}><LayoutDashboard size={18} /><span>Tableau de Bord</span></li>
+              <li className={activePage === 'machines' ? 'active' : ''} onClick={() => setActivePage('machines')}><Settings size={18} /><span>Machines</span></li>
+
             </ul>
           </div>
         </nav>
@@ -188,7 +183,7 @@ const Dashboard: React.FC = () => {
         </header>
 
         {activePage === 'machines' ? (
-          <div style={{ flex: 1, overflowY: 'auto' }}><MachinesPage /></div>
+          <div className="machines-wrapper"><MachinesPage /></div>
         ) : (
         <div className="dashboard-content">
           <>
@@ -335,21 +330,11 @@ const Dashboard: React.FC = () => {
 
       {/* ═══ Messaging Overlay ═══ */}
       {showMessaging && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          zIndex: 1000, background: '#0f172a',
-        }}>
-          <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+        <div className="messaging-overlay">
+          <div className="messaging-close-btn-wrapper">
             <button
               onClick={() => setShowMessaging(false)}
-              style={{
-                background: 'rgba(255,255,255,0.08)',
-                border: '1px solid rgba(255,255,255,0.15)',
-                borderRadius: 8, padding: '8px 18px',
-                color: '#e2e8f0', cursor: 'pointer',
-                fontSize: 13, fontWeight: 600,
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
+              className="messaging-close-btn"
             >
               <X size={14} /> Fermer
             </button>

@@ -37,7 +37,7 @@ const loadPieces = (machineId: string): Piece[] => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY(machineId));
     if (saved) return JSON.parse(saved);
-  } catch  { /* no saved data */ }
+  } catch { /* no saved data */ }
   return defaultPieces[machineId] || [];
 };
 
@@ -93,146 +93,108 @@ const PiecesTab: React.FC<Props> = ({ machineId }) => {
   return (
     <div>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+      <div className="pt-header">
         <div>
-          <div style={{ fontWeight: 700, fontSize: 18, color: '#f1f5f9' }}>Stock des Pièces de Rechange</div>
-          <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
+          <div className="pt-header-title">Stock des Pièces de Rechange</div>
+          <div className="pt-header-sub">
             {pieces.length} pièces · {alerts} alerte{alerts !== 1 ? 's' : ''}
           </div>
         </div>
-        <button onClick={() => setShowForm(true)} style={{
-          background: '#3b82f6', border: 'none', borderRadius: 10,
-          padding: '10px 18px', color: '#fff', cursor: 'pointer',
-          fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
-        }}>
+        <button onClick={() => setShowForm(true)} className="pt-add-btn">
           <Plus size={15} /> Ajouter une pièce
         </button>
       </div>
 
       {/* Add form */}
       {showForm && (
-        <div style={{
-          background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.25)',
-          borderRadius: 14, padding: '20px 24px', marginBottom: 20,
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-            <span style={{ fontWeight: 700, fontSize: 15 }}>Nouvelle pièce</span>
-            <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}>
+        <div className="pt-form">
+          <div className="pt-form-header">
+            <span className="pt-form-title">Nouvelle pièce</span>
+            <button onClick={() => setShowForm(false)} title="Fermer" aria-label="Fermer" className="pt-form-close-btn">
               <X size={16} />
             </button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div className="pt-form-grid">
             {[
-              { key: 'ref',      label: 'Référence',  placeholder: 'MRC-006' },
-              { key: 'name',     label: 'Nom pièce',  placeholder: 'Nom de la pièce' },
-              { key: 'stock',    label: 'Stock',      placeholder: '0' },
-              { key: 'maxStock', label: 'Stock max',  placeholder: '5' },
+              { key: 'ref',      label: 'Référence',    placeholder: 'MRC-006' },
+              { key: 'name',     label: 'Nom pièce',    placeholder: 'Nom de la pièce' },
+              { key: 'stock',    label: 'Stock',        placeholder: '0' },
+              { key: 'maxStock', label: 'Stock max',    placeholder: '5' },
               { key: 'seuil',    label: 'Seuil alerte', placeholder: '1' },
             ].map(f => (
               <div key={f.key}>
-                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 5 }}>{f.label}</div>
+                <div className="pt-form-label">{f.label}</div>
                 <input
                   value={(form as Record<string,string>)[f.key]}
                   onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
                   placeholder={f.placeholder}
-                  style={{
-                    width: '100%', background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
-                    padding: '8px 12px', color: '#e2e8f0', fontSize: 13,
-                    boxSizing: 'border-box',
-                  }}
+                  className="pt-form-input"
                 />
               </div>
             ))}
           </div>
 
           {/* File picker */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 5 }}>Fichier pièce (SolidWorks, PDF...)</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <button onClick={() => fileRef.current?.click()} style={{
-                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 8, padding: '8px 16px', color: '#94a3b8',
-                cursor: 'pointer', fontSize: 13,
-              }}>
+          <div className="pt-file-section">
+            <div className="pt-form-label">Fichier pièce (SolidWorks, PDF...)</div>
+            <div className="pt-file-row">
+              <button onClick={() => fileRef.current?.click()} className="pt-file-btn">
                 📂 Choisir un fichier
               </button>
-              {fichier && <span style={{ fontSize: 13, color: '#22c55e' }}>✓ {fichier}</span>}
-              <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={handleFile}
-                accept=".sldprt,.sldasm,.stp,.step,.pdf,.dwg,.dxf,.stl" />
+              {fichier && <span className="pt-file-name">✓ {fichier}</span>}
+              <input ref={fileRef} type="file" className="pt-file-hidden" onChange={handleFile}
+                title="Choisir un fichier" accept=".sldprt,.sldasm,.stp,.step,.pdf,.dwg,.dxf,.stl" />
             </div>
           </div>
 
-          <button onClick={ajouter} style={{
-            background: '#3b82f6', border: 'none', borderRadius: 8,
-            padding: '9px 20px', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-          }}>
-            Ajouter
-          </button>
+          <button onClick={ajouter} className="pt-submit-btn">Ajouter</button>
         </div>
       )}
 
       {/* Pieces list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="pt-list">
         {pieces.map(p => {
           const st  = getStatus(p);
           const pct = Math.min(100, (p.stock / p.maxStock) * 100);
           const barColor = p.stock === 0 ? '#ef4444' : p.stock <= p.seuil ? '#f97316' : '#22c55e';
 
           return (
-            <div key={p.id} style={{
-              background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
-              borderRadius: 12, padding: '16px 20px',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+            <div key={p.id} className="pt-piece-card">
+              <div className="pt-piece-top">
                 <div>
-                  <div style={{ fontSize: 11, color: '#3b82f6', fontWeight: 600, marginBottom: 2 }}>{p.ref}</div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: '#f1f5f9' }}>{p.name}</div>
-                  {p.fichier && (
-                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>📎 {p.fichier}</div>
-                  )}
+                  <div className="pt-piece-ref">{p.ref}</div>
+                  <div className="pt-piece-name">{p.name}</div>
+                  {p.fichier && <div className="pt-piece-file">📎 {p.fichier}</div>}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{
-                    fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
-                    background: st.color + '18', border: `1px solid ${st.color}44`, color: st.color,
-                    display: 'flex', alignItems: 'center', gap: 4,
-                  }}>
+                <div className="pt-piece-actions">
+                  <span className="pt-status-badge" style={{ background: st.color + '18', border: `1px solid ${st.color}44`, color: st.color }}>
                     {st.icon === 'ok'   && <CheckCircle size={12} />}
                     {st.icon === 'warn' && <AlertTriangle size={12} />}
                     {st.icon === 'x'    && <XCircle size={12} />}
                     {st.label}
                   </span>
-                  <button onClick={() => utiliser(p.id)} disabled={p.stock === 0} style={{
-                    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8, padding: '5px 14px', color: p.stock === 0 ? '#475569' : '#e2e8f0',
-                    cursor: p.stock === 0 ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
-                  }}>
+                  <button onClick={() => utiliser(p.id)} disabled={p.stock === 0} className="pt-use-btn">
                     Utiliser
                   </button>
-                  <button onClick={() => supprimer(p.id)} style={{
-                    background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: 4,
-                  }}>
+                  <button onClick={() => supprimer(p.id)} title="Supprimer" aria-label="Supprimer la pièce" className="pt-del-btn">
                     <X size={14} />
                   </button>
                 </div>
               </div>
 
-              {/* Progress bar */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3 }}>
-                  <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 3, transition: 'width 0.4s' }} />
+              <div className="pt-bar-row">
+                <div className="pt-bar-bg">
+                  <div className="pt-bar-fill" style={{ width: `${pct}%`, background: barColor }} />
                 </div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: barColor, minWidth: 50, textAlign: 'right' }}>
-                  {p.stock}<span style={{ color: '#475569', fontWeight: 400 }}>/{p.maxStock} pcs</span>
+                <span className="pt-bar-count" style={{ color: barColor }}>
+                  {p.stock}<span className="pt-bar-max">/{p.maxStock} pcs</span>
                 </span>
               </div>
 
-              {/* Seuil */}
-              <div style={{ marginTop: 6, fontSize: 12, color: '#64748b', display: 'flex', gap: 12 }}>
+              <div className="pt-piece-footer">
                 <span>Seuil: <strong style={{ color: '#94a3b8' }}>{p.seuil} pcs</strong></span>
-                {p.stock === 0 && <span style={{ color: '#ef4444', fontWeight: 600 }}>⚠ RUPTURE DE STOCK</span>}
-                {p.stock > 0 && p.stock <= p.seuil && <span style={{ color: '#f97316', fontWeight: 600 }}>⚠ Stock faible</span>}
+                {p.stock === 0 && <span className="pt-rupture">⚠ RUPTURE DE STOCK</span>}
+                {p.stock > 0 && p.stock <= p.seuil && <span className="pt-faible">⚠ Stock faible</span>}
               </div>
             </div>
           );

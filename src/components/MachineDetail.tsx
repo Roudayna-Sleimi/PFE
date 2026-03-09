@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Settings, Wrench, Wifi, Activity } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:5000', { transports: ['websocket'] });
+import { ArrowLeft, Settings, Wrench, Activity } from 'lucide-react';
 import PiecesTab from './Piecestab';
+import MaintenanceTab from './MaintenanceTab';
 
 interface Machine {
   id: string;
@@ -29,7 +33,11 @@ interface Props {
   onBack: () => void;
 }
 
-const TABS = ['Capteurs', 'Fonctions', 'Pièces', 'Maintenance', 'Historique'];
+const getTabs = (machineId: string) => {
+  const base = ['Capteurs', 'Fonctions', 'Maintenance', 'Historique'];
+  if (machineId === 'rectifieuse') return ['Capteurs', 'Fonctions', 'Pièces', 'Maintenance', 'Historique'];
+  return base;
+};
 
 const tabIcon: Record<string, string> = {
   Capteurs: '🔌',
@@ -54,85 +62,109 @@ const sensorTag = (label: string, color: string) => (
   }}>{label}</span>
 );
 
+interface LiveData {
+  vibration: number;
+  courant: number;
+  rpm: number;
+  isLive: boolean;
+}
+
 const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const [activeTab, setActiveTab] = useState('Capteurs');
+  const [live, setLive] = useState<LiveData>({
+    vibration: machine.vibration,
+    courant: machine.courant,
+    rpm: machine.rpm,
+    isLive: false,
+  });
   const st = statusStyle(machine.status);
 
-  const vibPct   = Math.min(100, (machine.vibration / 5) * 100);
-  const couPct   = Math.min(100, (machine.courant / 30) * 100);
-  const rpmPct   = Math.min(100, (machine.rpm / 4000) * 100);
+  const [isConnected, setIsConnected] = useState(false);
+
+  useEffect(() => {
+    socket.on('connect', () => setIsConnected(true));
+    socket.on('disconnect', () => setIsConnected(false));
+    return () => { socket.off('connect'); socket.off('disconnect'); };
+  }, []);
+
+  // Live ESP32 data
+  useEffect(() => {
+    const handler = (data: { node: string; courant: number; vibX: number; vibY: number; vibZ: number; rpm: number }) => {
+      if (data.node !== machine.node) return;
+      const vib = parseFloat(Math.sqrt(data.vibX**2 + data.vibY**2 + data.vibZ**2).toFixed(2));
+      setLive({ vibration: vib, courant: data.courant, rpm: data.rpm, isLive: true });
+    };
+    socket.on('sensor-data', handler);
+    return () => { socket.off('sensor-data', handler); };
+  }, [machine.node]);
+
+  // Simulation when not connected
+  useEffect(() => {
+    if (isConnected) return;
+    const interval = setInterval(() => {
+      const t = Date.now();
+      const baseVib = machine.id === 'rectifieuse' ? 1.4 : 2.8;
+      const baseCou = machine.id === 'rectifieuse' ? 12.3 : 18.5;
+      const baseRpm = machine.id === 'rectifieuse' ? 3096 : 1450;
+      setLive(prev => ({
+        ...prev,
+        vibration: parseFloat((baseVib + Math.sin(t / 2000) * 0.4 + Math.random() * 0.2).toFixed(2)),
+        courant:   parseFloat((baseCou + Math.sin(t / 3000) * 2 + Math.random() * 0.5).toFixed(1)),
+        rpm:       Math.round(baseRpm + Math.sin(t / 4000) * 80 + Math.random() * 30),
+        isLive: false,
+      }));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isConnected, machine.id]);
+
+  const vibPct   = Math.min(100, (live.vibration / 5) * 100);
+  const couPct   = Math.min(100, (live.courant / 30) * 100);
+  const rpmPct   = Math.min(100, (live.rpm / 4000) * 100);
 
   return (
-    <div style={{ padding: '28px 40px', color: '#e2e8f0', minHeight: '100vh' }}>
+    <div className="md-page">
 
       {/* Back */}
-      <button onClick={onBack} style={{
-        background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer',
-        fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
-        marginBottom: 24, padding: 0,
-      }}>
+      <button onClick={onBack} className="md-back-btn">
         <ArrowLeft size={16} /> Retour aux machines
       </button>
 
       {/* Machine header card */}
-      <div style={{
-        background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 16, padding: '20px 28px', marginBottom: 24,
-        display: 'flex', alignItems: 'center', gap: 20,
-      }}>
-        {/* Icon */}
-        <div style={{
-          width: 60, height: 60, borderRadius: 14,
-          background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-        }}>
+      <div className="md-header-card">
+        <div className="md-icon-box">
           {machine.icon === 'gear' ? <Settings size={26} color="#94a3b8" /> : <Wrench size={26} color="#94a3b8" />}
         </div>
 
-        {/* Info */}
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#f1f5f9', marginBottom: 4 }}>
-            {machine.name}
-          </div>
-          <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>{machine.model}</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div className="md-info">
+          <div className="md-machine-name">{machine.name}</div>
+          <div className="md-machine-model">{machine.model}</div>
+          <div className="md-tags">
             {sensorTag(machine.node, '#22c55e')}
             {sensorTag(machine.ip, '#a855f7')}
             {sensorTag(machine.chipModel, '#3b82f6')}
-            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 5, fontWeight: 700, color: '#64748b', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              {machine.machId}
-            </span>
+            <span className="md-tag-muted">{machine.machId}</span>
           </div>
         </div>
 
-        {/* Status + santé */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-          <span style={{
-            fontSize: 12, fontWeight: 600, padding: '5px 14px', borderRadius: 20,
-            display: 'flex', alignItems: 'center', gap: 6,
-            background: st.bg, border: `1px solid ${st.border}`, color: st.color,
-          }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: st.color, display: 'inline-block' }} />
+        <div className="md-side">
+          <span className="md-status-badge" style={{ background: st.bg, border: `1px solid ${st.border}`, color: st.color }}>
+            <span className="md-status-dot" style={{ background: st.color }} />
             {machine.status}
           </span>
-          <span style={{ fontSize: 18, fontWeight: 800, color: santeColor(machine.sante) }}>
+          <span className="md-sante" style={{ color: santeColor(machine.sante) }}>
             {machine.sante}% santé
           </span>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 0 }}>
-        {TABS.map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)} style={{
-            background: activeTab === tab ? '#3b82f6' : 'transparent',
-            border: 'none', borderRadius: '8px 8px 0 0',
-            padding: '10px 20px', cursor: 'pointer',
-            color: activeTab === tab ? '#fff' : '#64748b',
-            fontSize: 13, fontWeight: 600,
-            display: 'flex', alignItems: 'center', gap: 6,
-            transition: 'all 0.15s',
-          }}>
+      <div className="md-tabs">
+        {getTabs(machine.id).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`md-tab-btn${activeTab === tab ? ' active' : ''}`}
+          >
             {tabIcon[tab]} {tab}
           </button>
         ))}
@@ -140,129 +172,93 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
       {/* Tab content */}
       {activeTab === 'Capteurs' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-
-          {/* Mesures en Temps Réel */}
-          <div style={{
-            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 14, padding: '24px 28px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
+        <div className="md-capteurs-grid">
+          <div className="md-card">
+            <div className="md-card-title-row">
               <Activity size={16} color="#3b82f6" />
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Mesures en Temps Réel</span>
+              <span className="md-card-title">Mesures en Temps Réel</span>
+              <span className={`md-live-badge ${live.isLive ? 'live' : 'sim'}`}>
+                {live.isLive ? '● LIVE' : '◎ SIMULATION'}
+              </span>
             </div>
 
             {/* Vibration */}
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, color: '#94a3b8' }}>Vibration</span>
+            <div className="md-metric">
+              <div className="md-metric-row">
+                <div className="md-metric-left">
+                  <span className="md-metric-label">Vibration</span>
                   {sensorTag('ADXL345', '#3b82f6')}
                   {sensorTag('GPIO21/22 I2C', '#06b6d4')}
                 </div>
-                <span style={{ fontSize: 16, fontWeight: 700, color: '#3b82f6' }}>{machine.vibration}</span>
+                <span className="md-metric-value" style={{ color: '#3b82f6' }}>{live.vibration}</span>
               </div>
-              <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3 }}>
-                <div style={{ height: '100%', width: `${vibPct}%`, background: 'linear-gradient(90deg,#3b82f6,#06b6d4)', borderRadius: 3, transition: 'width 0.5s' }} />
+              <div className="md-bar-bg">
+                <div className="md-bar-fill md-bar-vib" style={{ width: `${vibPct}%` }} />
               </div>
             </div>
 
             {/* Courant */}
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, color: '#94a3b8' }}>Courant électrique</span>
+            <div className="md-metric">
+              <div className="md-metric-row">
+                <div className="md-metric-left">
+                  <span className="md-metric-label">Courant électrique</span>
                   {sensorTag('SCT-013', '#f97316')}
                   {sensorTag('GPIO34 ADC', '#a855f7')}
                 </div>
-                <span style={{ fontSize: 16, fontWeight: 700, color: '#f97316' }}>{machine.courant}</span>
+                <span className="md-metric-value" style={{ color: '#f97316' }}>{live.courant}</span>
               </div>
-              <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3 }}>
-                <div style={{ height: '100%', width: `${couPct}%`, background: 'linear-gradient(90deg,#f97316,#fbbf24)', borderRadius: 3, transition: 'width 0.5s' }} />
+              <div className="md-bar-bg">
+                <div className="md-bar-fill md-bar-cou" style={{ width: `${couPct}%` }} />
               </div>
             </div>
 
             {/* RPM */}
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, color: '#94a3b8' }}>Vitesse rotation</span>
+            <div className="md-metric" style={{ marginBottom: 24 }}>
+              <div className="md-metric-row">
+                <div className="md-metric-left">
+                  <span className="md-metric-label">Vitesse rotation</span>
                   {sensorTag('Hall Sensor', '#22c55e')}
                   {sensorTag('GPIO35', '#06b6d4')}
                 </div>
-                <span style={{ fontSize: 16, fontWeight: 700, color: '#22c55e' }}>{machine.rpm}</span>
+                <span className="md-metric-value" style={{ color: '#22c55e' }}>{live.rpm}</span>
               </div>
-              <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3 }}>
-                <div style={{ height: '100%', width: `${rpmPct}%`, background: 'linear-gradient(90deg,#22c55e,#86efac)', borderRadius: 3, transition: 'width 0.5s' }} />
+              <div className="md-bar-bg">
+                <div className="md-bar-fill md-bar-rpm" style={{ width: `${rpmPct}%` }} />
               </div>
             </div>
 
-            {/* LED indicators */}
-            <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 8 }}>
+            {/* LEDs */}
+            <div className="md-leds">
               {[
                 { label: 'D12 GREEN', color: '#22c55e', on: true },
                 { label: 'D14 YEL',   color: '#fbbf24', on: false },
                 { label: 'D27 RED',   color: '#ef4444', on: false },
                 { label: 'D26 BLK',   color: '#475569', on: false },
               ].map(led => (
-                <div key={led.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                  <div style={{
-                    width: 14, height: 14, borderRadius: '50%',
+                <div key={led.label} className="md-led-item">
+                  <div className="md-led-dot" style={{
                     background: led.on ? led.color : 'rgba(255,255,255,0.08)',
                     boxShadow: led.on ? `0 0 8px ${led.color}` : 'none',
                   }} />
-                  <span style={{ fontSize: 10, color: '#475569' }}>{led.label}</span>
+                  <span className="md-led-label">{led.label}</span>
                 </div>
               ))}
             </div>
-          </div>
-
-          {/* Statut Connexion */}
-          <div style={{
-            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 14, padding: '24px 28px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
-              <Wifi size={16} color="#3b82f6" />
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Statut Connexion</span>
-            </div>
-
-            {[
-              { label: 'Nœud',        value: machine.node,     color: '#3b82f6' },
-              { label: 'Adresse IP',  value: machine.ip,       color: '#e2e8f0' },
-              { label: 'Protocole',   value: machine.protocol, color: '#06b6d4' },
-              { label: 'Broker MQTT', value: machine.broker,   color: '#a855f7' },
-              { label: 'Latence',     value: machine.latence,  color: '#22c55e' },
-              { label: 'Uptime',      value: machine.uptime,   color: '#e2e8f0' },
-            ].map(row => (
-              <div key={row.label} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.05)',
-              }}>
-                <span style={{ fontSize: 13, color: '#64748b' }}>{row.label}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: row.color }}>{row.value}</span>
-              </div>
-            ))}
           </div>
         </div>
       )}
 
       {activeTab === 'Fonctions' && machine.fonctions && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+          <div className="md-fonctions-title-row">
             <span style={{ fontSize: 16 }}>⚡</span>
-            <span style={{ fontWeight: 700, fontSize: 17 }}>Fonctions de la Machine</span>
+            <span className="md-fonctions-title">Fonctions de la Machine</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="md-fonctions-list">
             {machine.fonctions.map((f, i) => (
-              <div key={i} style={{
-                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
-                borderRadius: 12, padding: '16px 20px',
-              }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: '#e2e8f0', marginBottom: 4 }}>
-                  ▸ {f.title}
-                </div>
-                <div style={{ fontSize: 13, color: '#64748b' }}>{f.desc}</div>
+              <div key={i} className="md-fonction-card">
+                <div className="md-fonction-title">▸ {f.title}</div>
+                <div className="md-fonction-desc">{f.desc}</div>
               </div>
             ))}
           </div>
@@ -270,15 +266,13 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       )}
 
       {activeTab === 'Pièces' && <PiecesTab machineId={machine.id} />}
+      {activeTab === 'Maintenance' && <MaintenanceTab machineId={machine.id} />}
 
-      {activeTab !== 'Capteurs' && activeTab !== 'Fonctions' && activeTab !== 'Pièces' && (
-        <div style={{
-          background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
-          borderRadius: 14, padding: '60px 28px', textAlign: 'center', color: '#475569',
-        }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>{tabIcon[activeTab]}</div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>Section {activeTab}</div>
-          <div style={{ fontSize: 13, marginTop: 6 }}>Bientôt disponible</div>
+      {activeTab !== 'Capteurs' && activeTab !== 'Fonctions' && activeTab !== 'Pièces' && activeTab !== 'Maintenance' && (
+        <div className="md-soon-card">
+          <div className="md-soon-icon">{tabIcon[activeTab]}</div>
+          <div className="md-soon-title">Section {activeTab}</div>
+          <div className="md-soon-sub">Bientôt disponible</div>
         </div>
       )}
     </div>

@@ -64,37 +64,35 @@ const MachinesPage: React.FC = () => {
   if (selected) return <MachineDetail machine={selected} onBack={() => setSelected(null)} />;
 
   return (
-    <div style={{ padding: '32px 40px', color: '#e2e8f0', minHeight: '100vh' }}>
-      <div style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: '#f1f5f9' }}>Machines Industrielles</h2>
-        <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>Cliquez sur une machine pour afficher ses détails</p>
+    <div className="machines-page">
+      <div className="machines-page-header">
+        <h2>Machines Industrielles</h2>
+        <p>Cliquez sur une machine pour afficher ses détails</p>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="machines-list">
         {MACHINES.map(m => {
           const st = statusStyle(m.status);
           return (
-            <div key={m.id} onClick={() => setSelected(m)}
-              style={{ background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:14, padding:'20px 28px', cursor:'pointer', transition:'border 0.2s' }}
-              onMouseEnter={e => (e.currentTarget.style.border = '1px solid rgba(59,130,246,0.35)')}
-              onMouseLeave={e => (e.currentTarget.style.border = '1px solid rgba(255,255,255,0.07)')}
-            >
-              <div style={{ display:'flex', alignItems:'center', gap:20 }}>
-                <div style={{ width:52,height:52,borderRadius:12,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.1)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
+            <div key={m.id} onClick={() => setSelected(m)} className="machine-card">
+              <div className="machine-card-inner">
+                <div className="machine-icon-box">
                   {m.icon==='gear' ? <Settings size={22} color="#94a3b8"/> : <Wrench size={22} color="#94a3b8"/>}
                 </div>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontWeight:700,fontSize:17,color:'#f1f5f9',marginBottom:4 }}>{m.name}</div>
-                  <div style={{ fontSize:12,color:'#64748b',marginBottom:10 }}>{m.model}</div>
-                  <div style={{ display:'flex',flexWrap:'wrap',gap:6 }}>
-                    <span style={{ fontSize:11,padding:'3px 10px',borderRadius:6,fontWeight:600,background:'rgba(34,197,94,0.12)',border:'1px solid rgba(34,197,94,0.3)',color:'#22c55e' }}>{m.node}</span>
-                    <span style={{ fontSize:11,padding:'3px 10px',borderRadius:6,fontWeight:600,background:'rgba(168,85,247,0.12)',border:'1px solid rgba(168,85,247,0.3)',color:'#a855f7' }}>{m.ip}</span>
-                    {m.sensors.map(s => <span key={s} style={{ fontSize:11,padding:'3px 10px',borderRadius:6,fontWeight:600,background:(SC[s]||'#94a3b8')+'22',border:`1px solid ${(SC[s]||'#94a3b8')}55`,color:SC[s]||'#94a3b8' }}>{s}</span>)}
+                <div className="machine-info">
+                  <div className="machine-name">{m.name}</div>
+                  <div className="machine-model">{m.model}</div>
+                  <div className="machine-tags">
+                    <span className="machine-tag machine-tag-node">{m.node}</span>
+                    <span className="machine-tag machine-tag-ip">{m.ip}</span>
+                    {m.sensors.map(s => (
+                      <span key={s} className="machine-tag" style={{ background:(SC[s]||'#94a3b8')+'22', border:`1px solid ${(SC[s]||'#94a3b8')}55`, color:SC[s]||'#94a3b8' }}>{s}</span>
+                    ))}
                   </div>
                 </div>
-                <div style={{ display:'flex',flexDirection:'column',alignItems:'flex-end',gap:10,flexShrink:0 }}>
-                  <span style={{ fontSize:22,fontWeight:800,color:santeColor(m.sante) }}>{m.sante}%</span>
-                  <span style={{ fontSize:12,fontWeight:600,padding:'4px 12px',borderRadius:20,display:'flex',alignItems:'center',gap:5,background:st.bg,border:`1px solid ${st.border}`,color:st.color }}>
-                    <span style={{ width:7,height:7,borderRadius:'50%',background:st.color,display:'inline-block' }}/>{m.status}
+                <div className="machine-side">
+                  <span className="machine-sante" style={{ color: santeColor(m.sante) }}>{m.sante}%</span>
+                  <span className="machine-status-badge" style={{ background:st.bg, border:`1px solid ${st.border}`, color:st.color }}>
+                    <span className="machine-status-dot" style={{ background:st.color }}/>{m.status}
                   </span>
                 </div>
                 <ChevronRight size={18} color="#475569"/>
