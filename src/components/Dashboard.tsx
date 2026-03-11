@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {LayoutDashboard, Settings, Activity, Heart, Bell, Wifi, Zap, Thermometer, 
-  Pause, Sun, Moon, X, MessageSquare} from 'lucide-react';
+  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut} from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
 import MessagingPage from './MessagingPage';
 import MachinesPage from './MachinesPage';
+import DemandesPage from './Demandespage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -39,7 +40,8 @@ const Dashboard: React.FC = () => {
   const [chartData, setChartData]           = useState<ChartPoint[]>([]);
   const [showMessaging, setShowMessaging]   = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
-  const [activePage, setActivePage] = useState<'dashboard' | 'machines'>('dashboard');
+  const role = localStorage.getItem('role');
+  const [activePage, setActivePage] = useState<'dashboard' | 'machines' | 'demandes'>('dashboard');
 
   const addPoint = useCallback((data: SensorData) => {
     const timeLabel = new Date().toLocaleTimeString('fr-FR');
@@ -111,6 +113,13 @@ const Dashboard: React.FC = () => {
   const toggleTheme  = useCallback(() => setDarkMode(p => !p), []);
   const togglePaused = useCallback(() => setPaused(p => !p), []);
 
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    localStorage.removeItem('role');
+    window.location.href = '/';
+  }, []);
+
   const handleOpenMessaging = () => {
     setShowMessaging(true);
     setUnreadMessages(0);
@@ -143,17 +152,18 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Nav */}
-        <nav>
+        <nav className="flex-1">
           <div className="flex flex-col gap-2">
             <span className={`text-[10px] font-semibold ${txtMut} uppercase tracking-[1.5px] mb-2 pl-3`}>NAVIGATION</span>
             <ul className="list-none flex flex-col gap-1 p-0 m-0">
               {([
-                { key: 'dashboard', icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
-                { key: 'machines',  icon: <Settings size={18} />,        label: 'Machines' },
-              ] as const).map(item => (
+                { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
+                { key: 'machines'  as const, icon: <Settings size={18} />,        label: 'Machines' },
+                ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
+              ]).map(item => (
                 <li
                   key={item.key}
-                  onClick={() => setActivePage(item.key)}
+                  onClick={() => setActivePage(item.key as 'dashboard' | 'machines' | 'demandes')}
                   className={`flex items-center gap-3 px-3 py-3 rounded-[10px] cursor-pointer transition-all duration-300 text-sm font-medium
                     ${activePage === item.key
                       ? 'text-[#00d4ff] border border-[rgba(0,212,255,0.2)]'
@@ -166,6 +176,23 @@ const Dashboard: React.FC = () => {
             </ul>
           </div>
         </nav>
+
+        {/* User + Logout */}
+        <div className={`mt-auto pt-4 border-t ${border}`}>
+          <div className={`flex items-center gap-2 px-3 py-2 mb-2 rounded-lg ${bgCard}`}>
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#0066ff] to-[#00d4ff] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+              {(localStorage.getItem('username') || 'U').charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-white text-xs font-semibold truncate">{localStorage.getItem('username')}</div>
+              <div className="text-slate-500 text-[10px] capitalize">{role}</div>
+            </div>
+          </div>
+          <button onClick={handleLogout}
+            className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-[10px] text-sm font-medium cursor-pointer transition-all border border-transparent text-red-400 hover:bg-red-500/10 hover:border-red-500/20`}>
+            <LogOut size={16} /> Déconnexion
+          </button>
+        </div>
       </aside>
 
       {/* MAIN */}
@@ -217,12 +244,19 @@ const Dashboard: React.FC = () => {
               <Pause size={14} />
               {paused ? 'Reprendre' : 'Pause'}
             </button>
+
+            <button onClick={handleLogout} title="Déconnexion"
+              className={`w-9 h-9 rounded-lg ${bgCard} border ${border} flex items-center justify-center cursor-pointer transition-all text-red-400 hover:bg-red-500/10 hover:border-red-500/20 flex-shrink-0`}>
+              <LogOut size={17} />
+            </button>
           </div>
         </header>
 
         {/* Content */}
         {activePage === 'machines' ? (
           <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
+        ) : activePage === 'demandes' ? (
+          <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
         ) : (
           <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 w-full">
 

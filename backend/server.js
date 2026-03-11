@@ -27,13 +27,25 @@ mongoose.connect(process.env.MONGO_URI)
 const userSchema = new mongoose.Schema({
   username:  { type: String, required: true, unique: true },
   password:  { type: String, required: true },
-  role:      { type: String, default: 'admin' },
+  role:      { type: String, default: 'user' },
   isOnline:  { type: Boolean, default: false },
   lastSeen:  { type: Date, default: null },
   socketId:  { type: String, default: null },
   createdAt: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
+
+// ═══ Schema Demande d'accès ═══
+const demandeSchema = new mongoose.Schema({
+  nom:        { type: String, required: true },
+  email:      { type: String, required: true },
+  poste:      { type: String, required: true },
+  telephone:  { type: String, required: true },
+  statut:     { type: String, default: 'en attente' }, // 'en attente' | 'approuvée' | 'refusée'
+  username:   { type: String, default: null },          // attribué par admin
+  createdAt:  { type: Date, default: Date.now }
+});
+const Demande = mongoose.model('Demande', demandeSchema);
 
 // Direct Messages (1:1) — TTL 30 jours
 const directMessageSchema = new mongoose.Schema({
@@ -53,10 +65,9 @@ const sensorSchema = new mongoose.Schema({
 });
 const SensorData = mongoose.model('SensorData', sensorSchema);
 
-// ═══ Chat Schema — TTL 24h ═══
 const messageSchema = new mongoose.Schema({
   username:  { type: String, required: true },
-  role:      { type: String, default: "user" },
+  role:      { type: String, default: 'user' },
   text:      { type: String, required: true },
   createdAt: { type: Date, default: Date.now, expires: 86400 }
 });
@@ -72,6 +83,11 @@ const authMiddleware = (req, res, next) => {
   } catch {
     res.status(401).json({ message: 'Token invalide' });
   }
+};
+
+const adminMiddleware = (req, res, next) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' });
+  next();
 };
 
 // ═══ Auth Routes ═══
@@ -103,6 +119,77 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '8h' }
     );
     res.json({ token, username: user.username, role: user.role });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// ═══ Demandes d'accès ═══
+
+// Employé soumet une demande (public — pas besoin de token)
+app.post('/api/demandes', async (req, res) => {
+  try {
+    const { nom, email, poste, telephone } = req.body;
+    if (!nom || !email || !poste || !telephone)
+      return res.status(400).json({ message: 'Tous les champs sont requis' });
+    const demande = await Demande.create({ nom, email, poste, telephone });
+    // Notifier l'admin via socket
+    io.emit('nouvelle-demande', { id: demande._id, nom, email, poste });
+    res.status(201).json({ message: '✅ Demande envoyée avec succès' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// Admin: voir toutes les demandes
+app.get('/api/demandes', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const demandes = await Demande.find().sort({ createdAt: -1 });
+    res.json(demandes);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+// Admin: approuver une demande + créer le compte
+app.post('/api/demandes/:id/approuver', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password)
+      return res.status(400).json({ message: 'Username et mot de passe requis' });
+
+    const demande = await Demande.findById(req.params.id);
+    if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
+    if (demande.statut !== 'en attente')
+      return res.status(400).json({ message: 'Demande déjà traitée' });
+
+    // Vérifier si username déjà pris
+    const exists = await User.findOne({ username });
+    if (exists) return res.status(409).json({ message: 'Username déjà utilisé' });
+
+    // Créer le compte employé
+    const hashed = await bcrypt.hash(password, 12);
+    await User.create({ username, password: hashed, role: 'employe' });
+
+    // Mettre à jour la demande
+    demande.statut   = 'approuvée';
+    demande.username = username;
+    await demande.save();
+
+    res.json({ message: `✅ Compte créé pour ${username}` });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// Admin: refuser une demande
+app.post('/api/demandes/:id/refuser', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const demande = await Demande.findById(req.params.id);
+    if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
+    demande.statut = 'refusée';
+    await demande.save();
+    res.json({ message: '❌ Demande refusée' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -179,8 +266,6 @@ mqttClient.on('message', async (topic, message) => {
     const data = JSON.parse(message.toString());
     await SensorData.create(data);
     io.emit('sensor-data', data);
-
-    // Alertes automatiques
     const alerts = [];
     if (data.courant > 20)
       alerts.push({ type: 'critical', message: `⚡ Courant critique: ${data.courant}A`, node: data.node });
@@ -190,7 +275,6 @@ mqttClient.on('message', async (topic, message) => {
       alerts.push({ type: 'critical', message: `📳 Vibration critique détectée!`, node: data.node });
     else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)
       alerts.push({ type: 'warning', message: `📳 Vibration élevée`, node: data.node });
-
     alerts.forEach(alert => io.emit('alert', alert));
   } catch (err) {
     console.error('❌ Erreur MQTT:', err.message);
@@ -198,19 +282,17 @@ mqttClient.on('message', async (topic, message) => {
 });
 
 // ═══ Socket.IO ═══
-const connectedUsers = new Map(); // socketId -> { username, role }
+const connectedUsers = new Map();
 
 io.on('connection', (socket) => {
   console.log('🖥️ Client connecté:', socket.id);
 
-  // User comes online
   socket.on('user-online', async ({ username, role }) => {
     connectedUsers.set(socket.id, { username, role });
     await User.updateOne({ username }, { isOnline: true, socketId: socket.id });
     io.emit('user-status', { username, isOnline: true });
   });
 
-  // ─── Direct Messages ───
   socket.on('send-direct-message', async ({ from, fromRole, to, text }) => {
     try {
       if (!text?.trim()) return;
@@ -229,30 +311,24 @@ io.on('connection', (socket) => {
     socket.emit('messages-read', { from });
   });
 
-  // Historique sur demande — messages des 24 dernières heures
   socket.on('get-history', async () => {
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const messages = await Message.find({ createdAt: { $gte: since } })
-        .sort({ createdAt: 1 })
-        .limit(100);
+        .sort({ createdAt: 1 }).limit(100);
       socket.emit('chat-history', messages);
     } catch (err) {
       console.error('❌ Erreur get-history:', err.message);
     }
   });
 
-  // Nouveau message
   socket.on('send-message', async ({ username, role, text }) => {
     try {
       if (!text?.trim() || !username) return;
       const msg = await Message.create({ username, role: role || 'user', text: text.trim() });
       io.emit('new-message', {
-        _id:       msg._id,
-        username:  msg.username,
-        role:      msg.role,
-        text:      msg.text,
-        createdAt: msg.createdAt
+        _id: msg._id, username: msg.username,
+        role: msg.role, text: msg.text, createdAt: msg.createdAt
       });
     } catch (err) {
       console.error('❌ Erreur chat:', err.message);

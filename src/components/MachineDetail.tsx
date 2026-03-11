@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:5000', { transports: ['websocket'] });
 import { ArrowLeft, Settings, Wrench, Activity } from 'lucide-react';
-import PiecesTab from './Piecestab';
+import PiecesTab from './PiecesTab';
 import MaintenanceTab from './MaintenanceTab';
 
 interface Machine {
