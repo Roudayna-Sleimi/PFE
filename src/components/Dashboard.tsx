@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {LayoutDashboard, Settings, Activity, Heart, Bell, Wifi, Zap, Thermometer, 
-  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut} from 'lucide-react';
+  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut, CheckSquare} from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
@@ -9,6 +9,7 @@ import {
 import MessagingPage from './MessagingPage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
+import TasksPage from './Taskspage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -41,7 +42,7 @@ const Dashboard: React.FC = () => {
   const [showMessaging, setShowMessaging]   = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const role = localStorage.getItem('role');
-  const [activePage, setActivePage] = useState<'dashboard' | 'machines' | 'demandes'>('dashboard');
+  const [activePage, setActivePage] = useState<'dashboard' | 'machines' | 'demandes' | 'tasks'>('dashboard');
 
   const addPoint = useCallback((data: SensorData) => {
     const timeLabel = new Date().toLocaleTimeString('fr-FR');
@@ -159,11 +160,12 @@ const Dashboard: React.FC = () => {
               {([
                 { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
                 { key: 'machines'  as const, icon: <Settings size={18} />,        label: 'Machines' },
+                { key: 'tasks'     as const, icon: <CheckSquare size={18} />,     label: 'Tâches' },
                 ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
               ]).map(item => (
                 <li
                   key={item.key}
-                  onClick={() => setActivePage(item.key as 'dashboard' | 'machines' | 'demandes')}
+                  onClick={() => setActivePage(item.key as 'dashboard' | 'machines' | 'demandes' | 'tasks')}
                   className={`flex items-center gap-3 px-3 py-3 rounded-[10px] cursor-pointer transition-all duration-300 text-sm font-medium
                     ${activePage === item.key
                       ? 'text-[#00d4ff] border border-[rgba(0,212,255,0.2)]'
@@ -257,6 +259,8 @@ const Dashboard: React.FC = () => {
           <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
         ) : activePage === 'demandes' ? (
           <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
+        ) : activePage === 'tasks' ? (
+          <div className="flex-1 overflow-y-auto"><TasksPage /></div>
         ) : (
           <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 w-full">
 

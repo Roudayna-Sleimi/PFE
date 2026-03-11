@@ -47,6 +47,19 @@ const demandeSchema = new mongoose.Schema({
 });
 const Demande = mongoose.model('Demande', demandeSchema);
 
+// ═══ Schema Tasks ═══
+const taskSchema = new mongoose.Schema({
+  titre:       { type: String, required: true },
+  description: { type: String, default: '' },
+  priorite:    { type: String, default: 'moyenne' }, // 'haute' | 'moyenne' | 'basse'
+  deadline:    { type: Date,   default: null },
+  assigneA:    { type: String, default: null },       // username de l'employé
+  statut:      { type: String, default: 'à faire' },  // 'à faire' | 'en cours' | 'terminée'
+  creePar:     { type: String, required: true },       // username admin
+  createdAt:   { type: Date,   default: Date.now }
+});
+const Task = mongoose.model('Task', taskSchema);
+
 // Direct Messages (1:1) — TTL 30 jours
 const directMessageSchema = new mongoose.Schema({
   from:      { type: String, required: true },
@@ -202,6 +215,67 @@ app.get('/api/users', authMiddleware, async (req, res) => {
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+// ═══ Tasks ═══
+
+// Créer une task (admin)
+app.post('/api/tasks', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { titre, description, priorite, deadline, assigneA } = req.body;
+    if (!titre) return res.status(400).json({ message: 'Titre requis' });
+    const task = await Task.create({
+      titre, description, priorite, deadline, assigneA,
+      creePar: req.user.username
+    });
+    // Notifier en temps réel
+    io.emit('nouvelle-task', task);
+    res.status(201).json(task);
+  } catch (err) {
+    console.error('❌ Erreur création task:', err.message);
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// Voir les tasks
+// Admin → toutes | Employé → ses tasks
+app.get('/api/tasks', authMiddleware, async (req, res) => {
+  try {
+    const filter = req.user.role === 'admin' ? {} : { assigneA: req.user.username };
+    const tasks  = await Task.find(filter).sort({ createdAt: -1 });
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+// Modifier statut (employé ou admin)
+app.patch('/api/tasks/:id', authMiddleware, async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ message: 'Task introuvable' });
+    // Employé ne peut modifier que ses propres tasks
+    if (req.user.role !== 'admin' && task.assigneA !== req.user.username)
+      return res.status(403).json({ message: 'Accès refusé' });
+    const allowed = ['titre', 'description', 'priorite', 'deadline', 'assigneA', 'statut'];
+    allowed.forEach(f => { if (req.body[f] !== undefined) task[f] = req.body[f]; });
+    await task.save();
+    io.emit('task-updated', task);
+    res.json(task);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// Supprimer (admin)
+app.delete('/api/tasks/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await Task.findByIdAndDelete(req.params.id);
+    io.emit('task-deleted', { id: req.params.id });
+    res.json({ message: '✅ Task supprimée' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
