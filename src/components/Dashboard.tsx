@@ -36,6 +36,7 @@ const Dashboard: React.FC = () => {
   const [darkMode, setDarkMode]             = useState(true);
   const [currentTime, setCurrentTime]       = useState(new Date());
   const [connected, setConnected]           = useState(false);
+  const [hasLiveData, setHasLiveData]       = useState(false);
   const [paused, setPaused]                 = useState(false);
   const [latest, setLatest]                 = useState<SensorData>(generateSimData());
   const [chartData, setChartData]           = useState<ChartPoint[]>([]);
@@ -84,6 +85,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     socket.on('sensor-data', (data: SensorData) => {
       if (paused) return;
+      setHasLiveData(true);
       setLatest(data);
       addPoint(data);
     });
@@ -91,7 +93,7 @@ const Dashboard: React.FC = () => {
   }, [paused, addPoint]);
 
   useEffect(() => {
-    if (connected) return;
+    if (hasLiveData) return; // Wokwi connecté — pas de simulation
     const interval = setInterval(() => {
       if (paused) return;
       const sim = generateSimData();
@@ -99,7 +101,7 @@ const Dashboard: React.FC = () => {
       addPoint(sim);
     }, 1000);
     return () => clearInterval(interval);
-  }, [connected, paused, addPoint]);
+  }, [hasLiveData, paused, addPoint]);
 
   const sante = useMemo(() => {
     const vibTotal = latest.vibX + latest.vibY + latest.vibZ;
@@ -211,7 +213,7 @@ const Dashboard: React.FC = () => {
             </span>
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full text-[11px] text-green-400 whitespace-nowrap">
               <span style={{ display:'inline-block', animation:'spin 3s linear infinite' }}>⟳</span>
-              <span>{connected ? '🟢 Live MQTT' : '🔵 Simulation'}</span>
+              <span>{hasLiveData ? '🟢 Live Wokwi' : '🔵 Simulation'}</span>
             </div>
           </div>
 

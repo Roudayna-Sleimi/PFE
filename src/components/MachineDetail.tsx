@@ -44,16 +44,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const [live, setLive] = useState<LiveData>({
     vibration: machine.vibration, courant: machine.courant, rpm: machine.rpm, isLive: false,
   });
-  const [isConnected, setIsConnected] = useState(false);
-  const st = statusStyle(machine.status);
-
-  useEffect(() => {
-    socket.on('connect',    () => setIsConnected(true));
-    socket.on('disconnect', () => setIsConnected(false));
-    return () => { socket.off('connect'); socket.off('disconnect'); };
-  }, []);
-
-  useEffect(() => {
+  const st = statusStyle(machine.status);  useEffect(() => {
     const handler = (data: { node: string; courant: number; vibX: number; vibY: number; vibZ: number; rpm: number }) => {
       if (data.node !== machine.node) return;
       const vib = parseFloat(Math.sqrt(data.vibX**2 + data.vibY**2 + data.vibZ**2).toFixed(2));
@@ -64,22 +55,25 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   }, [machine.node]);
 
   useEffect(() => {
-    if (isConnected) return;
+    if (live.isLive) return; // Wokwi connecté — simulation arrêtée
     const interval = setInterval(() => {
       const t = Date.now();
       const baseVib = machine.id === 'rectifieuse' ? 1.4 : 2.8;
       const baseCou = machine.id === 'rectifieuse' ? 12.3 : 18.5;
       const baseRpm = machine.id === 'rectifieuse' ? 3096 : 1450;
-      setLive(prev => ({
-        ...prev,
-        vibration: parseFloat((baseVib + Math.sin(t/2000)*0.4 + Math.random()*0.2).toFixed(2)),
-        courant:   parseFloat((baseCou + Math.sin(t/3000)*2   + Math.random()*0.5).toFixed(1)),
-        rpm:       Math.round(baseRpm + Math.sin(t/4000)*80   + Math.random()*30),
-        isLive: false,
-      }));
+      setLive(prev => {
+        if (prev.isLive) return prev; // double check
+        return {
+          ...prev,
+          vibration: parseFloat((baseVib + Math.sin(t/2000)*0.4 + Math.random()*0.2).toFixed(2)),
+          courant:   parseFloat((baseCou + Math.sin(t/3000)*2   + Math.random()*0.5).toFixed(1)),
+          rpm:       Math.round(baseRpm + Math.sin(t/4000)*80   + Math.random()*30),
+          isLive: false,
+        };
+      });
     }, 1000);
     return () => clearInterval(interval);
-  }, [isConnected, machine.id]);
+  }, [live.isLive, machine.id]);
 
   const vibPct = Math.min(100, (live.vibration / 5)    * 100);
   const couPct = Math.min(100, (live.courant   / 30)   * 100);

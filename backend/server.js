@@ -12,11 +12,11 @@ const app    = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: 'http://localhost:5173', methods: ['GET', 'POST'] }
+cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
 app.use(express.json());
-app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(cors({ origin: '*' }));
 
 // ═══ MongoDB ═══
 mongoose.connect(process.env.MONGO_URI)
@@ -421,4 +421,4 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`🚀 Serveur démarré sur le port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Serveur démarré sur le port ${PORT}`));
