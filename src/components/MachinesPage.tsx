@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Settings, Wrench, ChevronRight } from 'lucide-react';
-import MachineDetail from './Machinedetail';
+import MachineDetail from './MachineDetail';
 
 interface Machine {
   id: string; name: string; model: string; node: string; ip: string;
