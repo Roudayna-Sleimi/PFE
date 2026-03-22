@@ -6,7 +6,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import MessagingPage from './MessagingPage';
+import MessagingPage from './Messagingpage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import TasksPage from './Taskspage';

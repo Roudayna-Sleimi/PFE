@@ -86,6 +86,59 @@ const messageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', messageSchema);
 
+const alertSchema = new mongoose.Schema({
+  machineId:    { type: String, default: 'UNKNOWN' },
+  node:         { type: String, default: 'UNKNOWN' },
+  type:         { type: String, default: 'system' },
+  severity:     { type: String, enum: ['warning', 'critical'], default: 'warning' },
+  message:      { type: String, required: true },
+  status:       { type: String, enum: ['new', 'seen', 'notified', 'resolved'], default: 'new' },
+  createdAt:    { type: Date, default: Date.now },
+  seenAt:       { type: Date, default: null },
+  seenBy:       { type: String, default: null },
+  notifiedAt:   { type: Date, default: null },
+  notifiedBy:   { type: String, default: null },
+  callAttempts: { type: Number, default: 0 },
+  ai: {
+    source:   { type: String, default: 'rules' },
+    label:    { type: String, default: null },
+    proba:    { type: mongoose.Schema.Types.Mixed, default: null },
+    model:    { type: String, default: null },
+    version:  { type: String, default: null },
+  },
+  sensorSnapshot: {
+    vibX:    { type: Number, default: null },
+    vibY:    { type: Number, default: null },
+    vibZ:    { type: Number, default: null },
+    courant: { type: Number, default: null },
+    rpm:     { type: Number, default: null },
+  },
+});
+const Alert = mongoose.model('Alert', alertSchema);
+
+const contactSchema = new mongoose.Schema({
+  role:         { type: String, default: 'responsable' },
+  name:         { type: String, required: true },
+  phonePrimary: { type: String, required: true },
+  phoneBackup:  { type: String, default: null },
+  isActive:     { type: Boolean, default: true },
+  createdAt:    { type: Date, default: Date.now }
+});
+const Contact = mongoose.model('Contact', contactSchema);
+
+const callLogSchema = new mongoose.Schema({
+  alertId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Alert', required: true },
+  phoneNumber:  { type: String, required: true },
+  attemptNo:    { type: Number, required: true },
+  callStatus:   { type: String, default: 'queued' },
+  providerRef:  { type: String, default: null },
+  calledAt:     { type: Date, default: Date.now },
+  endedAt:      { type: Date, default: null },
+  durationSec:  { type: Number, default: null },
+  errorMessage: { type: String, default: null },
+});
+const CallLog = mongoose.model('CallLog', callLogSchema);
+
 // ═══ Auth Middleware ═══
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -99,9 +152,19 @@ const authMiddleware = (req, res, next) => {
 };
 
 const adminMiddleware = (req, res, next) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Accès refusé' });
+  if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' });
   next();
 };
+
+const serviceKeyMiddleware = (req, res, next) => {
+  const expected = process.env.AI_SERVICE_KEY;
+  if (!expected) return res.status(500).json({ message: 'AI_SERVICE_KEY non configuree' });
+  const received = req.headers['x-service-key'];
+  if (received !== expected) return res.status(403).json({ message: 'Service key invalide' });
+  next();
+};
+
+const sanitizeSeverity = (value) => value === 'critical' ? 'critical' : 'warning';
 
 // ═══ Auth Routes ═══
 app.post('/api/auth/register', async (req, res) => {
@@ -325,10 +388,181 @@ app.get('/api/sensors/history', authMiddleware, async (req, res) => {
   }
 });
 
+app.get('/api/alerts', authMiddleware, async (req, res) => {
+  try {
+    const { status, limit = 100 } = req.query;
+    const filter = {};
+    if (status) filter.status = status;
+    const alerts = await Alert.find(filter).sort({ createdAt: -1 }).limit(Number(limit));
+    res.json(alerts);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/alerts/pending', serviceKeyMiddleware, async (req, res) => {
+  try {
+    const maxAgeMinutes = Number(req.query.maxAgeMinutes || 5);
+    const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+    const alerts = await Alert.find({
+      status: 'new',
+      seenAt: null,
+      createdAt: { $lte: cutoff }
+    }).sort({ createdAt: 1 }).limit(200);
+    res.json(alerts);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/alerts', authMiddleware, async (req, res) => {
+  try {
+    const { machineId, node, type, severity, message, sensorSnapshot, ai } = req.body;
+    if (!message) return res.status(400).json({ message: 'Message requis' });
+    const alert = await Alert.create({
+      machineId: machineId || 'UNKNOWN',
+      node: node || 'UNKNOWN',
+      type: type || 'manual',
+      severity: sanitizeSeverity(severity),
+      message,
+      sensorSnapshot: sensorSnapshot || {},
+      ai: ai || { source: 'manual' }
+    });
+    io.emit('alert', alert);
+    res.status(201).json(alert);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.patch('/api/alerts/:id/seen', authMiddleware, async (req, res) => {
+  try {
+    const alert = await Alert.findById(req.params.id);
+    if (!alert) return res.status(404).json({ message: 'Alerte introuvable' });
+    if (alert.status !== 'resolved') {
+      alert.status = 'seen';
+      alert.seenAt = new Date();
+      alert.seenBy = req.user.username;
+      await alert.save();
+    }
+    res.json(alert);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.patch('/api/alerts/:id/resolve', authMiddleware, async (req, res) => {
+  try {
+    const alert = await Alert.findById(req.params.id);
+    if (!alert) return res.status(404).json({ message: 'Alerte introuvable' });
+    alert.status = 'resolved';
+    if (!alert.seenAt) {
+      alert.seenAt = new Date();
+      alert.seenBy = req.user.username;
+    }
+    await alert.save();
+    res.json(alert);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.patch('/api/alerts/:id/notified', serviceKeyMiddleware, async (req, res) => {
+  try {
+    const { notifiedBy = 'gsm-supervisor' } = req.body || {};
+    const alert = await Alert.findById(req.params.id);
+    if (!alert) return res.status(404).json({ message: 'Alerte introuvable' });
+    alert.status = 'notified';
+    alert.notifiedAt = new Date();
+    alert.notifiedBy = notifiedBy;
+    alert.callAttempts = (alert.callAttempts || 0) + 1;
+    await alert.save();
+    res.json(alert);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/contacts', authMiddleware, async (req, res) => {
+  try {
+    const contacts = await Contact.find().sort({ createdAt: -1 });
+    res.json(contacts);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/contacts/active', serviceKeyMiddleware, async (req, res) => {
+  try {
+    const contact = await Contact.findOne({ isActive: true }).sort({ createdAt: -1 });
+    res.json(contact);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/contacts', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { role, name, phonePrimary, phoneBackup, isActive = true } = req.body;
+    if (!name || !phonePrimary) return res.status(400).json({ message: 'Nom et numero requis' });
+    const contact = await Contact.create({ role, name, phonePrimary, phoneBackup, isActive });
+    res.status(201).json(contact);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.patch('/api/contacts/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const updates = ['role', 'name', 'phonePrimary', 'phoneBackup', 'isActive']
+      .reduce((acc, key) => {
+        if (req.body[key] !== undefined) acc[key] = req.body[key];
+        return acc;
+      }, {});
+    const contact = await Contact.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!contact) return res.status(404).json({ message: 'Contact introuvable' });
+    res.json(contact);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/call-logs', serviceKeyMiddleware, async (req, res) => {
+  try {
+    const { alertId, phoneNumber, attemptNo, callStatus, providerRef, durationSec, errorMessage } = req.body;
+    if (!alertId || !phoneNumber || !attemptNo)
+      return res.status(400).json({ message: 'alertId, phoneNumber, attemptNo requis' });
+    const log = await CallLog.create({
+      alertId,
+      phoneNumber,
+      attemptNo,
+      callStatus: callStatus || 'queued',
+      providerRef: providerRef || null,
+      durationSec: durationSec || null,
+      errorMessage: errorMessage || null
+    });
+    res.status(201).json(log);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/call-logs/:alertId', authMiddleware, async (req, res) => {
+  try {
+    const logs = await CallLog.find({ alertId: req.params.alertId }).sort({ calledAt: -1 });
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 // ═══ MQTT ═══
 const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
 
 mqttClient.on('connect', () => {
+  mqttClient.subscribe('cncpulse/gsm/result', err => {
+    if (!err) console.log('Subscribed: cncpulse/gsm/result');
+  });
   console.log('✅ MQTT connecté à HiveMQ');
   mqttClient.subscribe('cncpulse/sensors', err => {
     if (!err) console.log('📡 Abonné au topic: cncpulse/sensors');
@@ -338,18 +572,60 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', async (topic, message) => {
   try {
     const data = JSON.parse(message.toString());
+    if (topic === 'cncpulse/gsm/result') {
+      const { alertId, status, phoneNumber, providerRef, durationSec, errorMessage } = data;
+      if (!alertId) return;
+      const alert = await Alert.findById(alertId);
+      if (!alert) return;
+      const nextAttempt = (alert.callAttempts || 0) + 1;
+      await CallLog.create({
+        alertId,
+        phoneNumber: phoneNumber || 'unknown',
+        attemptNo: nextAttempt,
+        callStatus: status || 'unknown',
+        providerRef: providerRef || null,
+        durationSec: durationSec || null,
+        errorMessage: errorMessage || null,
+      });
+      if (status === 'success') {
+        alert.status = 'notified';
+        alert.notifiedAt = new Date();
+        alert.notifiedBy = 'gsm';
+      }
+      alert.callAttempts = nextAttempt;
+      await alert.save();
+      io.emit('gsm-result', { alertId, status: status || 'unknown' });
+      return;
+    }
     await SensorData.create(data);
     io.emit('sensor-data', data);
     const alerts = [];
     if (data.courant > 20)
-      alerts.push({ type: 'critical', message: `⚡ Courant critique: ${data.courant}A`, node: data.node });
+      alerts.push({ severity: 'critical', message: 'Current critical: ' + data.courant + 'A', node: data.node, type: 'sensor' });
     else if (data.courant > 15)
-      alerts.push({ type: 'warning', message: `⚡ Courant élevé: ${data.courant}A`, node: data.node });
+      alerts.push({ severity: 'warning', message: 'Current elevated: ' + data.courant + 'A', node: data.node, type: 'sensor' });
     if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)
-      alerts.push({ type: 'critical', message: `📳 Vibration critique détectée!`, node: data.node });
+      alerts.push({ severity: 'critical', message: 'Vibration critique detectee', node: data.node, type: 'sensor' });
     else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)
-      alerts.push({ type: 'warning', message: `📳 Vibration élevée`, node: data.node });
-    alerts.forEach(alert => io.emit('alert', alert));
+      alerts.push({ severity: 'warning', message: 'Vibration elevee', node: data.node, type: 'sensor' });
+    for (const alert of alerts) {
+      const savedAlert = await Alert.create({
+        machineId: data.machineId || data.node || 'UNKNOWN',
+        node: data.node || 'UNKNOWN',
+        type: alert.type || 'sensor',
+        severity: sanitizeSeverity(alert.severity),
+        message: alert.message,
+        ai: { source: 'rules', label: alert.severity || 'warning' },
+        sensorSnapshot: {
+          vibX: data.vibX,
+          vibY: data.vibY,
+          vibZ: data.vibZ,
+          courant: data.courant,
+          rpm: data.rpm,
+        }
+      });
+      io.emit('alert', savedAlert);
+    }
   } catch (err) {
     console.error('❌ Erreur MQTT:', err.message);
   }
@@ -422,3 +698,4 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`🚀 Serveur démarré sur le port ${PORT}`));
+
