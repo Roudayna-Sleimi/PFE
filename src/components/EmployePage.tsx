@@ -5,56 +5,45 @@ import { io, Socket } from "socket.io-client";
 const BASE_URL = "http://localhost:5000";
 
 interface Sensor {
-  node: string;
-  courant: number;
-  vibX: number;
-  vibY: number;
-  vibZ: number;
-  rpm: number;
-  createdAt: string;
+  node: string; courant: number;
+  vibX: number; vibY: number; vibZ: number;
+  rpm: number; pression?: number; createdAt: string;
 }
-
 interface Task {
-  _id: string;
-  titre: string;
-  description: string;
-  priorite: string;
-  statut: string;
-  deadline: string | null;
-  assigneA: string;
+  _id: string; titre: string; description: string;
+  priorite: string; statut: string; deadline: string | null; assigneA: string;
 }
-
 interface Message {
-  _id: string;
-  from: string;
-  fromRole: string;
-  to: string;
-  text: string;
-  createdAt: string;
+  _id: string; from: string; fromRole: string;
+  to: string; text: string; createdAt: string;
 }
 
 const EmployePage: React.FC = () => {
-  const navigate = useNavigate();
-  const token    = localStorage.getItem("token") || "";
-  const username = localStorage.getItem("username") || "";
+  const navigate  = useNavigate();
+  const token     = localStorage.getItem("token") || "";
+  const username  = localStorage.getItem("username") || "";
   const socketRef = useRef<Socket | null>(null);
 
-  const [tab, setTab]           = useState<"machines" | "taches" | "messages">("machines");
-  const [sensors, setSensors]   = useState<Sensor[]>([]);
-  const [tasks, setTasks]       = useState<Task[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [msgText, setMsgText]   = useState("");
+  const [tab, setTab]             = useState<"machines"|"taches"|"messages">("machines");
+  const [rectData, setRectData]   = useState<Sensor | null>(null);
+  const [compData, setCompData]   = useState<Sensor | null>(null);
+  const [tasks, setTasks]         = useState<Task[]>([]);
+  const [messages, setMessages]   = useState<Message[]>([]);
+  const [msgText, setMsgText]     = useState("");
+  const [unreadMsg, setUnreadMsg] = useState(0);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-  // ── Load data ──
   useEffect(() => {
     fetch(`${BASE_URL}/api/sensors/history`, { headers })
-      .then(r => r.json()).then(setSensors).catch(() => {});
+      .then(r => r.json())
+      .then((data: Sensor[]) => {
+        const rect = [...data].reverse().find(s => s.node !== 'compresseur');
+        const comp = [...data].reverse().find(s => s.node === 'compresseur');
+        if (rect) setRectData(rect);
+        if (comp) setCompData(comp);
+      }).catch(() => {});
 
     fetch(`${BASE_URL}/api/tasks`, { headers })
       .then(r => r.json()).then(setTasks).catch(() => {});
@@ -63,21 +52,38 @@ const EmployePage: React.FC = () => {
       .then(r => r.json()).then(setMessages).catch(() => {});
   }, []);
 
-  // ── Socket.IO ──
   useEffect(() => {
     const socket = io(BASE_URL, { transports: ["websocket"] });
     socketRef.current = socket;
-
     socket.emit("user-online", { username, role: "employe" });
 
     socket.on("sensor-data", (data: Sensor) => {
-      setSensors(prev => [...prev.slice(-49), data]);
+      if (data.node === 'compresseur') setCompData(data);
+      else setRectData(data);
+    });
+
+    socket.on("alert", (data: { severity: string; message: string; node: string }) => {
+      const alertDiv = document.createElement('div');
+      alertDiv.style.cssText = `
+        position: fixed; top: 80px; right: 24px; z-index: 9999;
+        padding: 16px 20px; border-radius: 12px; font-size: 13px;
+        font-weight: 600; color: white; max-width: 350px;
+        background: ${data.severity === 'critical' ? '#ef4444' : '#f59e0b'};
+        box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        border-left: 4px solid ${data.severity === 'critical' ? '#b91c1c' : '#d97706'};
+        cursor: pointer;
+      `;
+      alertDiv.innerHTML = `
+        <div>${data.severity === 'critical' ? '🚨 CRITIQUE' : '⚠️ ATTENTION'}</div>
+        <div style="font-weight:400;opacity:0.9;margin-top:4px">${data.message}</div>
+      `;
+      alertDiv.onclick = () => alertDiv.remove();
+      document.body.appendChild(alertDiv);
+      setTimeout(() => alertDiv.remove(), 8000);
     });
 
     socket.on("nouvelle-task", (data: Task) => {
-      if (data.assigneA === username) {
-        setTasks(prev => [data, ...prev]);
-      }
+      if (data.assigneA === username) setTasks(prev => [data, ...prev]);
     });
 
     socket.on("task-updated", (data: Task) => {
@@ -86,216 +92,295 @@ const EmployePage: React.FC = () => {
 
     socket.on("direct-message", (data: Message) => {
       setMessages(prev => [...prev, data]);
+      if (tab !== 'messages') setUnreadMsg(prev => prev + 1);
     });
 
     return () => { socket.disconnect(); };
   }, []);
 
-  // Auto scroll messages
   useEffect(() => {
     msgEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ── Update task status ──
   const updateTask = async (id: string, statut: string) => {
-    await fetch(`${BASE_URL}/api/tasks/${id}`, {
-      method: "PATCH",
-      headers,
-      body: JSON.stringify({ statut }),
+    const res = await fetch(`${BASE_URL}/api/tasks/${id}`, {
+      method: "PATCH", headers, body: JSON.stringify({ statut }),
     });
+    if (res.ok) {
+      const updated = await res.json();
+      setTasks(prev => prev.map(t => t._id === id ? updated : t));
+    }
   };
 
-  // ── Send message ──
   const sendMessage = () => {
     if (!msgText.trim()) return;
     socketRef.current?.emit("send-direct-message", {
-      from: username,
-      fromRole: "employe",
-      to: "admin",
-      text: msgText.trim(),
+      from: username, fromRole: "employe", to: "admin", text: msgText.trim(),
     });
     setMsgText("");
   };
 
-  // ── Logout ──
-  const logout = () => {
-    localStorage.clear();
-    navigate("/");
-  };
+  const santeRect = rectData ? parseFloat(Math.max(0, Math.min(100, 100 - (rectData.vibX + rectData.vibY + rectData.vibZ) * 5)).toFixed(0)) : 0;
+  const santeComp = compData ? parseFloat(Math.max(0, Math.min(100, 100 - (compData.vibX + compData.vibY + compData.vibZ) * 5)).toFixed(0)) : 0;
 
-  const lastSensor = sensors.length > 0 ? sensors[sensors.length - 1] : null;
+  const navItems = [
+    { key: "machines" as const, icon: "🏭", label: "Machines" },
+    { key: "taches"   as const, icon: "✅", label: "Mes Tâches" },
+    { key: "messages" as const, icon: "💬", label: "Messages", badge: unreadMsg },
+  ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f172a", color: "white", fontFamily: "sans-serif" }}>
+    <div style={{ display: "flex", minHeight: "100vh", background: "#0a0e27", color: "white", fontFamily: "sans-serif" }}>
 
-      {/* Header */}
-      <div style={{ background: "#1e293b", padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #334155" }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#3b82f6" }}>CNC Pulse</h1>
-          <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Bonjour, {username}</p>
+      {/* ── SIDEBAR ── */}
+      <aside style={{ width: 240, minWidth: 240, background: "#0f172a", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", padding: "20px 12px" }}>
+
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 32, paddingBottom: 20, borderBottom: "1px solid #1e293b" }}>
+          <div style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg,#0066ff,#00d4ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>⚡</div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, background: "linear-gradient(135deg,#0066ff,#00d4ff)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>CNC Pulse</div>
+            <div style={{ fontSize: 10, color: "#475569", textTransform: "uppercase", letterSpacing: 1 }}>Employé</div>
+          </div>
         </div>
-        <button onClick={logout} style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", padding: "6px 14px", borderRadius: 8, cursor: "pointer" }}>
-          Déconnexion
-        </button>
-      </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", background: "#1e293b", borderBottom: "1px solid #334155" }}>
-        {(["machines", "taches", "messages"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            flex: 1, padding: "14px", background: "transparent",
-            border: "none", borderBottom: tab === t ? "2px solid #3b82f6" : "2px solid transparent",
-            color: tab === t ? "#3b82f6" : "#64748b", cursor: "pointer", fontSize: 13, fontWeight: 600,
-            textTransform: "capitalize"
-          }}>
-            {t === "machines" ? "🏭 Machines" : t === "taches" ? "✅ Mes Tâches" : "💬 Messages"}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ padding: 20, maxWidth: 900, margin: "0 auto" }}>
-
-        {/* ── Machines Tab ── */}
-        {tab === "machines" && (
-          <div>
-            {["rectifieuse", "compresseur"].map(node => {
-              const isActive = lastSensor?.node === node;
-              return (
-                <div key={node} style={{
-                  background: "#1e293b", borderRadius: 14, padding: 20, marginBottom: 16,
-                  border: `1px solid ${isActive ? "#22c55e44" : "#334155"}`
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                    <h3 style={{ margin: 0, fontSize: 16, textTransform: "capitalize" }}>
-                      {node === "rectifieuse" ? "Rectifieuse" : "Compresseur ABAC"}
-                    </h3>
-                    <span style={{
-                      padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700,
-                      background: isActive ? "#14532d" : "#450a0a",
-                      color: isActive ? "#4ade80" : "#f87171"
-                    }}>
-                      {isActive ? "EN MARCHE" : "ARRÊT"}
-                    </span>
-                  </div>
-                  {lastSensor && (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                      {[
-                        { label: "Courant", value: `${lastSensor.courant ?? 0} A`, alert: (lastSensor.courant ?? 0) > 15 },
-                        { label: "Vibration X", value: `${lastSensor.vibX ?? 0} g`, alert: (lastSensor.vibX ?? 0) > 2 },
-                        { label: "RPM", value: `${lastSensor.rpm ?? 0}`, alert: false },
-                      ].map(s => (
-                        <div key={s.label} style={{ background: "#0f172a", borderRadius: 10, padding: "12px", textAlign: "center" }}>
-                          <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: s.alert ? "#f87171" : "#3b82f6" }}>{s.value}</p>
-                          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b" }}>{s.label}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ── Tâches Tab ── */}
-        {tab === "taches" && (
-          <div>
-            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Mes Tâches ({tasks.length})</h2>
-            {tasks.length === 0 && (
-              <p style={{ color: "#64748b" }}>Aucune tâche assignée</p>
-            )}
-            {tasks.map(task => {
-              const colors: Record<string, string> = {
-                "à faire": "#3b82f6",
-                "en cours": "#f59e0b",
-                "terminée": "#22c55e",
-              };
-              const color = colors[task.statut] || "#3b82f6";
-              return (
-                <div key={task._id} style={{
-                  background: "#1e293b", borderRadius: 12, padding: 16,
-                  marginBottom: 12, border: "1px solid #334155"
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                    <h4 style={{ margin: 0, fontSize: 14 }}>{task.titre}</h4>
-                    <span style={{
-                      padding: "3px 10px", borderRadius: 8, fontSize: 11,
-                      background: `${color}22`, color
-                    }}>{task.statut}</span>
-                  </div>
-                  {task.description && (
-                    <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>{task.description}</p>
-                  )}
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {task.statut === "à faire" && (
-                      <button onClick={() => updateTask(task._id, "en cours")} style={{
-                        background: "#1e40af", color: "white", border: "none",
-                        padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12
-                      }}>Commencer</button>
-                    )}
-                    {task.statut === "en cours" && (
-                      <button onClick={() => updateTask(task._id, "terminée")} style={{
-                        background: "#14532d", color: "#4ade80", border: "none",
-                        padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12
-                      }}>Terminer</button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ── Messages Tab ── */}
-        {tab === "messages" && (
-          <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 220px)" }}>
-            <h2 style={{ fontSize: 18, marginBottom: 16 }}>💬 Messages — Admin</h2>
-            <div style={{
-              flex: 1, overflowY: "auto", background: "#1e293b",
-              borderRadius: 12, padding: 16, marginBottom: 12
-            }}>
-              {messages.length === 0 && (
-                <p style={{ color: "#64748b", textAlign: "center" }}>Aucun message</p>
+        {/* Nav */}
+        <nav style={{ flex: 1 }}>
+          <div style={{ fontSize: 10, color: "#334155", fontWeight: 600, textTransform: "uppercase", letterSpacing: 2, marginBottom: 8, paddingLeft: 12 }}>NAVIGATION</div>
+          {navItems.map(item => (
+            <button key={item.key}
+              onClick={() => { setTab(item.key); if (item.key === 'messages') setUnreadMsg(0); }}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 10,
+                padding: "11px 12px", borderRadius: 10, border: "none", cursor: "pointer",
+                marginBottom: 4, fontSize: 13, fontWeight: 600, textAlign: "left",
+                background: tab === item.key ? "linear-gradient(135deg,rgba(0,102,255,0.2),rgba(0,212,255,0.2))" : "transparent",
+                color: tab === item.key ? "#00d4ff" : "#475569",
+                outline: tab === item.key ? "1px solid rgba(0,212,255,0.2)" : "none",
+                position: "relative",
+              }}>
+              <span style={{ fontSize: 16 }}>{item.icon}</span>
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {'badge' in item && (item as {badge: number}).badge > 0 && (
+                <span style={{ background: "#ef4444", borderRadius: "50%", width: 18, height: 18, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>
+                  {item.badge}
+                </span>
               )}
-              {messages.map((msg, i) => {
-                const isMe = msg.from === username;
+            </button>
+          ))}
+        </nav>
+
+        {/* User */}
+        <div style={{ borderTop: "1px solid #1e293b", paddingTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#1e293b", borderRadius: 10, marginBottom: 8 }}>
+            <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg,#0066ff,#00d4ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+              {username.charAt(0).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{username}</div>
+              <div style={{ fontSize: 10, color: "#475569" }}>Employé</div>
+            </div>
+          </div>
+          <button onClick={() => { localStorage.clear(); navigate("/"); }}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", background: "transparent", border: "none", borderRadius: 10, color: "#f87171", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            🚪 Déconnexion
+          </button>
+        </div>
+      </aside>
+
+      {/* ── MAIN ── */}
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+        {/* Header */}
+        <header style={{ background: "#0f172a", padding: "0 24px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #1e293b", flexShrink: 0 }}>
+          <div>
+            <span style={{ fontSize: 16, fontWeight: 700, color: "white" }}>
+              {tab === "machines" ? "🏭 Machines" : tab === "taches" ? "✅ Mes Tâches" : "💬 Messages"}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Bonjour, {username}</div>
+        </header>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+
+          {/* ── Machines ── */}
+          {tab === "machines" && (
+            <div style={{ maxWidth: 800 }}>
+              {/* Rectifieuse */}
+              <div style={{ background: "#0f172a", borderRadius: 16, padding: 20, marginBottom: 16, border: `1px solid ${rectData ? "#22c55e44" : "#1e293b"}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>⚙️ Rectifieuse</h3>
+                    <span style={{ fontSize: 11, color: "#475569" }}>ESP32-NODE-01</span>
+                  </div>
+                  <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: rectData ? "#14532d" : "#1e293b", color: rectData ? "#4ade80" : "#475569", border: `1px solid ${rectData ? "#22c55e44" : "#334155"}` }}>
+                    {rectData ? "✅ EN MARCHE" : "⭕ ARRÊT"}
+                  </span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
+                  {[
+                    { label: "Courant", value: `${rectData?.courant ?? 0} A`, color: (rectData?.courant ?? 0) > 15 ? "#ef4444" : "#22c55e", alert: (rectData?.courant ?? 0) > 15 },
+                    { label: "Vibration", value: `${rectData?.vibX?.toFixed(2) ?? 0} g`, color: (rectData?.vibX ?? 0) > 2 ? "#f97316" : "#3b82f6", alert: (rectData?.vibX ?? 0) > 2 },
+                    { label: "RPM", value: `${rectData?.rpm ?? 0}`, color: "#a855f7", alert: false },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: "#1e293b", borderRadius: 10, padding: "14px 10px", textAlign: "center", border: s.alert ? "1px solid rgba(239,68,68,0.3)" : "1px solid #334155" }}>
+                      <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</p>
+                      <p style={{ margin: "5px 0 0", fontSize: 11, color: "#64748b" }}>{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, background: "#1e293b", borderRadius: 999, height: 6 }}>
+                    <div style={{ height: 6, borderRadius: 999, width: `${santeRect}%`, background: santeRect > 70 ? "#22c55e" : santeRect > 40 ? "#f97316" : "#ef4444", transition: "width 0.5s" }} />
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", whiteSpace: "nowrap" }}>Santé {santeRect}%</span>
+                </div>
+              </div>
+
+              {/* Compresseur */}
+              <div style={{ background: "#0f172a", borderRadius: 16, padding: 20, border: `1px solid ${compData ? "#22c55e44" : "#1e293b"}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>🔧 Compresseur ABAC</h3>
+                    <span style={{ fontSize: 11, color: "#475569" }}>compresseur</span>
+                  </div>
+                  <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: compData ? "#14532d" : "#1e293b", color: compData ? "#4ade80" : "#475569", border: `1px solid ${compData ? "#22c55e44" : "#334155"}` }}>
+                    {compData ? "✅ EN MARCHE" : "⭕ ARRÊT"}
+                  </span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
+                  {[
+                    { label: "Courant", value: `${compData?.courant?.toFixed(1) ?? 0} A`, color: (compData?.courant ?? 0) > 15 ? "#ef4444" : "#22c55e", alert: (compData?.courant ?? 0) > 15 },
+                    { label: "Vibration", value: `${compData?.vibX?.toFixed(2) ?? 0} g`, color: (compData?.vibX ?? 0) > 2 ? "#f97316" : "#3b82f6", alert: (compData?.vibX ?? 0) > 2 },
+                    { label: "Pression", value: `${compData?.pression?.toFixed(1) ?? 0} bar`, color: "#06b6d4", alert: false },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: "#1e293b", borderRadius: 10, padding: "14px 10px", textAlign: "center", border: s.alert ? "1px solid rgba(239,68,68,0.3)" : "1px solid #334155" }}>
+                      <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</p>
+                      <p style={{ margin: "5px 0 0", fontSize: 11, color: "#64748b" }}>{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, background: "#1e293b", borderRadius: 999, height: 6 }}>
+                    <div style={{ height: 6, borderRadius: 999, width: `${santeComp}%`, background: santeComp > 70 ? "#22c55e" : santeComp > 40 ? "#f97316" : "#ef4444", transition: "width 0.5s" }} />
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", whiteSpace: "nowrap" }}>Santé {santeComp}%</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Tâches ── */}
+          {tab === "taches" && (
+            <div style={{ maxWidth: 800 }}>
+              <p style={{ color: "#475569", fontSize: 13, marginBottom: 20 }}>{tasks.length} tâche(s) assignée(s)</p>
+              {tasks.length === 0 && <p style={{ color: "#475569", textAlign: "center", padding: "60px 0" }}>Aucune tâche assignée</p>}
+              {tasks.map(task => {
+                const colors: Record<string, string> = { "à faire": "#3b82f6", "en cours": "#f59e0b", "terminée": "#22c55e" };
+                const pColors: Record<string, string> = { "haute": "#ef4444", "moyenne": "#f59e0b", "basse": "#22c55e" };
+                const color  = colors[task.statut]   || "#3b82f6";
+                const pColor = pColors[task.priorite] || "#f59e0b";
                 return (
-                  <div key={i} style={{
-                    display: "flex", justifyContent: isMe ? "flex-end" : "flex-start",
-                    marginBottom: 10
-                  }}>
-                    <div style={{
-                      maxWidth: "70%", padding: "10px 14px", borderRadius: 12,
-                      background: isMe ? "#1e40af" : "#0f172a",
-                      fontSize: 13
-                    }}>
-                      {msg.text}
+                  <div key={task._id} style={{ background: "#0f172a", borderRadius: 14, padding: 16, marginBottom: 12, border: "1px solid #1e293b", borderLeft: `4px solid ${color}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+                      <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600, flex: 1 }}>{task.titre}</h4>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: `${pColor}22`, color: pColor }}>{task.priorite}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: `${color}22`, color }}>{task.statut}</span>
+                      </div>
+                    </div>
+                    {task.description && <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>{task.description}</p>}
+                    {task.deadline && <p style={{ margin: "0 0 10px", fontSize: 11, color: "#475569" }}>📅 {new Date(task.deadline).toLocaleDateString('fr-FR')}</p>}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {task.statut === "à faire" && (
+                        <button onClick={() => updateTask(task._id, "en cours")}
+                          style={{ background: "#1e40af", color: "white", border: "none", padding: "7px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                          ▶ Commencer
+                        </button>
+                      )}
+                      {task.statut === "en cours" && (
+                        <button onClick={() => updateTask(task._id, "terminée")}
+                          style={{ background: "#14532d", color: "#4ade80", border: "1px solid #22c55e44", padding: "7px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                          ✅ Terminer
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
               })}
-              <div ref={msgEndRef} />
             </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <input
-                value={msgText}
-                onChange={e => setMsgText(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && sendMessage()}
-                placeholder="Écrire un message..."
-                style={{
-                  flex: 1, background: "#1e293b", border: "1px solid #334155",
-                  borderRadius: 10, padding: "10px 14px", color: "white", fontSize: 13
-                }}
-              />
-              <button onClick={sendMessage} style={{
-                background: "#1e40af", color: "white", border: "none",
-                padding: "10px 20px", borderRadius: 10, cursor: "pointer", fontSize: 13
-              }}>Envoyer</button>
-            </div>
-          </div>
-        )}
+          )}
 
+          {/* ── Messages ── */}
+          {/* ── Messages ── */}
+{tab === "messages" && (
+  <div style={{ maxWidth: 800, display: "flex", flexDirection: "column", height: "calc(100vh - 160px)" }}>
+    
+    {/* Chat header */}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#0f172a", borderRadius: "14px 14px 0 0", border: "1px solid #1e293b", borderBottom: "none" }}>
+      <div style={{ width: 38, height: 38, borderRadius: "50%", background: "linear-gradient(135deg,#0066ff,#00d4ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>A</div>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "white" }}>Admin</div>
+        <div style={{ fontSize: 11, color: "#22c55e" }}>● En ligne</div>
       </div>
+    </div>
+
+    {/* Messages */}
+    <div style={{ flex: 1, overflowY: "auto", background: "#080d1a", padding: "16px", border: "1px solid #1e293b", borderTop: "none", borderBottom: "none" }}>
+      {messages.length === 0 && (
+        <div style={{ textAlign: "center", color: "#334155", marginTop: 60 }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>💬</div>
+          <div style={{ fontSize: 14 }}>Aucun message — Commencez la conversation</div>
+        </div>
+      )}
+      {messages.map((msg, i) => {
+        const isMe = msg.from === username;
+        return (
+          <div key={i} style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start", marginBottom: 8, gap: 8, alignItems: "flex-end" }}>
+            {!isMe && (
+              <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg,#0066ff,#00d4ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>A</div>
+            )}
+            <div style={{ maxWidth: "65%", display: "flex", flexDirection: "column", alignItems: isMe ? "flex-end" : "flex-start" }}>
+              <div style={{
+                padding: "10px 14px",
+                borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                background: isMe ? "linear-gradient(135deg,#1e40af,#3b82f6)" : "#1e293b",
+                fontSize: 13, lineHeight: 1.5, color: "white",
+                boxShadow: isMe ? "0 2px 8px rgba(59,130,246,0.3)" : "none",
+              }}>
+                {msg.text}
+              </div>
+              <div style={{ fontSize: 10, color: "#334155", marginTop: 3, paddingLeft: 4, paddingRight: 4 }}>
+                {new Date(msg.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </div>
+            {isMe && (
+              <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#334155", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+                {username.charAt(0).toUpperCase()}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div ref={msgEndRef} />
+    </div>
+
+    {/* Input */}
+    <div style={{ display: "flex", gap: 10, padding: "12px 14px", background: "#0f172a", borderRadius: "0 0 14px 14px", border: "1px solid #1e293b", borderTop: "1px solid #1e293b" }}>
+      <input value={msgText} onChange={e => setMsgText(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()}
+        placeholder="Écrire un message..."
+        style={{ flex: 1, background: "#1e293b", border: "1px solid #334155", borderRadius: 24, padding: "10px 18px", color: "white", fontSize: 13, outline: "none" }} />
+      <button onClick={sendMessage}
+        style={{ width: 42, height: 42, borderRadius: "50%", background: "linear-gradient(135deg,#0066ff,#00d4ff)", color: "white", border: "none", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        ➤
+      </button>
+    </div>
+  </div>
+)}
+
+        </div>
+      </main>
     </div>
   );
 };

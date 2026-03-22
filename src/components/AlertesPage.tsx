@@ -1,0 +1,185 @@
+import React, { useState, useEffect } from 'react';
+import { io } from 'socket.io-client';
+
+interface Alert {
+  _id: string;
+  node: string;
+  severity: 'critical' | 'warning';
+  message: string;
+  status: string;
+  createdAt: string;
+  type: string;
+  sensorSnapshot?: {
+    vibX?: number; vibY?: number; vibZ?: number;
+    courant?: number; rpm?: number;
+  };
+}
+
+const socket = io('http://localhost:5000', { transports: ['websocket'] });
+
+const AlertesPage: React.FC = () => {
+  const [alerts, setAlerts]     = useState<Alert[]>([]);
+  const [filter, setFilter]     = useState<'all' | 'critical' | 'warning' | 'new' | 'resolved'>('all');
+  const [loading, setLoading]   = useState(true);
+  const token = localStorage.getItem('token') || '';
+
+  const fetchAlerts = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/alerts?limit=50', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setAlerts(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAlerts();
+    socket.on('alert', (data: Alert) => {
+      setAlerts(prev => [data, ...prev].slice(0, 50));
+    });
+    return () => { socket.off('alert'); };
+  }, []);
+
+  const markResolved = async (id: string) => {
+    await fetch(`http://localhost:5000/api/alerts/${id}/resolve`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setAlerts(prev => prev.map(a => a._id === id ? { ...a, status: 'resolved' } : a));
+  };
+
+  const filtered = alerts.filter(a => {
+    if (filter === 'all')      return true;
+    if (filter === 'critical') return a.severity === 'critical';
+    if (filter === 'warning')  return a.severity === 'warning';
+    if (filter === 'new')      return a.status === 'new';
+    if (filter === 'resolved') return a.status === 'resolved';
+    return true;
+  });
+
+  const counts = {
+    total:    alerts.length,
+    critical: alerts.filter(a => a.severity === 'critical').length,
+    warning:  alerts.filter(a => a.severity === 'warning').length,
+    new:      alerts.filter(a => a.status === 'new').length,
+  };
+
+  return (
+    <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full" style={{ background: 'transparent' }}>
+
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-white mb-1">Alertes</h2>
+          <p className="text-sm text-slate-500">Historique et alertes en temps réel</p>
+        </div>
+        <button onClick={fetchAlerts}
+          className="px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm font-medium cursor-pointer hover:bg-blue-500/30 transition-all">
+          🔄 Actualiser
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        {[
+          { label: 'Total',    value: counts.total,    color: '#94a3b8', bg: 'rgba(148,163,184,0.1)',  border: 'rgba(148,163,184,0.2)' },
+          { label: 'Critiques',value: counts.critical, color: '#ef4444', bg: 'rgba(239,68,68,0.1)',   border: 'rgba(239,68,68,0.2)' },
+          { label: 'Attention',value: counts.warning,  color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.2)' },
+          { label: 'Nouvelles',value: counts.new,      color: '#3b82f6', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.2)' },
+        ].map(s => (
+          <div key={s.label} className="rounded-xl p-4 text-center"
+            style={{ background: s.bg, border: `1px solid ${s.border}` }}>
+            <div className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</div>
+            <div className="text-xs text-slate-500 mt-1">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-2 mb-6 flex-wrap">
+        {(['all','critical','warning','new','resolved'] as const).map(f => (
+          <button key={f} onClick={() => setFilter(f)}
+            className={`px-4 py-1.5 rounded-full text-xs font-semibold cursor-pointer border transition-all
+              ${filter === f
+                ? 'bg-[#00d4ff] text-black border-[#00d4ff]'
+                : 'bg-transparent text-slate-400 border-slate-700 hover:border-slate-500'}`}>
+            {f === 'all' ? 'Toutes' : f === 'critical' ? '🔴 Critiques' : f === 'warning' ? '🟡 Attention' : f === 'new' ? '🔵 Nouvelles' : '✅ Résolues'}
+          </button>
+        ))}
+      </div>
+
+      {/* Alerts List */}
+      {loading ? (
+        <div className="text-center text-slate-500 py-10">Chargement...</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center text-slate-500 py-10">Aucune alerte</div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {filtered.map(alert => (
+            <div key={alert._id} className="rounded-xl p-4 flex items-start gap-4"
+              style={{
+                background: alert.severity === 'critical' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+                border: `1px solid ${alert.severity === 'critical' ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`,
+                borderLeft: `4px solid ${alert.severity === 'critical' ? '#ef4444' : '#f59e0b'}`,
+                opacity: alert.status === 'resolved' ? 0.6 : 1,
+              }}>
+
+              {/* Icon */}
+              <div className="text-2xl flex-shrink-0 mt-0.5">
+                {alert.severity === 'critical' ? '🚨' : '⚠️'}
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className="font-semibold text-white text-sm">{alert.message}</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                    style={{
+                      background: alert.severity === 'critical' ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)',
+                      color: alert.severity === 'critical' ? '#ef4444' : '#f59e0b'
+                    }}>
+                    {alert.severity.toUpperCase()}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700 text-slate-300">
+                    {alert.type}
+                  </span>
+                  {alert.status === 'resolved' && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/20 text-green-400">
+                      ✅ RÉSOLU
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
+                  <span>🖥️ {alert.node}</span>
+                  <span>🕐 {new Date(alert.createdAt).toLocaleString('fr-FR')}</span>
+                  {alert.sensorSnapshot?.courant != null && (
+                    <span>⚡ {alert.sensorSnapshot.courant.toFixed(1)} A</span>
+                  )}
+                  {alert.sensorSnapshot?.vibX != null && (
+                    <span>📳 {alert.sensorSnapshot.vibX.toFixed(2)} g</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Action */}
+              {alert.status !== 'resolved' && (
+                <button onClick={() => markResolved(alert._id)}
+                  className="flex-shrink-0 px-3 py-1.5 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-xs font-medium cursor-pointer hover:bg-green-500/30 transition-all whitespace-nowrap">
+                  ✅ Résoudre
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AlertesPage;
