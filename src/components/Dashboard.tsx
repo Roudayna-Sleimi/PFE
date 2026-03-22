@@ -6,7 +6,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import MessagingPage from './Messagingpage';
+import MessagingPage from './MessagingPage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import TasksPage from './Taskspage';
@@ -36,6 +36,7 @@ const Dashboard: React.FC = () => {
   const [darkMode, setDarkMode]             = useState(true);
   const [currentTime, setCurrentTime]       = useState(new Date());
   const [connected, setConnected]           = useState(false);
+  const [hasLiveData, setHasLiveData]       = useState(false);
   const [paused, setPaused]                 = useState(false);
   const [latest, setLatest]                 = useState<SensorData>(generateSimData());
   const [chartData, setChartData]           = useState<ChartPoint[]>([]);
@@ -70,6 +71,30 @@ const Dashboard: React.FC = () => {
       if (username && role) socket.emit('user-online', { username, role });
     });
     socket.on('disconnect', () => setConnected(false));
+ socket.on('alert', (data: { severity: string; message: string; node: string }) => {
+  const alertDiv = document.createElement('div');
+  alertDiv.style.cssText = `
+    position: fixed; top: 80px; right: 24px; z-index: 9999;
+    padding: 18px 24px; border-radius: 14px; font-size: 14px;
+    font-weight: 600; color: white; max-width: 400px; min-width: 300px;
+    background: ${data.severity === 'critical' ? '#ef4444' : '#f59e0b'};
+    box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+    border-left: 5px solid ${data.severity === 'critical' ? '#b91c1c' : '#d97706'};
+    display: flex; flex-direction: column; gap: 6px;
+    cursor: pointer;
+  `;
+  alertDiv.innerHTML = `
+    <div style="font-size:16px;">
+      ${data.severity === 'critical' ? '🚨' : '⚠️'} 
+      ${data.severity === 'critical' ? 'ALERTE CRITIQUE' : 'ATTENTION'}
+    </div>
+    <div style="font-size:13px; font-weight:400; opacity:0.9;">${data.message}</div>
+    <div style="font-size:11px; opacity:0.7;">Machine: ${data.node || 'Inconnue'} — Cliquez pour fermer</div>
+  `;
+  alertDiv.onclick = () => alertDiv.remove();
+  document.body.appendChild(alertDiv);
+  setTimeout(() => alertDiv.remove(), 10000);
+});
     socket.on('direct-message', (msg: { from: string }) => {
       const currentUser = localStorage.getItem('username');
       if (msg.from !== currentUser) setUnreadMessages(prev => prev + 1);
@@ -78,12 +103,15 @@ const Dashboard: React.FC = () => {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('direct-message');
+      socket.off('alert');
+
     };
   }, []);
 
   useEffect(() => {
     socket.on('sensor-data', (data: SensorData) => {
       if (paused) return;
+      setHasLiveData(true);
       setLatest(data);
       addPoint(data);
     });
@@ -91,7 +119,7 @@ const Dashboard: React.FC = () => {
   }, [paused, addPoint]);
 
   useEffect(() => {
-    if (connected) return;
+    if (hasLiveData) return; // Wokwi connecté — pas de simulation
     const interval = setInterval(() => {
       if (paused) return;
       const sim = generateSimData();
@@ -99,7 +127,7 @@ const Dashboard: React.FC = () => {
       addPoint(sim);
     }, 1000);
     return () => clearInterval(interval);
-  }, [connected, paused, addPoint]);
+  }, [hasLiveData, paused, addPoint]);
 
   const sante = useMemo(() => {
     const vibTotal = latest.vibX + latest.vibY + latest.vibZ;
@@ -211,7 +239,7 @@ const Dashboard: React.FC = () => {
             </span>
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full text-[11px] text-green-400 whitespace-nowrap">
               <span style={{ display:'inline-block', animation:'spin 3s linear infinite' }}>⟳</span>
-              <span>{connected ? '🟢 Live MQTT' : '🔵 Simulation'}</span>
+              <span>{hasLiveData ? '🟢 Live Wokwi' : '🔵 Simulation'}</span>
             </div>
           </div>
 

@@ -39,7 +39,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       localStorage.setItem("username", data.username);
       localStorage.setItem("role",     data.role || "user");
       onLogin();
-      navigate("/dashboard");
+      if (data.role === 'employe') {
+          navigate("/employe");
+        } else {
+            navigate("/dashboard");
+          }    
     } catch {
       setError("Impossible de contacter le serveur.");
     } finally {
