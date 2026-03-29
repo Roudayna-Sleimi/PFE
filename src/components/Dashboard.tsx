@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {LayoutDashboard, Settings, Activity, Heart, Bell, Zap, Thermometer, 
-  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut, CheckSquare} from 'lucide-react';
+  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut, CheckSquare, BarChart2} from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, PieChart, Pie, Cell
@@ -11,6 +11,7 @@ import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import TasksPage from './Taskspage';
 import AlertesPage from './AlertesPage';
+import RapportsPage from './RapportsPage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -50,8 +51,7 @@ const Dashboard: React.FC = () => {
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [alertCount, setAlertCount]         = useState(0);
   const role = localStorage.getItem('role');
-  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'tasks'|'alertes'>('dashboard');
-
+const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'tasks'|'alertes'|'rapports'>('dashboard');
   const addPoint = useCallback((data: SensorData) => {
     const timeLabel = new Date().toLocaleTimeString('fr-FR');
     setChartData(prev => {
@@ -205,6 +205,7 @@ const Dashboard: React.FC = () => {
                 { key: 'machines'  as const, icon: <Settings size={18} />,        label: 'Machines' },
                 { key: 'alertes'   as const, icon: <Bell size={18} />,            label: 'Alertes',  badge: alertCount },
                 { key: 'tasks'     as const, icon: <CheckSquare size={18} />,     label: 'Tâches' },
+                { key: 'rapports' as const, icon: <BarChart2 size={18} />, label: 'Rapports' },
                 ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
               ]).map(item => (
                 <li key={item.key}
@@ -281,11 +282,12 @@ const Dashboard: React.FC = () => {
         </header>
 
         {/* Content */}
-        {activePage === 'machines'  ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
-        : activePage === 'demandes' ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
-        : activePage === 'tasks'    ? <div className="flex-1 overflow-y-auto"><TasksPage /></div>
-        : activePage === 'alertes'  ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
-        : (
+{activePage === 'machines'  ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
+: activePage === 'demandes' ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
+: activePage === 'tasks'    ? <div className="flex-1 overflow-y-auto"><TasksPage /></div>
+: activePage === 'alertes'  ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
+: activePage === 'rapports' ? <div className="flex-1 overflow-y-auto"><RapportsPage /></div>
+: (
           <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 w-full">
 
             <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
