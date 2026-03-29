@@ -7,6 +7,9 @@ const mqtt       = require('mqtt');
 const http       = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
 
 const app    = express();
 const server = http.createServer(app);
@@ -17,6 +20,23 @@ cors: { origin: '*', methods: ['GET', 'POST'] }
 
 app.use(express.json());
 app.use(cors({ origin: '*' }));
+
+// ═══ Security ═══
+app.use(helmet());
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { message: 'Trop de requêtes, réessayez dans 15 minutes.' }
+});
+app.use('/api/', limiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { message: 'Trop de tentatives, réessayez dans 15 minutes.' }
+});
+app.use('/api/auth/', authLimiter);
 
 // ═══ MongoDB ═══
 mongoose.connect(process.env.MONGO_URI)
