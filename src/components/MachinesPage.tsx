@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Wrench, Plus, X, RefreshCw, Zap, Thermometer, Activity } from 'lucide-react';
+import { Plus, X, RefreshCw, Zap, Thermometer, Activity } from 'lucide-react';
 import { io } from 'socket.io-client';
-import MachineDetail from './Machinedetail';
+import MachineDetail from './MachineDetail';
 
 const socket = io('http://localhost:5000', { transports: ['websocket'] });
 
@@ -15,7 +15,7 @@ interface Machine {
   type: string;
   node: string;
   ip: string;
-  icon: 'gear' | 'wrench' | 'bolt' | 'drill'; // FIX: type complet
+  icon: 'gear' | 'wrench' | 'bolt' | 'drill';
   sensors: string[];
   status: 'En marche' | 'Avertissement' | 'Arrêt' | 'En maintenance';
   sante: number;
@@ -52,10 +52,10 @@ const INITIAL_MACHINES: Machine[] = [
       { severity: 'warning', title: 'Huile à vérifier', desc: 'Niveau huile lubrification à contrôler', time: '1j' },
     ],
     fonctions: [
-      { title: 'Fraisage 3 axes',       desc: 'Usinage de précision sur 3 axes simultanés ±0.005mm' },
-      { title: 'Perçage haute vitesse',  desc: "Perçage jusqu'à 12000 RPM avec changement automatique" },
-      { title: 'Filetage CNC',           desc: 'Taraudage et filetage rigide sur pièces métalliques' },
-      { title: 'Contournage',            desc: 'Usinage de contours complexes avec compensation de rayon' },
+      { title: 'Fraisage 3 axes',      desc: 'Usinage de précision sur 3 axes simultanés ±0.005mm' },
+      { title: 'Perçage haute vitesse', desc: "Perçage jusqu'à 12000 RPM avec changement automatique" },
+      { title: 'Filetage CNC',          desc: 'Taraudage et filetage rigide sur pièces métalliques' },
+      { title: 'Contournage',           desc: 'Usinage de contours complexes avec compensation de rayon' },
     ],
   },
   {
@@ -67,12 +67,12 @@ const INITIAL_MACHINES: Machine[] = [
     protocol: 'WiFi 2.4GHz', broker: '192.168.1.10:1883', latence: '15 ms', uptime: '12h 10min',
     chipModel: 'ESP32-WROOM-32D', machId: 'MACH-AGIE-002',
     problems: [
-      { severity: 'warning',  title: 'Fil usé',            desc: 'Remplacement du fil EDM recommandé',          time: '3h' },
-      { severity: 'critical', title: 'Température élevée', desc: 'Température diélectrique > seuil (45°C)',      time: '30min' },
+      { severity: 'warning',  title: 'Fil usé',            desc: 'Remplacement du fil EDM recommandé',     time: '3h' },
+      { severity: 'critical', title: 'Température élevée', desc: 'Température diélectrique > seuil (45°C)', time: '30min' },
     ],
     fonctions: [
-      { title: 'Découpe fil EDM',    desc: 'Électroérosion à fil pour contours précis ±0.003mm' },
-      { title: 'Découpe conique',    desc: "Découpe avec inclinaison de fil jusqu'à 30°" },
+      { title: 'Découpe fil EDM',     desc: 'Électroérosion à fil pour contours précis ±0.003mm' },
+      { title: 'Découpe conique',     desc: "Découpe avec inclinaison de fil jusqu'à 30°" },
       { title: 'Rinçage automatique', desc: 'Rinçage diélectrique haute pression intégré' },
     ],
   },
@@ -88,7 +88,7 @@ const INITIAL_MACHINES: Machine[] = [
     fonctions: [
       { title: 'Rectification plane',       desc: 'Surfaçage de pièces métalliques avec précision ±0.01mm' },
       { title: 'Rectification cylindrique', desc: 'Finition de surfaces cylindriques internes/externes' },
-      { title: 'Dressage de meule',          desc: 'Reconditionnement automatique de la meule abrasive' },
+      { title: 'Dressage de meule',         desc: 'Reconditionnement automatique de la meule abrasive' },
     ],
   },
   {
@@ -103,8 +103,8 @@ const INITIAL_MACHINES: Machine[] = [
       { severity: 'critical', title: 'En maintenance', desc: 'Remplacement électrode tubulaire en cours', time: '1h' },
     ],
     fonctions: [
-      { title: 'Perçage EDM rapide',  desc: 'Perçage électroérosion de trous jusqu\'à Ø0.3mm' },
-      { title: 'Perçage multi-axes',  desc: 'Perçage incliné avec rotation électrode intégrée' },
+      { title: 'Perçage EDM rapide', desc: "Perçage électroérosion de trous jusqu'à Ø0.3mm" },
+      { title: 'Perçage multi-axes', desc: 'Perçage incliné avec rotation électrode intégrée' },
     ],
   },
   {
@@ -117,10 +117,10 @@ const INITIAL_MACHINES: Machine[] = [
     chipModel: 'ESP32-WROOM-32D', machId: 'MACH-CMP-005',
     problems: [
       { severity: 'critical', title: 'Température critique', desc: 'Température compresseur 68°C (seuil: 65°C)', time: '10min' },
-      { severity: 'warning',  title: 'Vibration élevée',    desc: 'Vibration moteur anormale détectée',          time: '2h' },
+      { severity: 'warning',  title: 'Vibration élevée',    desc: 'Vibration moteur anormale détectée',         time: '2h' },
     ],
     fonctions: [
-      { title: 'Compression à vis',     desc: "Compression continue de l'air par vis hélicoïdale" },
+      { title: 'Compression à vis',      desc: "Compression continue de l'air par vis hélicoïdale" },
       { title: 'Régulation de pression', desc: 'Maintien automatique entre 7 et 10 bars' },
       { title: "Séchage de l'air",       desc: "Élimination de l'humidité par sécheur intégré" },
     ],
@@ -135,19 +135,19 @@ const INITIAL_MACHINES: Machine[] = [
     chipModel: 'ESP32-WROOM-32D', machId: 'MACH-TRN-006',
     problems: [],
     fonctions: [
-      { title: 'Tournage CNC',       desc: 'Tournage de précision pièces cylindriques ±0.005mm' },
+      { title: 'Tournage CNC',        desc: 'Tournage de précision pièces cylindriques ±0.005mm' },
       { title: 'Filetage automatique', desc: 'Filetage intérieur/extérieur sur gamme complète' },
-      { title: 'Perçage axial',       desc: 'Perçage centré haute précision sur axe de rotation' },
+      { title: 'Perçage axial',        desc: 'Perçage centré haute précision sur axe de rotation' },
     ],
   },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────
 const statusConfig = {
-  'En marche':      { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',   border: 'rgba(34,197,94,0.3)',   dot: '#22c55e' },
-  'Avertissement':  { color: '#f97316', bg: 'rgba(249,115,22,0.12)',  border: 'rgba(249,115,22,0.3)',  dot: '#f97316' },
-  'Arrêt':          { color: '#ef4444', bg: 'rgba(239,68,68,0.12)',   border: 'rgba(239,68,68,0.3)',   dot: '#ef4444' },
-  'En maintenance': { color: '#a855f7', bg: 'rgba(168,85,247,0.12)',  border: 'rgba(168,85,247,0.3)',  dot: '#a855f7' },
+  'En marche':      { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.3)',  dot: '#22c55e' },
+  'Avertissement':  { color: '#f97316', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.3)', dot: '#f97316' },
+  'Arrêt':          { color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  border: 'rgba(239,68,68,0.3)',  dot: '#ef4444' },
+  'En maintenance': { color: '#a855f7', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.3)', dot: '#a855f7' },
 };
 
 // ─── Composant principal ──────────────────────────────────
@@ -157,9 +157,7 @@ const MachinesPage: React.FC = () => {
   const [selected, setSelected]     = useState<Machine | null>(null);
   const [showForm, setShowForm]     = useState(false);
   const [lastUpdate, setLastUpdate] = useState(new Date());
-  const [newMachine, setNewMachine] = useState({
-    name: '', type: '', model: '', node: '', ip: '', objectif: 100,
-  });
+  const [newMachine, setNewMachine] = useState({ name: '', type: '', model: '' });
 
   // ── Simulation live sensors ──
   useEffect(() => {
@@ -198,7 +196,7 @@ const MachinesPage: React.FC = () => {
   }, []);
 
   const filtrees = filtre === 'Toutes' ? machines : machines.filter(m => m.status === filtre);
-  const refresh  = useCallback(() => { setLastUpdate(new Date()); }, []);
+  const refresh  = useCallback(() => setLastUpdate(new Date()), []);
 
   const ajouterMachine = () => {
     if (!newMachine.name || !newMachine.type) return;
@@ -207,81 +205,65 @@ const MachinesPage: React.FC = () => {
       name:        newMachine.name,
       model:       newMachine.model || 'Modèle inconnu',
       type:        newMachine.type,
-      node:        newMachine.node || `ESP32-NODE-0${machines.length + 1}`,
-      ip:          newMachine.ip   || `192.168.1.${110 + machines.length}`,
+      node:        `ESP32-NODE-0${machines.length + 1}`,
+      ip:          `192.168.1.${110 + machines.length}`,
       icon:        'gear',
-      sensors:     ['ADXL345', 'SCT-013'],
+      sensors:     [],
       status:      'En marche',
-      sante:       80,
-      production:  0,
-      objectif:    Number(newMachine.objectif) || 100,
-      efficacite:  85,
-      heures:      0,
-      temperature: 35,
-      courant:     5,
-      vibration:   0.5,
-      rpm:         0,
-      protocol:    'WiFi 2.4GHz',
-      broker:      '192.168.1.10:1883',
-      latence:     '15 ms',
-      uptime:      '0h 00min',
+      sante:       80, production: 0, objectif: 100,
+      efficacite:  85, heures: 0, temperature: 35,
+      courant:     5,  vibration: 0.5, rpm: 0,
+      protocol:    'WiFi 2.4GHz', broker: '192.168.1.10:1883',
+      latence:     '15 ms', uptime: '0h 00min',
       chipModel:   'ESP32-WROOM-32D',
       machId:      `MACH-NEW-${Date.now().toString().slice(-4)}`,
-      problems:    [],
-      fonctions:   [],
+      problems:    [], fonctions: [],
     };
     setMachines(prev => [...prev, m]);
     setShowForm(false);
-    setNewMachine({ name: '', type: '', model: '', node: '', ip: '', objectif: 100 });
+    setNewMachine({ name: '', type: '', model: '' });
   };
 
-  // ── Si machine sélectionnée → détail ──
-  if (selected) {
-    return <MachineDetail machine={selected} onBack={() => setSelected(null)} />;
-  }
+  if (selected) return <MachineDetail machine={selected} onBack={() => setSelected(null)} />;
 
   const totalProblemes = machines.reduce((s, m) => s + m.problems.length, 0);
 
   return (
     <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full" style={{ background: 'transparent' }}>
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white mb-1">Gestion des Machines</h2>
           <p className="text-sm text-slate-500">{machines.length} machines actives</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs text-slate-500">
-            Dernière mise à jour : {lastUpdate.toLocaleTimeString('fr-FR')}
-          </span>
-          <button onClick={refresh}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none transition-all"
+          <span className="text-xs text-slate-500">Mise à jour : {lastUpdate.toLocaleTimeString('fr-FR')}</span>
+          <button onClick={refresh} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
             style={{ background: 'linear-gradient(135deg,#0066ff,#00d4ff)' }}>
             <RefreshCw size={14} /> Actualiser
           </button>
-          <button onClick={() => setShowForm(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none transition-all"
+          <button onClick={() => setShowForm(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
             style={{ background: 'linear-gradient(135deg,#22c55e,#16a34a)' }}>
             <Plus size={14} /> Ajouter Machine
           </button>
         </div>
       </div>
 
-      {/* ── Filtres ── */}
+      {/* Filtres */}
       <div className="flex gap-3 mb-6 flex-wrap">
         {([
-          { key: 'Toutes',         label: 'Toutes',              count: machines.length },
-          { key: 'En marche',      label: '✅ Opérationnelles',   count: machines.filter(m => m.status === 'En marche').length },
-          { key: 'En maintenance', label: '🔧 En maintenance',    count: machines.filter(m => m.status === 'En maintenance').length },
-          { key: 'Avertissement',  label: '⚠️ Avec problèmes',    count: totalProblemes },
+          { key: 'Toutes',         label: 'Toutes',             count: machines.length },
+          { key: 'En marche',      label: '✅ Opérationnelles',  count: machines.filter(m => m.status === 'En marche').length },
+          { key: 'En maintenance', label: '🔧 En maintenance',   count: machines.filter(m => m.status === 'En maintenance').length },
+          { key: 'Avertissement',  label: '⚠️ Avec problèmes',   count: totalProblemes },
         ] as const).map(f => (
           <button key={f.key} onClick={() => setFiltre(f.key as typeof filtre)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer border transition-all"
             style={{
-              background:   filtre === f.key ? 'linear-gradient(135deg,rgba(0,102,255,0.3),rgba(0,212,255,0.3))' : 'rgba(30,41,59,0.5)',
-              borderColor:  filtre === f.key ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)',
-              color:        filtre === f.key ? '#00d4ff' : '#94a3b8',
+              background:  filtre === f.key ? 'linear-gradient(135deg,rgba(0,102,255,0.3),rgba(0,212,255,0.3))' : 'rgba(30,41,59,0.5)',
+              borderColor: filtre === f.key ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)',
+              color:       filtre === f.key ? '#00d4ff' : '#94a3b8',
             }}>
             {f.label}
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold"
@@ -292,20 +274,18 @@ const MachinesPage: React.FC = () => {
         ))}
       </div>
 
-      {/* ── Grille des machines ── */}
+      {/* Grille */}
       <div className="grid grid-cols-2 gap-5">
         {filtrees.map(machine => {
           const st  = statusConfig[machine.status];
           const pct = machine.objectif > 0 ? Math.min(100, (machine.production / machine.objectif) * 100) : 0;
           return (
-            <div key={machine.id}
-              onClick={() => setSelected(machine)}
+            <div key={machine.id} onClick={() => setSelected(machine)}
               className="rounded-xl cursor-pointer transition-all duration-300"
               style={{ background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.08)' }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(0,212,255,0.3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
 
-              {/* Card Header */}
               <div className="p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
                 <div className="flex items-start justify-between mb-1">
                   <div className="flex items-center gap-2">
@@ -322,7 +302,6 @@ const MachinesPage: React.FC = () => {
                 <p className="text-xs text-slate-500 ml-4">{machine.type}</p>
               </div>
 
-              {/* Image zone */}
               <div className="mx-5 my-4 h-32 rounded-xl flex items-center justify-center"
                 style={{ background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(255,255,255,0.05)' }}>
                 <div style={{ fontSize: 48, opacity: 0.6 }}>
@@ -330,12 +309,11 @@ const MachinesPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Stats */}
               <div className="grid grid-cols-3 gap-3 px-5 mb-4">
                 {[
                   { label: 'Production', value: machine.objectif > 0 ? `${machine.production}` : '—', color: '#3b82f6' },
-                  { label: 'Efficacité', value: `${machine.efficacite}%`,                              color: '#00d4ff' },
-                  { label: 'Heures',     value: `${machine.heures}h`,                                  color: '#a855f7' },
+                  { label: 'Efficacité', value: `${machine.efficacite}%`,                             color: '#00d4ff' },
+                  { label: 'Heures',     value: `${machine.heures}h`,                                 color: '#a855f7' },
                 ].map(s => (
                   <div key={s.label} className="rounded-lg p-3 text-center"
                     style={{ background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.05)' }}>
@@ -345,7 +323,6 @@ const MachinesPage: React.FC = () => {
                 ))}
               </div>
 
-              {/* Objectif progress */}
               {machine.objectif > 0 && (
                 <div className="px-5 mb-4">
                   <div className="flex justify-between text-[11px] text-slate-500 mb-1.5">
@@ -359,7 +336,6 @@ const MachinesPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Live sensors footer */}
               <div className="flex items-center gap-4 px-5 pb-4 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
                   style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: '#22c55e' }}>
@@ -380,10 +356,10 @@ const MachinesPage: React.FC = () => {
         })}
       </div>
 
-      {/* ── Modal Ajouter Machine ── */}
+      {/* Modal Ajouter — sans node et objectif */}
       {showForm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
-          <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 460, maxHeight: '88vh', overflowY: 'auto' }}>
+          <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 420, overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>+ Nouvelle Machine</div>
               <button onClick={() => setShowForm(false)} aria-label="Fermer" title="Fermer"
@@ -393,22 +369,16 @@ const MachinesPage: React.FC = () => {
             </div>
             <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               {[
-                { label: 'Nom de la machine *', key: 'name',     placeholder: 'ex: HAAS CNC VF-3' },
-                { label: 'Type / Catégorie *',  key: 'type',     placeholder: 'ex: Fraiseuse CNC' },
-                { label: 'Modèle',              key: 'model',    placeholder: 'ex: HAAS VF-3SS' },
-                { label: 'Node ESP32',          key: 'node',     placeholder: 'ex: ESP32-NODE-07' },
-                { label: 'Adresse IP',          key: 'ip',       placeholder: 'ex: 192.168.1.110' },
-                { label: 'Objectif production', key: 'objectif', placeholder: '100', type: 'number' },
-              ].map(({ label, key, placeholder, type }) => (
+                { label: 'Nom de la machine *', key: 'name',  placeholder: 'ex: HAAS CNC VF-3' },
+                { label: 'Type / Catégorie *',  key: 'type',  placeholder: 'ex: Fraiseuse CNC' },
+                { label: 'Modèle',              key: 'model', placeholder: 'ex: HAAS VF-3SS' },
+              ].map(({ label, key, placeholder }) => (
                 <div key={key}>
                   <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>{label}</label>
-                  <input
-                    type={type || 'text'}
-                    placeholder={placeholder}
-                    value={(newMachine as Record<string, string | number>)[key] as string}
+                  <input placeholder={placeholder}
+                    value={(newMachine as Record<string, string>)[key]}
                     onChange={e => setNewMachine(p => ({ ...p, [key]: e.target.value }))}
-                    style={{ width: '100%', background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
                 </div>
               ))}
               <button onClick={ajouterMachine}
