@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import {LayoutDashboard, Settings, Activity, Heart, Bell, Zap, Thermometer, 
-  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut, CheckSquare, BarChart2} from 'lucide-react';
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, PieChart, Pie, Cell
-} from 'recharts';
+import {
+  LayoutDashboard, Settings, Activity, Bell,
+  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut,
+  BarChart2, Package, Heart, Wrench
+} from 'lucide-react';
+import { ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import MessagingPage from './MessagingPage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
-import TasksPage from './Taskspage';
 import AlertesPage from './AlertesPage';
-import RapportsPage from './RapportsPage';
+import ProductionPage from './ProductionPage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -19,12 +18,7 @@ interface SensorData {
   vibX: number; vibY: number; vibZ: number; rpm: number;
   pression?: number;
 }
-interface ChartPoint {
-  time: string; vibX: number; vibY: number; vibZ: number;
-  courant: number; rpm: number;
-}
 
-const MAX_POINTS = 20;
 const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
 
 const generateSimData = (): SensorData => ({
@@ -43,32 +37,34 @@ const Dashboard: React.FC = () => {
   const [hasLiveData, setHasLiveData]       = useState(false);
   const [paused, setPaused]                 = useState(false);
   const [latest, setLatest]                 = useState<SensorData>(generateSimData());
-  const [chartData, setChartData]           = useState<ChartPoint[]>([]);
   const [latestComp, setLatestComp]         = useState<SensorData>({ node:'compresseur', courant:0, vibX:0, vibY:0, vibZ:0, rpm:0, pression:0 });
-  const [chartDataComp, setChartDataComp]   = useState<ChartPoint[]>([]);
-  const [activeTab, setActiveTab]           = useState<'rectifieuse'|'compresseur'>('rectifieuse');
   const [showMessaging, setShowMessaging]   = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [alertCount, setAlertCount]         = useState(0);
   const role = localStorage.getItem('role');
-const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'tasks'|'alertes'|'rapports'>('dashboard');
-  const addPoint = useCallback((data: SensorData) => {
-    const timeLabel = new Date().toLocaleTimeString('fr-FR');
-    setChartData(prev => {
-      const p: ChartPoint = { time: timeLabel, vibX: data.vibX, vibY: data.vibY, vibZ: data.vibZ, courant: data.courant, rpm: data.rpm };
-      const u = [...prev, p];
-      return u.length > MAX_POINTS ? u.slice(-MAX_POINTS) : u;
-    });
-  }, []);
 
-  const addPointComp = useCallback((data: SensorData) => {
-    const timeLabel = new Date().toLocaleTimeString('fr-FR');
-    setChartDataComp(prev => {
-      const p: ChartPoint = { time: timeLabel, vibX: data.vibX, vibY: data.vibY, vibZ: data.vibZ, courant: data.courant, rpm: data.pression ?? 0 };
-      const u = [...prev, p];
-      return u.length > MAX_POINTS ? u.slice(-MAX_POINTS) : u;
-    });
-  }, []);
+  // ── activePage — 'tasks' retiré, 'maintenance' ajouté ──
+  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'>('dashboard');
+
+  // ── Stats Production depuis MongoDB ──
+  const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
+
+  useEffect(() => {
+    const token = localStorage.getItem('token') || '';
+    fetch('http://localhost:5000/api/pieces', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!Array.isArray(data)) return;
+        setProdStats({
+          totalPcs:    data.reduce((s: number, p: { quantite: number }) => s + p.quantite, 0),
+          totalRevenu: data.reduce((s: number, p: { quantite: number; prix: number }) => s + p.quantite * p.prix, 0),
+          enCours:     data.filter((p: { status: string }) => p.status === 'En cours').length,
+        });
+      })
+      .catch(() => {});
+  }, [activePage]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -120,25 +116,18 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
     socket.on('sensor-data', (data: SensorData) => {
       if (paused) return;
       setHasLiveData(true);
-      if (data.node === 'compresseur') {
-        setLatestComp(data);
-        addPointComp(data);
-      } else {
-        setLatest(data);
-        addPoint(data);
-      }
+      if (data.node === 'compresseur') setLatestComp(data);
+      else setLatest(data);
     });
     return () => { socket.off('sensor-data'); };
-  }, [paused, addPoint, addPointComp]);
+  }, [paused]);
 
   useEffect(() => {
     if (hasLiveData) return;
     const interval = setInterval(() => {
       if (paused) return;
-      const sim = generateSimData();
-      setLatest(sim);
-      addPoint(sim);
-      const simComp: SensorData = {
+      setLatest(generateSimData());
+      setLatestComp({
         node: 'compresseur',
         courant:  parseFloat((8 + Math.sin(Date.now() / 3000) * 2 + Math.random()).toFixed(2)),
         vibX:     parseFloat((0.5 + Math.sin(Date.now() / 2000) * 0.3 + Math.random() * 0.1).toFixed(2)),
@@ -146,12 +135,10 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
         vibZ:     parseFloat((0.2 + Math.sin(Date.now() / 1800) * 0.1 + Math.random() * 0.1).toFixed(2)),
         rpm:      0,
         pression: parseFloat((7 + Math.sin(Date.now() / 4000) * 1.5).toFixed(2)),
-      };
-      setLatestComp(simComp);
-      addPointComp(simComp);
+      });
     }, 1000);
     return () => clearInterval(interval);
-  }, [hasLiveData, paused, addPoint, addPointComp]);
+  }, [hasLiveData, paused]);
 
   const sante = useMemo(() => {
     const v = latest.vibX + latest.vibY + latest.vibZ;
@@ -165,10 +152,7 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
 
   const toggleTheme  = useCallback(() => setDarkMode(p => !p), []);
   const togglePaused = useCallback(() => setPaused(p => !p), []);
-  const handleLogout = useCallback(() => {
-    localStorage.clear();
-    window.location.href = '/';
-  }, []);
+  const handleLogout = useCallback(() => { localStorage.clear(); window.location.href = '/'; }, []);
   const handleOpenMessaging = () => { setShowMessaging(true); setUnreadMessages(0); };
 
   const bg2    = darkMode ? 'bg-[#0f172a]'    : 'bg-white';
@@ -177,13 +161,22 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
   const txt1   = darkMode ? 'text-white'      : 'text-slate-900';
   const txt2   = darkMode ? 'text-slate-400'  : 'text-slate-500';
   const txtMut = darkMode ? 'text-slate-500'  : 'text-slate-400';
-  const chartColors = { stroke: darkMode ? '#1e293b' : '#e2e8f0', axis: darkMode ? '#475569' : '#64748b', bg: darkMode ? '#0f172a' : '#fff', border: darkMode ? '#334155' : '#e2e8f0' };
-  const activeData  = activeTab === 'rectifieuse' ? chartData : chartDataComp;
+
+  // ── navItems — 'tasks' retiré, 'maintenance' ajouté ──
+  const navItems = [
+    { key: 'dashboard'   as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
+    { key: 'production'  as const, icon: <Package size={18} />,         label: 'Production' },
+    { key: 'machines'    as const, icon: <Settings size={18} />,        label: 'Machines' },
+    { key: 'maintenance' as const, icon: <Wrench size={18} />,          label: 'Maintenance' },
+    { key: 'alertes'     as const, icon: <Bell size={18} />,            label: 'Alertes', badge: alertCount },
+    { key: 'rapports'    as const, icon: <BarChart2 size={18} />,       label: 'Rapports' },
+    ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
+  ];
 
   return (
     <div className={`flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden relative font-sans ${darkMode ? 'bg-[#0a0e27] text-white' : 'bg-slate-100 text-slate-900'}`}>
 
-      {/* SIDEBAR */}
+      {/* ── SIDEBAR ── */}
       <aside className={`w-[260px] min-w-[260px] ${bg2} border-r ${border} flex flex-col py-6 px-4 h-screen fixed left-0 top-0 overflow-y-auto overflow-x-hidden z-[100]`}>
         <div className={`flex items-center gap-3 mb-8 pb-5 border-b ${border}`}>
           <div className="w-11 h-11 min-w-[44px] rounded-[10px] flex items-center justify-center text-white"
@@ -200,24 +193,19 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
           <div className="flex flex-col gap-2">
             <span className={`text-[10px] font-semibold ${txtMut} uppercase tracking-[1.5px] mb-2 pl-3`}>NAVIGATION</span>
             <ul className="list-none flex flex-col gap-1 p-0 m-0">
-              {([
-                { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
-                { key: 'machines'  as const, icon: <Settings size={18} />,        label: 'Machines' },
-                { key: 'alertes'   as const, icon: <Bell size={18} />,            label: 'Alertes',  badge: alertCount },
-                { key: 'tasks'     as const, icon: <CheckSquare size={18} />,     label: 'Tâches' },
-                { key: 'rapports' as const, icon: <BarChart2 size={18} />, label: 'Rapports' },
-                ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
-              ]).map(item => (
+              {navItems.map(item => (
                 <li key={item.key}
-                  onClick={() => { setActivePage(item.key as 'dashboard'|'machines'|'demandes'|'tasks'|'alertes'); if (item.key === 'alertes') setAlertCount(0); }}
+                  onClick={() => { setActivePage(item.key as typeof activePage); if (item.key === 'alertes') setAlertCount(0); }}
                   className={`flex items-center gap-3 px-3 py-3 rounded-[10px] cursor-pointer transition-all duration-300 text-sm font-medium
-                    ${activePage === item.key ? 'text-[#00d4ff] border border-[rgba(0,212,255,0.2)]' : `${txt2} border border-transparent hover:bg-[rgba(0,212,255,0.1)] hover:text-[#00d4ff]`}`}
+                    ${activePage === item.key
+                      ? 'text-[#00d4ff] border border-[rgba(0,212,255,0.2)]'
+                      : `${txt2} border border-transparent hover:bg-[rgba(0,212,255,0.1)] hover:text-[#00d4ff]`}`}
                   style={activePage === item.key ? { background: 'linear-gradient(135deg,rgba(0,102,255,0.2),rgba(0,212,255,0.2))' } : {}}>
                   {item.icon}
                   <span className="flex-1">{item.label}</span>
-                  {'badge' in item && (item as {badge: number}).badge > 0 && (
+                  {'badge' in item && (item as { badge: number }).badge > 0 && (
                     <span className="w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center flex-shrink-0">
-                      {item.badge}
+                      {(item as { badge: number }).badge}
                     </span>
                   )}
                 </li>
@@ -236,13 +224,14 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
               <div className="text-slate-500 text-[10px] capitalize">{role}</div>
             </div>
           </div>
-          <button onClick={handleLogout} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[10px] text-sm font-medium cursor-pointer transition-all border border-transparent text-red-400 hover:bg-red-500/10 hover:border-red-500/20">
+          <button onClick={handleLogout}
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-[10px] text-sm font-medium cursor-pointer transition-all border border-transparent text-red-400 hover:bg-red-500/10 hover:border-red-500/20">
             <LogOut size={16} /> Déconnexion
           </button>
         </div>
       </aside>
 
-      {/* MAIN */}
+      {/* ── MAIN ── */}
       <main className="flex-1 ml-[260px] w-[calc(100vw-260px)] min-w-0 flex flex-col overflow-x-hidden">
 
         {/* Header */}
@@ -267,7 +256,9 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
                 <MessageSquare size={14} /> Messages
               </button>
               {unreadMessages > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 w-[18px] h-[18px] bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">{unreadMessages}</span>
+                <span className="absolute -top-1.5 -right-1.5 w-[18px] h-[18px] bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">
+                  {unreadMessages}
+                </span>
               )}
             </div>
             <button onClick={togglePaused}
@@ -281,15 +272,30 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
           </div>
         </header>
 
-        {/* Content */}
-{activePage === 'machines'  ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
-: activePage === 'demandes' ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
-: activePage === 'tasks'    ? <div className="flex-1 overflow-y-auto"><TasksPage /></div>
-: activePage === 'alertes'  ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
-: activePage === 'rapports' ? <div className="flex-1 overflow-y-auto"><RapportsPage /></div>
-: (
+        {/* ── Content ── */}
+        {activePage === 'machines'     ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
+        : activePage === 'demandes'    ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
+        : activePage === 'alertes'     ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
+        : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
+        : activePage === 'maintenance' ? (
+          <div className="flex-1 flex items-center justify-center flex-col gap-3">
+            <div style={{ fontSize: 48 }}>🔧</div>
+            <div className="text-white font-semibold text-lg">Section Maintenance</div>
+            <div className="text-slate-500 text-sm">Bientôt disponible</div>
+          </div>
+        )
+        : activePage === 'rapports'    ? (
+          <div className="flex-1 flex items-center justify-center flex-col gap-3">
+            <div style={{ fontSize: 48 }}>📊</div>
+            <div className="text-white font-semibold text-lg">Section Rapports</div>
+            <div className="text-slate-500 text-sm">Bientôt disponible</div>
+          </div>
+        )
+        : (
+          /* ── DASHBOARD PRINCIPAL ── */
           <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 w-full">
 
+            {/* Title */}
             <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
               <div>
                 <h2 className={`text-2xl font-bold mb-1 ${txt1}`}>Tableau de Bord</h2>
@@ -305,173 +311,93 @@ const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'
               </div>
             </div>
 
-            {/* Machine Cards */}
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              {/* Rectifieuse */}
-              <div className={`${bgCard} border ${border} rounded-xl p-5`}>
-                <div className="flex justify-between items-center mb-4">
-                  <div>
-                    <h3 className={`text-sm font-bold ${txt1} mb-0.5`}>⚙️ Rectifieuse</h3>
-                    <span className="text-[11px] text-slate-500">ESP32-NODE-01</span>
+            {/* ── KPI Cards ── */}
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              {[
+                { label: 'Production Totale', value: `${prodStats.totalPcs.toLocaleString()} pcs`, color: '#3b82f6', icon: '📦', sub: 'MongoDB' },
+                { label: 'Revenu Estimé',     value: `${prodStats.totalRevenu.toLocaleString()} DT`, color: '#22c55e', icon: '💰', sub: 'MongoDB' },
+                { label: 'Pièces En cours',   value: `${prodStats.enCours} pièces`, color: '#f59e0b', icon: '🔄', sub: 'En production' },
+                { label: 'Alertes actives',   value: `${alertCount}`, color: alertCount > 0 ? '#ef4444' : '#22c55e', icon: '🚨', sub: 'Machines' },
+              ].map(k => (
+                <div key={k.label} className={`${bgCard} border ${border} rounded-xl p-4`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <span style={{ fontSize: 22 }}>{k.icon}</span>
+                    <span className="text-[10px] px-2 py-1 rounded-full" style={{ background: k.color + '20', color: k.color }}>{k.sub}</span>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${latest.courant > 20 || latest.vibX > 3 ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-green-500/20 text-green-400 border border-green-500/30'}`}>
-                    {latest.courant > 20 || latest.vibX > 3 ? '⚠️ ATTENTION' : '✅ EN MARCHE'}
-                  </span>
+                  <div className="text-[22px] font-bold" style={{ color: k.color }}>{k.value}</div>
+                  <div className={`text-[11px] ${txtMut} mt-1`}>{k.label}</div>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { label:'Courant',   value:`${latest.courant} A`,          color: latest.courant > 15 ? '#ef4444' : '#22c55e' },
-                    { label:'Vibration', value:`${latest.vibX.toFixed(2)} g`,  color: latest.vibX > 2 ? '#f97316' : '#3b82f6' },
-                    { label:'RPM',       value:`${latest.rpm}`,                color:'#a855f7' },
-                  ].map(s => (
-                    <div key={s.label} className={`${darkMode ? 'bg-slate-900/50' : 'bg-slate-50'} rounded-lg p-3 text-center`}>
-                      <div className="text-[18px] font-bold" style={{ color: s.color }}>{s.value}</div>
-                      <div className={`text-[10px] ${txtMut} mt-1`}>{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <div className="flex-1 bg-slate-700/50 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full transition-all" style={{ width:`${sante}%`, background: sante > 70 ? '#22c55e' : sante > 40 ? '#f97316' : '#ef4444' }} />
-                  </div>
-                  <span className={`text-[11px] font-bold ${txt2}`}>Santé {sante}%</span>
-                </div>
-              </div>
-
-              {/* Compresseur */}
-              <div className={`${bgCard} border ${border} rounded-xl p-5`}>
-                <div className="flex justify-between items-center mb-4">
-                  <div>
-                    <h3 className={`text-sm font-bold ${txt1} mb-0.5`}>🔧 Compresseur ABAC</h3>
-                    <span className="text-[11px] text-slate-500">compresseur</span>
-                  </div>
-                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${latestComp.courant > 20 || latestComp.vibX > 3 ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-green-500/20 text-green-400 border border-green-500/30'}`}>
-                    {latestComp.courant > 20 || latestComp.vibX > 3 ? '⚠️ ATTENTION' : '✅ EN MARCHE'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { label:'Courant',   value:`${latestComp.courant.toFixed(1)} A`,           color: latestComp.courant > 15 ? '#ef4444' : '#22c55e' },
-                    { label:'Vibration', value:`${latestComp.vibX.toFixed(2)} g`,              color: latestComp.vibX > 2 ? '#f97316' : '#3b82f6' },
-                    { label:'Pression',  value:`${(latestComp.pression ?? 0).toFixed(1)} bar`, color:'#06b6d4' },
-                  ].map(s => (
-                    <div key={s.label} className={`${darkMode ? 'bg-slate-900/50' : 'bg-slate-50'} rounded-lg p-3 text-center`}>
-                      <div className="text-[18px] font-bold" style={{ color: s.color }}>{s.value}</div>
-                      <div className={`text-[10px] ${txtMut} mt-1`}>{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <div className="flex-1 bg-slate-700/50 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full transition-all" style={{ width:`${santeComp}%`, background: santeComp > 70 ? '#22c55e' : santeComp > 40 ? '#f97316' : '#ef4444' }} />
-                  </div>
-                  <span className={`text-[11px] font-bold ${txt2}`}>Santé {santeComp}%</span>
-                </div>
-              </div>
+              ))}
             </div>
 
-            {/* Tabs Graphs */}
-            <div className={`${bgCard} border ${border} rounded-xl overflow-hidden mb-4`}>
-              <div className={`flex border-b ${border}`}>
-                {(['rectifieuse','compresseur'] as const).map(tab => (
-                  <button key={tab} onClick={() => setActiveTab(tab)}
-                    className={`flex-1 px-6 py-3 text-sm font-semibold transition-all cursor-pointer border-none
-                      ${activeTab === tab ? 'text-[#00d4ff] border-b-2 border-[#00d4ff] bg-[rgba(0,212,255,0.05)]' : `${txt2} hover:text-[#00d4ff]`}`}
-                    style={{ background: 'transparent' }}>
-                    {tab === 'rectifieuse' ? '⚙️ Rectifieuse' : '🔧 Compresseur ABAC'}
-                  </button>
-                ))}
-              </div>
-              <div className="p-5">
-                <div className="mb-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Activity size={15} className="text-[#00d4ff]" />
-                    <span className={`text-sm font-semibold ${txt1}`}>Vibrations (g)</span>
-                    <div className="flex gap-3 ml-4">
-                      {[['#3b82f6','VibX'],['#06b6d4','VibY'],['#f97316','VibZ']].map(([c,l]) => (
-                        <span key={l} className={`flex items-center gap-1 text-xs ${txt2}`}>
-                          <span className="w-2 h-2 rounded-sm" style={{ background:c }} />{l}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={activeData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={chartColors.stroke} />
-                      <XAxis dataKey="time" tick={{ fontSize:10 }} stroke={chartColors.axis} angle={-45} textAnchor="end" height={50} />
-                      <YAxis tick={{ fontSize:11 }} stroke={chartColors.axis} domain={[0,5]} />
-                      <Tooltip contentStyle={{ backgroundColor:chartColors.bg, border:`1px solid ${chartColors.border}`, borderRadius:'8px' }} />
-                      <Line type="monotone" dataKey="vibX" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
-                      <Line type="monotone" dataKey="vibY" stroke="#06b6d4" strokeWidth={2} dot={false} isAnimationActive={false} />
-                      <Line type="monotone" dataKey="vibZ" stroke="#f97316" strokeWidth={2} dot={false} isAnimationActive={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <Zap size={15} className="text-[#00d4ff]" />
-                      <span className={`text-sm font-semibold ${txt1}`}>Courant (A)</span>
-                    </div>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <LineChart data={activeData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.stroke} />
-                        <XAxis hide />
-                        <YAxis tick={{ fontSize:11 }} stroke={chartColors.axis} domain={[0,30]} />
-                        <Tooltip contentStyle={{ backgroundColor:chartColors.bg, border:`1px solid ${chartColors.border}`, borderRadius:'8px' }} />
-                        <Line type="monotone" dataKey="courant" stroke="#f97316" strokeWidth={2} dot={false} isAnimationActive={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <Thermometer size={15} className="text-[#00d4ff]" />
-                      <span className={`text-sm font-semibold ${txt1}`}>
-                        {activeTab === 'rectifieuse' ? 'RPM' : 'Pression (bar)'}
-                      </span>
-                    </div>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <LineChart data={activeData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.stroke} />
-                        <XAxis hide />
-                        <YAxis tick={{ fontSize:11 }} stroke={chartColors.axis} />
-                        <Tooltip contentStyle={{ backgroundColor:chartColors.bg, border:`1px solid ${chartColors.border}`, borderRadius:'8px' }} />
-                        <Line type="monotone" dataKey="rpm" stroke="#a855f7" strokeWidth={2} dot={false} isAnimationActive={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Santé */}
+            {/* ── Santé des Machines ── */}
             <div className={`${bgCard} border ${border} rounded-xl p-5`}>
-              <div className="flex items-center gap-2 mb-4">
+              <div className="flex items-center gap-2 mb-6">
                 <Heart size={15} className="text-[#00d4ff]" />
                 <span className={`text-sm font-semibold ${txt1}`}>Santé des Machines</span>
               </div>
-              <div className="flex justify-around items-center flex-wrap gap-5">
+              <div className="grid grid-cols-2 gap-6">
                 {[
-                  { name:'Rectifieuse', value:sante,     color:'#3b82f6' },
-                  { name:'Compresseur', value:santeComp, color:'#06b6d4' },
-                ].map((item, i) => (
-                  <div key={i} className="flex flex-col items-center gap-2">
-                    <div className="relative w-20 h-20">
-                      <ResponsiveContainer width={100} height={100}>
-                        <PieChart>
-                          <Pie data={[{ value:item.value },{ value:100-item.value }]}
-                            cx={50} cy={50} innerRadius={35} outerRadius={45}
-                            startAngle={90} endAngle={-270} dataKey="value" stroke="none">
-                            <Cell fill={item.color} />
-                            <Cell fill={darkMode ? '#1e293b' : '#e2e8f0'} />
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[18px] font-bold" style={{ color:item.color }}>
-                        {item.value.toFixed(0)}%
+                  {
+                    name: 'Rectifieuse', node: 'ESP32-NODE-01', color: '#3b82f6', value: sante,
+                    sensors: [
+                      { label: 'Courant',   val: `${latest.courant} A`,         color: latest.courant > 15 ? '#ef4444' : '#22c55e' },
+                      { label: 'Vibration', val: `${latest.vibX.toFixed(2)} g`, color: latest.vibX > 2 ? '#f97316' : '#3b82f6' },
+                      { label: 'RPM',       val: `${latest.rpm}`,               color: '#a855f7' },
+                    ]
+                  },
+                  {
+                    name: 'Compresseur ABAC', node: 'compresseur', color: '#06b6d4', value: santeComp,
+                    sensors: [
+                      { label: 'Courant',   val: `${latestComp.courant.toFixed(1)} A`,           color: latestComp.courant > 15 ? '#ef4444' : '#22c55e' },
+                      { label: 'Vibration', val: `${latestComp.vibX.toFixed(2)} g`,              color: latestComp.vibX > 2 ? '#f97316' : '#3b82f6' },
+                      { label: 'Pression',  val: `${(latestComp.pression ?? 0).toFixed(1)} bar`, color: '#06b6d4' },
+                    ]
+                  },
+                ].map((machine, i) => (
+                  <div key={i} className={`${darkMode ? 'bg-slate-900/40' : 'bg-slate-50'} rounded-xl p-5 border ${border}`}>
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <div className={`text-sm font-bold ${txt1}`}>{i === 0 ? '⚙️' : '🔧'} {machine.name}</div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">{machine.node}</div>
+                      </div>
+                      <div className="flex flex-col items-center">
+                        <div className="relative" style={{ width: 70, height: 70 }}>
+                          <ResponsiveContainer width={70} height={70}>
+                            <PieChart>
+                              <Pie
+                                data={[{ value: machine.value }, { value: 100 - machine.value }]}
+                                cx={35} cy={35} innerRadius={26} outerRadius={34}
+                                startAngle={90} endAngle={-270} dataKey="value" stroke="none">
+                                <Cell fill={machine.color} />
+                                <Cell fill={darkMode ? '#1e293b' : '#e2e8f0'} />
+                              </Pie>
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[13px] font-bold" style={{ color: machine.color }}>
+                            {machine.value.toFixed(0)}%
+                          </div>
+                        </div>
+                        <span className="text-[10px] text-slate-500 mt-1">Santé</span>
                       </div>
                     </div>
-                    <span className={`text-[13px] ${txt2}`}>{item.name}</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {machine.sensors.map(s => (
+                        <div key={s.label} className={`${darkMode ? 'bg-slate-800/60' : 'bg-white'} rounded-lg p-2.5 text-center border ${border}`}>
+                          <div className="text-[15px] font-bold" style={{ color: s.color }}>{s.val}</div>
+                          <div className={`text-[10px] ${txtMut} mt-1`}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="flex-1 bg-slate-700/50 rounded-full h-1.5">
+                        <div className="h-1.5 rounded-full transition-all duration-500"
+                          style={{ width: `${machine.value}%`, background: machine.value > 70 ? '#22c55e' : machine.value > 40 ? '#f97316' : '#ef4444' }} />
+                      </div>
+                      <span className={`text-[11px] font-bold ${txt2}`}>
+                        {machine.value > 70 ? '✅ Bon' : machine.value > 40 ? '⚠️ Moyen' : '🔴 Critique'}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>

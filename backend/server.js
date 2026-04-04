@@ -6,16 +6,28 @@ const cors       = require('cors');
 const mqtt       = require('mqtt');
 const http       = require('http');
 const { Server } = require('socket.io');
+const multer     = require('multer');
+const path       = require('path');
+const fs         = require('fs');
+const helmet     = require('helmet');
+const rateLimit  = require('express-rate-limit');
 require('dotenv').config();
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-
 
 const app    = express();
 const server = http.createServer(app);
 
+// ── Multer ──
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+const storage = multer.diskStorage({
+  destination: (_, __, cb) => cb(null, uploadDir),
+  filename:    (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+});
+const upload = multer({ storage });
+app.use('/uploads', express.static(uploadDir));
+
 const io = new Server(server, {
-cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
 app.use(express.json());
@@ -55,32 +67,29 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// ═══ Schema Demande d'accès ═══
 const demandeSchema = new mongoose.Schema({
   nom:        { type: String, required: true },
   email:      { type: String, required: true },
   poste:      { type: String, required: true },
   telephone:  { type: String, required: true },
-  statut:     { type: String, default: 'en attente' }, // 'en attente' | 'approuvée' | 'refusée'
-  username:   { type: String, default: null },          // attribué par admin
+  statut:     { type: String, default: 'en attente' },
+  username:   { type: String, default: null },
   createdAt:  { type: Date, default: Date.now }
 });
 const Demande = mongoose.model('Demande', demandeSchema);
 
-// ═══ Schema Tasks ═══
 const taskSchema = new mongoose.Schema({
   titre:       { type: String, required: true },
   description: { type: String, default: '' },
-  priorite:    { type: String, default: 'moyenne' }, // 'haute' | 'moyenne' | 'basse'
+  priorite:    { type: String, default: 'moyenne' },
   deadline:    { type: Date,   default: null },
-  assigneA:    { type: String, default: null },       // username de l'employé
-  statut:      { type: String, default: 'à faire' },  // 'à faire' | 'en cours' | 'terminée'
-  creePar:     { type: String, required: true },       // username admin
+  assigneA:    { type: String, default: null },
+  statut:      { type: String, default: 'à faire' },
+  creePar:     { type: String, required: true },
   createdAt:   { type: Date,   default: Date.now }
 });
 const Task = mongoose.model('Task', taskSchema);
 
-// Direct Messages (1:1) — TTL 30 jours
 const directMessageSchema = new mongoose.Schema({
   from:      { type: String, required: true },
   fromRole:  { type: String, required: true },
@@ -120,11 +129,11 @@ const alertSchema = new mongoose.Schema({
   notifiedBy:   { type: String, default: null },
   callAttempts: { type: Number, default: 0 },
   ai: {
-    source:   { type: String, default: 'rules' },
-    label:    { type: String, default: null },
-    proba:    { type: mongoose.Schema.Types.Mixed, default: null },
-    model:    { type: String, default: null },
-    version:  { type: String, default: null },
+    source:  { type: String, default: 'rules' },
+    label:   { type: String, default: null },
+    proba:   { type: mongoose.Schema.Types.Mixed, default: null },
+    model:   { type: String, default: null },
+    version: { type: String, default: null },
   },
   sensorSnapshot: {
     vibX:    { type: Number, default: null },
@@ -159,7 +168,35 @@ const callLogSchema = new mongoose.Schema({
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
 
-// ═══ Auth Middleware ═══
+// ── Schema Tâche (sous-document) ──
+const tacheSchema = new mongoose.Schema({
+  titre:    { type: String, required: true },
+  employe:  { type: String, required: true },
+  statut:   { type: String, enum: ['à faire', 'en cours', 'terminée'], default: 'à faire' },
+  priorite: { type: String, enum: ['haute', 'moyenne', 'basse'], default: 'moyenne' },
+}, { _id: true });
+
+// ── Schema Pièce ──
+const pieceSchema = new mongoose.Schema({
+  ref:            { type: String, default: '' },
+  fichier:        { type: String, default: null },
+  nom:            { type: String, required: true },
+  machine:        { type: String, default: 'Rectifieuse' },
+  employe:        { type: String, default: '' },
+  quantite:       { type: Number, default: 0 },
+  prix:           { type: Number, default: 0 },
+  status:         { type: String, enum: ['Terminé', 'En cours', 'Contrôle'], default: 'En cours' },
+  matiere:        { type: Boolean, default: true },
+  solidworksPath: { type: String, default: null },
+  taches:         { type: [tacheSchema], default: [] },
+  stock:          { type: Number, default: 0 },
+  maxStock:       { type: Number, default: 1 },
+  seuil:          { type: Number, default: 1 },
+  createdAt:      { type: Date, default: Date.now }
+});
+const Piece = mongoose.model('Piece', pieceSchema);
+
+// ═══ Middlewares ═══
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: 'Token manquant' });
@@ -190,11 +227,9 @@ const sanitizeSeverity = (value) => value === 'critical' ? 'critical' : 'warning
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password)
-      return res.status(400).json({ message: 'Champs requis manquants' });
+    if (!username || !password) return res.status(400).json({ message: 'Champs requis manquants' });
     const exists = await User.findOne({ username });
-    if (exists)
-      return res.status(409).json({ message: 'Utilisateur déjà existant' });
+    if (exists) return res.status(409).json({ message: 'Utilisateur déjà existant' });
     const hashed = await bcrypt.hash(password, 12);
     const user = await User.create({ username, password: hashed });
     res.status(201).json({ message: '✅ Utilisateur créé', userId: user._id });
@@ -220,16 +255,13 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ═══ Demandes d'accès ═══
-
-// Employé soumet une demande (public — pas besoin de token)
+// ═══ Demandes ═══
 app.post('/api/demandes', async (req, res) => {
   try {
     const { nom, email, poste, telephone } = req.body;
     if (!nom || !email || !poste || !telephone)
       return res.status(400).json({ message: 'Tous les champs sont requis' });
     const demande = await Demande.create({ nom, email, poste, telephone });
-    // Notifier l'admin via socket
     io.emit('nouvelle-demande', { id: demande._id, nom, email, poste });
     res.status(201).json({ message: '✅ Demande envoyée avec succès' });
   } catch (err) {
@@ -237,7 +269,6 @@ app.post('/api/demandes', async (req, res) => {
   }
 });
 
-// Admin: voir toutes les demandes
 app.get('/api/demandes', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const demandes = await Demande.find().sort({ createdAt: -1 });
@@ -247,38 +278,26 @@ app.get('/api/demandes', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
-// Admin: approuver une demande + créer le compte
 app.post('/api/demandes/:id/approuver', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password)
-      return res.status(400).json({ message: 'Username et mot de passe requis' });
-
+    if (!username || !password) return res.status(400).json({ message: 'Username et mot de passe requis' });
     const demande = await Demande.findById(req.params.id);
     if (!demande) return res.status(404).json({ message: 'Demande introuvable' });
-    if (demande.statut !== 'en attente')
-      return res.status(400).json({ message: 'Demande déjà traitée' });
-
-    // Vérifier si username déjà pris
+    if (demande.statut !== 'en attente') return res.status(400).json({ message: 'Demande déjà traitée' });
     const exists = await User.findOne({ username });
     if (exists) return res.status(409).json({ message: 'Username déjà utilisé' });
-
-    // Créer le compte employé
     const hashed = await bcrypt.hash(password, 12);
     await User.create({ username, password: hashed, role: 'employe' });
-
-    // Mettre à jour la demande
     demande.statut   = 'approuvée';
     demande.username = username;
     await demande.save();
-
     res.json({ message: `✅ Compte créé pour ${username}` });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// Admin: refuser une demande
 app.post('/api/demandes/:id/refuser', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const demande = await Demande.findById(req.params.id);
@@ -291,7 +310,7 @@ app.post('/api/demandes/:id/refuser', authMiddleware, adminMiddleware, async (re
   }
 });
 
-// ═══ Users List ═══
+// ═══ Users ═══
 app.get('/api/users', authMiddleware, async (req, res) => {
   try {
     const users = await User.find({}, 'username role isOnline lastSeen');
@@ -302,27 +321,18 @@ app.get('/api/users', authMiddleware, async (req, res) => {
 });
 
 // ═══ Tasks ═══
-
-// Créer une task (admin)
 app.post('/api/tasks', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { titre, description, priorite, deadline, assigneA } = req.body;
     if (!titre) return res.status(400).json({ message: 'Titre requis' });
-    const task = await Task.create({
-      titre, description, priorite, deadline, assigneA,
-      creePar: req.user.username
-    });
-    // Notifier en temps réel
+    const task = await Task.create({ titre, description, priorite, deadline, assigneA, creePar: req.user.username });
     io.emit('nouvelle-task', task);
     res.status(201).json(task);
   } catch (err) {
-    console.error('❌ Erreur création task:', err.message);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// Voir les tasks
-// Admin → toutes | Employé → ses tasks
 app.get('/api/tasks', authMiddleware, async (req, res) => {
   try {
     const filter = req.user.role === 'admin' ? {} : { assigneA: req.user.username };
@@ -333,12 +343,10 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
   }
 });
 
-// Modifier statut (employé ou admin)
 app.patch('/api/tasks/:id', authMiddleware, async (req, res) => {
   try {
     const task = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ message: 'Task introuvable' });
-    // Employé ne peut modifier que ses propres tasks
     if (req.user.role !== 'admin' && task.assigneA !== req.user.username)
       return res.status(403).json({ message: 'Accès refusé' });
     const allowed = ['titre', 'description', 'priorite', 'deadline', 'assigneA', 'statut'];
@@ -351,7 +359,6 @@ app.patch('/api/tasks/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Supprimer (admin)
 app.delete('/api/tasks/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     await Task.findByIdAndDelete(req.params.id);
@@ -362,21 +369,15 @@ app.delete('/api/tasks/:id', authMiddleware, adminMiddleware, async (req, res) =
   }
 });
 
-// ═══ Direct Messages ═══
+// ═══ Messages ═══
 app.get('/api/messages/:targetUsername', authMiddleware, async (req, res) => {
   try {
     const { username } = req.user;
     const { targetUsername } = req.params;
     const messages = await DirectMessage.find({
-      $or: [
-        { from: username, to: targetUsername },
-        { from: targetUsername, to: username }
-      ]
+      $or: [{ from: username, to: targetUsername }, { from: targetUsername, to: username }]
     }).sort({ createdAt: 1 }).limit(100);
-    await DirectMessage.updateMany(
-      { from: targetUsername, to: username, read: false },
-      { read: true }
-    );
+    await DirectMessage.updateMany({ from: targetUsername, to: username, read: false }, { read: true });
     res.json(messages);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
@@ -398,7 +399,7 @@ app.get('/api/messages/unread/counts', authMiddleware, async (req, res) => {
   }
 });
 
-// ═══ Sensor History ═══
+// ═══ Sensors ═══
 app.get('/api/sensors/history', authMiddleware, async (req, res) => {
   try {
     const data = await SensorData.find().sort({ createdAt: -1 }).limit(50);
@@ -408,6 +409,7 @@ app.get('/api/sensors/history', authMiddleware, async (req, res) => {
   }
 });
 
+// ═══ Alerts ═══
 app.get('/api/alerts', authMiddleware, async (req, res) => {
   try {
     const { status, limit = 100 } = req.query;
@@ -424,11 +426,7 @@ app.get('/api/alerts/pending', serviceKeyMiddleware, async (req, res) => {
   try {
     const maxAgeMinutes = Number(req.query.maxAgeMinutes || 5);
     const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
-    const alerts = await Alert.find({
-      status: 'new',
-      seenAt: null,
-      createdAt: { $lte: cutoff }
-    }).sort({ createdAt: 1 }).limit(200);
+    const alerts = await Alert.find({ status: 'new', seenAt: null, createdAt: { $lte: cutoff } }).sort({ createdAt: 1 }).limit(200);
     res.json(alerts);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
@@ -440,13 +438,9 @@ app.post('/api/alerts', authMiddleware, async (req, res) => {
     const { machineId, node, type, severity, message, sensorSnapshot, ai } = req.body;
     if (!message) return res.status(400).json({ message: 'Message requis' });
     const alert = await Alert.create({
-      machineId: machineId || 'UNKNOWN',
-      node: node || 'UNKNOWN',
-      type: type || 'manual',
-      severity: sanitizeSeverity(severity),
-      message,
-      sensorSnapshot: sensorSnapshot || {},
-      ai: ai || { source: 'manual' }
+      machineId: machineId || 'UNKNOWN', node: node || 'UNKNOWN',
+      type: type || 'manual', severity: sanitizeSeverity(severity), message,
+      sensorSnapshot: sensorSnapshot || {}, ai: ai || { source: 'manual' }
     });
     io.emit('alert', alert);
     res.status(201).json(alert);
@@ -460,9 +454,7 @@ app.patch('/api/alerts/:id/seen', authMiddleware, async (req, res) => {
     const alert = await Alert.findById(req.params.id);
     if (!alert) return res.status(404).json({ message: 'Alerte introuvable' });
     if (alert.status !== 'resolved') {
-      alert.status = 'seen';
-      alert.seenAt = new Date();
-      alert.seenBy = req.user.username;
+      alert.status = 'seen'; alert.seenAt = new Date(); alert.seenBy = req.user.username;
       await alert.save();
     }
     res.json(alert);
@@ -476,10 +468,7 @@ app.patch('/api/alerts/:id/resolve', authMiddleware, async (req, res) => {
     const alert = await Alert.findById(req.params.id);
     if (!alert) return res.status(404).json({ message: 'Alerte introuvable' });
     alert.status = 'resolved';
-    if (!alert.seenAt) {
-      alert.seenAt = new Date();
-      alert.seenBy = req.user.username;
-    }
+    if (!alert.seenAt) { alert.seenAt = new Date(); alert.seenBy = req.user.username; }
     await alert.save();
     res.json(alert);
   } catch (err) {
@@ -492,10 +481,8 @@ app.patch('/api/alerts/:id/notified', serviceKeyMiddleware, async (req, res) => 
     const { notifiedBy = 'gsm-supervisor' } = req.body || {};
     const alert = await Alert.findById(req.params.id);
     if (!alert) return res.status(404).json({ message: 'Alerte introuvable' });
-    alert.status = 'notified';
-    alert.notifiedAt = new Date();
-    alert.notifiedBy = notifiedBy;
-    alert.callAttempts = (alert.callAttempts || 0) + 1;
+    alert.status = 'notified'; alert.notifiedAt = new Date();
+    alert.notifiedBy = notifiedBy; alert.callAttempts = (alert.callAttempts || 0) + 1;
     await alert.save();
     res.json(alert);
   } catch (err) {
@@ -503,6 +490,7 @@ app.patch('/api/alerts/:id/notified', serviceKeyMiddleware, async (req, res) => 
   }
 });
 
+// ═══ Contacts ═══
 app.get('/api/contacts', authMiddleware, async (req, res) => {
   try {
     const contacts = await Contact.find().sort({ createdAt: -1 });
@@ -535,10 +523,7 @@ app.post('/api/contacts', authMiddleware, adminMiddleware, async (req, res) => {
 app.patch('/api/contacts/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const updates = ['role', 'name', 'phonePrimary', 'phoneBackup', 'isActive']
-      .reduce((acc, key) => {
-        if (req.body[key] !== undefined) acc[key] = req.body[key];
-        return acc;
-      }, {});
+      .reduce((acc, key) => { if (req.body[key] !== undefined) acc[key] = req.body[key]; return acc; }, {});
     const contact = await Contact.findByIdAndUpdate(req.params.id, updates, { new: true });
     if (!contact) return res.status(404).json({ message: 'Contact introuvable' });
     res.json(contact);
@@ -547,19 +532,16 @@ app.patch('/api/contacts/:id', authMiddleware, adminMiddleware, async (req, res)
   }
 });
 
+// ═══ Call Logs ═══
 app.post('/api/call-logs', serviceKeyMiddleware, async (req, res) => {
   try {
     const { alertId, phoneNumber, attemptNo, callStatus, providerRef, durationSec, errorMessage } = req.body;
     if (!alertId || !phoneNumber || !attemptNo)
       return res.status(400).json({ message: 'alertId, phoneNumber, attemptNo requis' });
     const log = await CallLog.create({
-      alertId,
-      phoneNumber,
-      attemptNo,
-      callStatus: callStatus || 'queued',
-      providerRef: providerRef || null,
-      durationSec: durationSec || null,
-      errorMessage: errorMessage || null
+      alertId, phoneNumber, attemptNo,
+      callStatus: callStatus || 'queued', providerRef: providerRef || null,
+      durationSec: durationSec || null, errorMessage: errorMessage || null
     });
     res.status(201).json(log);
   } catch (err) {
@@ -576,17 +558,147 @@ app.get('/api/call-logs/:alertId', authMiddleware, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════
+// ═══ Pièces Production ═══
+// ═══════════════════════════════════════
+
+// GET toutes les pièces
+app.get('/api/pieces', authMiddleware, async (req, res) => {
+  try {
+    const { machine, status } = req.query;
+    const filter = {};
+    if (machine) filter.machine = machine;
+    if (status)  filter.status  = status;
+    const pieces = await Piece.find(filter).sort({ createdAt: -1 });
+    res.json(pieces);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+// POST créer une pièce — FIX: détecte JSON vs FormData automatiquement
+app.post('/api/pieces', authMiddleware, adminMiddleware, (req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  // Si c'est du JSON → pas de multer
+  if (contentType.includes('application/json')) return next();
+  // Si c'est du FormData → multer
+  upload.single('fichier')(req, res, next);
+}, async (req, res) => {
+  try {
+    const { nom, machine, employe, quantite, prix, status, matiere, solidworksPath, ref } = req.body;
+    if (!nom) return res.status(400).json({ message: 'Nom requis' });
+
+    const piece = await Piece.create({
+      ref:            ref            || '',
+      nom,
+      machine:        machine        || 'Rectifieuse',
+      employe:        employe        || '',
+      quantite:       Number(quantite)  || 0,
+      prix:           Number(prix)      || 0,
+      status:         status         || 'En cours',
+      // FIX: gère boolean depuis JSON et string depuis FormData
+      matiere:        typeof matiere === 'boolean' ? matiere : matiere !== 'false',
+      solidworksPath: solidworksPath || null,
+      fichier:        req.file ? req.file.filename : null,
+      taches:         [],
+    });
+    res.status(201).json(piece);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// PATCH modifier une pièce
+app.patch('/api/pieces/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const allowed = ['nom', 'machine', 'employe', 'quantite', 'prix', 'status', 'matiere', 'solidworksPath', 'ref', 'stock', 'maxStock', 'seuil'];
+    const updates = allowed.reduce((acc, key) => {
+      if (req.body[key] !== undefined) acc[key] = req.body[key];
+      return acc;
+    }, {});
+    const piece = await Piece.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!piece) return res.status(404).json({ message: 'Pièce introuvable' });
+    res.json(piece);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// DELETE supprimer une pièce
+app.delete('/api/pieces/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await Piece.findByIdAndDelete(req.params.id);
+    res.json({ message: '✅ Pièce supprimée' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// GET télécharger le fichier d'une pièce
+app.get('/api/pieces/:id/download', authMiddleware, async (req, res) => {
+  try {
+    const piece = await Piece.findById(req.params.id);
+    if (!piece || !piece.fichier) return res.status(404).json({ message: 'Fichier introuvable' });
+    const filePath = path.join(__dirname, 'uploads', piece.fichier);
+    res.download(filePath, piece.fichier);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// ── Tâches d'une pièce ──
+
+// POST ajouter une tâche
+app.post('/api/pieces/:id/taches', authMiddleware, async (req, res) => {
+  try {
+    const { titre, employe, priorite } = req.body;
+    if (!titre || !employe) return res.status(400).json({ message: 'Titre et employé requis' });
+    const piece = await Piece.findById(req.params.id);
+    if (!piece) return res.status(404).json({ message: 'Pièce introuvable' });
+    piece.taches.push({ titre, employe, priorite: priorite || 'moyenne', statut: 'à faire' });
+    await piece.save();
+    res.status(201).json(piece);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// PATCH modifier le statut d'une tâche
+app.patch('/api/pieces/:id/taches/:tacheId', authMiddleware, async (req, res) => {
+  try {
+    const piece = await Piece.findById(req.params.id);
+    if (!piece) return res.status(404).json({ message: 'Pièce introuvable' });
+    const tache = piece.taches.id(req.params.tacheId);
+    if (!tache) return res.status(404).json({ message: 'Tâche introuvable' });
+    const allowed = ['titre', 'employe', 'statut', 'priorite'];
+    allowed.forEach(f => { if (req.body[f] !== undefined) tache[f] = req.body[f]; });
+    await piece.save();
+    res.json(piece);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// DELETE supprimer une tâche
+app.delete('/api/pieces/:id/taches/:tacheId', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const piece = await Piece.findById(req.params.id);
+    if (!piece) return res.status(404).json({ message: 'Pièce introuvable' });
+    piece.taches.pull({ _id: req.params.tacheId });
+    await piece.save();
+    res.json(piece);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 // ═══ MQTT ═══
 const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
 
 mqttClient.on('connect', () => {
-  mqttClient.subscribe('cncpulse/gsm/result', err => {
-    if (!err) console.log('Subscribed: cncpulse/gsm/result');
-  });
+  mqttClient.subscribe('cncpulse/gsm/result', err => { if (!err) console.log('Subscribed: cncpulse/gsm/result'); });
   console.log('✅ MQTT connecté à HiveMQ');
-  mqttClient.subscribe('cncpulse/sensors', err => {
-    if (!err) console.log('📡 Abonné au topic: cncpulse/sensors');
-  });
+  mqttClient.subscribe('cncpulse/sensors', err => { if (!err) console.log('📡 Abonné au topic: cncpulse/sensors'); });
 });
 
 mqttClient.on('message', async (topic, message) => {
@@ -599,19 +711,11 @@ mqttClient.on('message', async (topic, message) => {
       if (!alert) return;
       const nextAttempt = (alert.callAttempts || 0) + 1;
       await CallLog.create({
-        alertId,
-        phoneNumber: phoneNumber || 'unknown',
-        attemptNo: nextAttempt,
-        callStatus: status || 'unknown',
-        providerRef: providerRef || null,
-        durationSec: durationSec || null,
-        errorMessage: errorMessage || null,
+        alertId, phoneNumber: phoneNumber || 'unknown', attemptNo: nextAttempt,
+        callStatus: status || 'unknown', providerRef: providerRef || null,
+        durationSec: durationSec || null, errorMessage: errorMessage || null,
       });
-      if (status === 'success') {
-        alert.status = 'notified';
-        alert.notifiedAt = new Date();
-        alert.notifiedBy = 'gsm';
-      }
+      if (status === 'success') { alert.status = 'notified'; alert.notifiedAt = new Date(); alert.notifiedBy = 'gsm'; }
       alert.callAttempts = nextAttempt;
       await alert.save();
       io.emit('gsm-result', { alertId, status: status || 'unknown' });
@@ -620,29 +724,17 @@ mqttClient.on('message', async (topic, message) => {
     await SensorData.create(data);
     io.emit('sensor-data', data);
     const alerts = [];
-    if (data.courant > 20)
-      alerts.push({ severity: 'critical', message: 'Current critical: ' + data.courant + 'A', node: data.node, type: 'sensor' });
-    else if (data.courant > 15)
-      alerts.push({ severity: 'warning', message: 'Current elevated: ' + data.courant + 'A', node: data.node, type: 'sensor' });
-    if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)
-      alerts.push({ severity: 'critical', message: 'Vibration critique detectee', node: data.node, type: 'sensor' });
-    else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)
-      alerts.push({ severity: 'warning', message: 'Vibration elevee', node: data.node, type: 'sensor' });
+    if (data.courant > 20)       alerts.push({ severity: 'critical', message: 'Current critical: ' + data.courant + 'A', node: data.node, type: 'sensor' });
+    else if (data.courant > 15)  alerts.push({ severity: 'warning',  message: 'Current elevated: ' + data.courant + 'A', node: data.node, type: 'sensor' });
+    if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)        alerts.push({ severity: 'critical', message: 'Vibration critique detectee', node: data.node, type: 'sensor' });
+    else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)   alerts.push({ severity: 'warning',  message: 'Vibration elevee',            node: data.node, type: 'sensor' });
     for (const alert of alerts) {
       const savedAlert = await Alert.create({
         machineId: data.machineId || data.node || 'UNKNOWN',
-        node: data.node || 'UNKNOWN',
-        type: alert.type || 'sensor',
-        severity: sanitizeSeverity(alert.severity),
-        message: alert.message,
+        node: data.node || 'UNKNOWN', type: alert.type || 'sensor',
+        severity: sanitizeSeverity(alert.severity), message: alert.message,
         ai: { source: 'rules', label: alert.severity || 'warning' },
-        sensorSnapshot: {
-          vibX: data.vibX,
-          vibY: data.vibY,
-          vibZ: data.vibZ,
-          courant: data.courant,
-          rpm: data.rpm,
-        }
+        sensorSnapshot: { vibX: data.vibX, vibY: data.vibY, vibZ: data.vibZ, courant: data.courant, rpm: data.rpm }
       });
       io.emit('alert', savedAlert);
     }
@@ -671,9 +763,7 @@ io.on('connection', (socket) => {
       const recipientEntry = [...connectedUsers.entries()].find(([, u]) => u.username === to);
       if (recipientEntry) io.to(recipientEntry[0]).emit('direct-message', msgData);
       socket.emit('direct-message', msgData);
-    } catch (err) {
-      console.error('❌ Erreur DM:', err.message);
-    }
+    } catch (err) { console.error('❌ Erreur DM:', err.message); }
   });
 
   socket.on('mark-read', async ({ from, to }) => {
@@ -684,25 +774,17 @@ io.on('connection', (socket) => {
   socket.on('get-history', async () => {
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const messages = await Message.find({ createdAt: { $gte: since } })
-        .sort({ createdAt: 1 }).limit(100);
+      const messages = await Message.find({ createdAt: { $gte: since } }).sort({ createdAt: 1 }).limit(100);
       socket.emit('chat-history', messages);
-    } catch (err) {
-      console.error('❌ Erreur get-history:', err.message);
-    }
+    } catch (err) { console.error('❌ Erreur get-history:', err.message); }
   });
 
   socket.on('send-message', async ({ username, role, text }) => {
     try {
       if (!text?.trim() || !username) return;
       const msg = await Message.create({ username, role: role || 'user', text: text.trim() });
-      io.emit('new-message', {
-        _id: msg._id, username: msg.username,
-        role: msg.role, text: msg.text, createdAt: msg.createdAt
-      });
-    } catch (err) {
-      console.error('❌ Erreur chat:', err.message);
-    }
+      io.emit('new-message', { _id: msg._id, username: msg.username, role: msg.role, text: msg.text, createdAt: msg.createdAt });
+    } catch (err) { console.error('❌ Erreur chat:', err.message); }
   });
 
   socket.on('disconnect', async () => {
