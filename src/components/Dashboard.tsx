@@ -11,6 +11,7 @@ import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import AlertesPage from './AlertesPage';
 import ProductionPage from './ProductionPage';
+import EspaceEmployer from './EspaceEmployer';
 import './Dashboard.css';
 
 interface SensorData {
@@ -44,8 +45,9 @@ const Dashboard: React.FC = () => {
   const role = localStorage.getItem('role');
 
   // ── activePage — 'tasks' retiré, 'maintenance' ajouté ──
-  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'>('dashboard');
-
+const [activePage, setActivePage] = useState<
+  'dashboard' | 'machines' | 'demandes' | 'maintenance' | 'alertes' | 'rapports' | 'production' | 'EspaceEmployer'
+>('dashboard');
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
 
@@ -170,6 +172,7 @@ const Dashboard: React.FC = () => {
     { key: 'maintenance' as const, icon: <Wrench size={18} />,          label: 'Maintenance' },
     { key: 'alertes'     as const, icon: <Bell size={18} />,            label: 'Alertes', badge: alertCount },
     { key: 'rapports'    as const, icon: <BarChart2 size={18} />,       label: 'Rapports' },
+{ key: 'EspaceEmployer' as const, icon: <BarChart2 size={18} />, label: 'Espace Employé' },
     ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
   ];
 
@@ -275,6 +278,7 @@ const Dashboard: React.FC = () => {
         {/* ── Content ── */}
         {activePage === 'machines'     ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
         : activePage === 'demandes'    ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
+        : activePage === 'EspaceEmployer'  ? <div className="flex-1 overflow-y-auto"><EspaceEmployer /></div>
         : activePage === 'alertes'     ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
         : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
         : activePage === 'maintenance' ? (
@@ -290,6 +294,7 @@ const Dashboard: React.FC = () => {
             <div className="text-white font-semibold text-lg">Section Rapports</div>
             <div className="text-slate-500 text-sm">Bientôt disponible</div>
           </div>
+
         )
         : (
           /* ── DASHBOARD PRINCIPAL ── */
