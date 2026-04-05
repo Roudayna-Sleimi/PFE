@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Wrench, Plus, X, RefreshCw, Zap, Thermometer, Activity } from 'lucide-react';
+import { Plus, X, RefreshCw, Zap, Thermometer, Activity } from 'lucide-react';
 import { io } from 'socket.io-client';
-import MachineDetail from './Machinedetail';
+import MachineDetail from './MachineDetail';
 
 const socket = io('http://localhost:5000', { transports: ['websocket'] });
 
