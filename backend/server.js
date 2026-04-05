@@ -19,11 +19,24 @@ const server = http.createServer(app);
 // ── Multer ──
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+const dossierUploadDir = path.join(uploadDir, 'dossiers');
+if (!fs.existsSync(dossierUploadDir)) fs.mkdirSync(dossierUploadDir);
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadDir),
   filename:    (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 const upload = multer({ storage });
+const dossierStorage = multer.diskStorage({
+  destination: (_, __, cb) => cb(null, dossierUploadDir),
+  filename:    (_, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`),
+});
+const dossierUpload = multer({
+  storage: dossierStorage,
+  fileFilter: (_, file, cb) => {
+    if (file.mimetype !== 'application/pdf') return cb(new Error('Seuls les fichiers PDF sont autorises'));
+    cb(null, true);
+  }
+});
 app.use('/uploads', express.static(uploadDir));
 
 const io = new Server(server, {
@@ -196,6 +209,23 @@ const pieceSchema = new mongoose.Schema({
 });
 const Piece = mongoose.model('Piece', pieceSchema);
 
+const dossierSchema = new mongoose.Schema({
+  originalName:   { type: String, required: true },
+  storedFilename: { type: String, required: true },
+  filePath:       { type: String, required: true },
+  publicPath:     { type: String, required: true },
+  mimeType:       { type: String, default: 'application/pdf' },
+  size:           { type: Number, default: 0 },
+  clientLastName: { type: String, default: '' },
+  clientFirstName:{ type: String, default: '' },
+  pieceName:      { type: String, default: '' },
+  storageDate:    { type: Date, required: true },
+  searchableText: { type: String, default: '' },
+  uploadedBy:     { type: String, default: null },
+  createdAt:      { type: Date, default: Date.now }
+});
+const Dossier = mongoose.model('Dossier', dossierSchema);
+
 // ═══ Middlewares ═══
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -222,6 +252,14 @@ const serviceKeyMiddleware = (req, res, next) => {
 };
 
 const sanitizeSeverity = (value) => value === 'critical' ? 'critical' : 'warning';
+
+const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const parseStorageDate = (value) => {
+  if (!value) return null;
+  const parsed = new Date(`${String(value)}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
 // ═══ Auth Routes ═══
 app.post('/api/auth/register', async (req, res) => {
@@ -693,6 +731,117 @@ app.delete('/api/pieces/:id/taches/:tacheId', authMiddleware, adminMiddleware, a
 });
 
 // ═══ MQTT ═══
+app.get('/api/dossiers', authMiddleware, async (req, res) => {
+  try {
+    const { client, piece, date, q } = req.query;
+    const filter = {};
+
+    if (client) {
+      const pattern = { $regex: escapeRegex(String(client)), $options: 'i' };
+      filter.$or = [{ clientLastName: pattern }, { clientFirstName: pattern }];
+    }
+    if (piece) filter.pieceName = { $regex: escapeRegex(String(piece)), $options: 'i' };
+    if (q) filter.searchableText = { $regex: escapeRegex(String(q).toLowerCase()), $options: 'i' };
+    if (date) {
+      const parsedDate = parseStorageDate(String(date));
+      if (parsedDate) {
+        const start = new Date(parsedDate);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(parsedDate);
+        end.setHours(23, 59, 59, 999);
+        filter.storageDate = { $gte: start, $lte: end };
+      }
+    }
+
+    const dossiers = await Dossier.find(filter).sort({ createdAt: -1 });
+    res.json(dossiers);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/dossiers', authMiddleware, (req, res, next) => {
+  dossierUpload.array('documents', 20)(req, res, (err) => {
+    if (err) return res.status(400).json({ message: err.message || 'Upload PDF invalide' });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const { clientLastName, clientFirstName, pieceName, storageDate } = req.body;
+    const parsedStorageDate = parseStorageDate(storageDate);
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (!clientLastName || !clientFirstName || !pieceName || !parsedStorageDate)
+      return res.status(400).json({ message: 'Nom, prenom, date de stockage et nom de la piece sont requis' });
+    if (files.length === 0) return res.status(400).json({ message: 'Aucun fichier PDF recu' });
+
+    const savedDocuments = [];
+
+    for (const file of files) {
+      const publicPath = `/uploads/dossiers/${file.filename}`;
+      const searchableText = [
+        String(clientLastName).toLowerCase(),
+        String(clientFirstName).toLowerCase(),
+        String(pieceName).toLowerCase(),
+        String(file.originalname).toLowerCase(),
+      ].join(' ');
+
+      const dossier = await Dossier.create({
+        originalName: file.originalname,
+        storedFilename: file.filename,
+        filePath: file.path,
+        publicPath,
+        mimeType: file.mimetype,
+        size: file.size,
+        clientLastName: String(clientLastName).trim(),
+        clientFirstName: String(clientFirstName).trim(),
+        pieceName: String(pieceName).trim(),
+        storageDate: parsedStorageDate,
+        searchableText,
+        uploadedBy: req.user?.username || null,
+      });
+
+      savedDocuments.push(dossier);
+    }
+
+    res.status(201).json(savedDocuments);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/dossiers/piece-names', authMiddleware, async (req, res) => {
+  try {
+    const names = await Dossier.distinct('pieceName', { pieceName: { $ne: '' } });
+    const sorted = names.sort((a, b) => a.localeCompare(b));
+    res.json(sorted);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/dossiers/:id/download', authMiddleware, async (req, res) => {
+  try {
+    const dossier = await Dossier.findById(req.params.id);
+    if (!dossier) return res.status(404).json({ message: 'Document introuvable' });
+    if (!fs.existsSync(dossier.filePath)) return res.status(404).json({ message: 'Fichier introuvable sur le disque' });
+    res.download(dossier.filePath, dossier.originalName);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.delete('/api/dossiers/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const dossier = await Dossier.findById(req.params.id);
+    if (!dossier) return res.status(404).json({ message: 'Document introuvable' });
+    if (fs.existsSync(dossier.filePath)) fs.unlinkSync(dossier.filePath);
+    await dossier.deleteOne();
+    res.json({ message: 'Document supprime avec succes' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
 
 mqttClient.on('connect', () => {

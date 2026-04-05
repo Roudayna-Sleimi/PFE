@@ -62,6 +62,7 @@ const PieceIcon = ({ nom }: { nom: string }) => {
 
 const ProductionPage: React.FC = () => {
   const [pieces, setPieces]               = useState<Piece[]>([]);
+  const [dossierPieceNames, setDossierPieceNames] = useState<string[]>([]);
   const [employes, setEmployes]           = useState<string[]>([]);
   const [loading, setLoading]             = useState(true);
   const [filtre, setFiltre]               = useState('Toutes');
@@ -105,9 +106,20 @@ const ProductionPage: React.FC = () => {
     }
   };
 
+  const fetchDossierPieceNames = async () => {
+    try {
+      const res  = await fetch(`${API}/dossiers/piece-names`, { headers });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data)) setDossierPieceNames(data);
+    } catch (err) {
+      console.error('Erreur fetch noms pieces dossier:', err);
+    }
+  };
+
   useEffect(() => {
     fetchEmployes();
     fetchPieces();
+    fetchDossierPieceNames();
   }, []);
 
   // Stats
@@ -478,10 +490,17 @@ const ProductionPage: React.FC = () => {
             <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Nom de la pièce *</label>
-                <input placeholder="ex: Engrenage Ø50mm"
+                <input
+                  list="dossier-piece-names"
+                  placeholder="ex: Engrenage 50mm"
                   value={newPiece.nom || ''}
                   onChange={e => setNewPiece(p => ({ ...p, nom: e.target.value }))}
                   style={inputStyle} />
+                <datalist id="dossier-piece-names">
+                  {dossierPieceNames.map((pieceName) => (
+                    <option key={pieceName} value={pieceName} />
+                  ))}
+                </datalist>
               </div>
 
               <div>

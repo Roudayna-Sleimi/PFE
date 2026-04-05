@@ -3,15 +3,16 @@ import { io, Socket } from 'socket.io-client';
 import {
   LayoutDashboard, Settings, Activity, Bell,
   Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut,
-  BarChart2, Package, Heart, Wrench
+  BarChart2, Package, Heart, Wrench, FolderOpen
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import MessagingPage from './MessagingPage';
+import MessagingPage from './Messagingpage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import AlertesPage from './AlertesPage';
 import ProductionPage from './ProductionPage';
 import EspaceEmployer from './EspaceEmployer';
+import DossierPage from './DossierPage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -45,9 +46,14 @@ const Dashboard: React.FC = () => {
   const role = localStorage.getItem('role');
 
   // ── activePage — 'tasks' retiré, 'maintenance' ajouté ──
+<<<<<<< HEAD
 const [activePage, setActivePage] = useState<
   'dashboard' | 'machines' | 'demandes' | 'maintenance' | 'alertes' | 'rapports' | 'production' | 'EspaceEmployer'
 >('dashboard');
+=======
+  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'|'dossier'>('dashboard');
+
+>>>>>>> 81f0207d4c680dc9bae879a6b0efbe402bf94fd6
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
 
@@ -168,6 +174,7 @@ const [activePage, setActivePage] = useState<
   const navItems = [
     { key: 'dashboard'   as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
     { key: 'production'  as const, icon: <Package size={18} />,         label: 'Production' },
+    { key: 'dossier'     as const, icon: <FolderOpen size={18} />,      label: 'Dossier' },
     { key: 'machines'    as const, icon: <Settings size={18} />,        label: 'Machines' },
     { key: 'maintenance' as const, icon: <Wrench size={18} />,          label: 'Maintenance' },
     { key: 'alertes'     as const, icon: <Bell size={18} />,            label: 'Alertes', badge: alertCount },
@@ -281,6 +288,7 @@ const [activePage, setActivePage] = useState<
         : activePage === 'EspaceEmployer'  ? <div className="flex-1 overflow-y-auto"><EspaceEmployer /></div>
         : activePage === 'alertes'     ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
         : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
+        : activePage === 'dossier'     ? <div className="flex-1 overflow-y-auto"><DossierPage /></div>
         : activePage === 'maintenance' ? (
           <div className="flex-1 flex items-center justify-center flex-col gap-3">
             <div style={{ fontSize: 48 }}>🔧</div>
