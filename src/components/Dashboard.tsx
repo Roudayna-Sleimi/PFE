@@ -6,7 +6,7 @@ import {
   BarChart2, Package, Heart, Wrench, FolderOpen
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import MessagingPage from './Messagingpage';
+import MessagingPage from './MessagingPage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import AlertesPage from './AlertesPage';
@@ -46,14 +46,11 @@ const Dashboard: React.FC = () => {
   const role = localStorage.getItem('role');
 
   // ── activePage — 'tasks' retiré, 'maintenance' ajouté ──
-<<<<<<< HEAD
 const [activePage, setActivePage] = useState<
-  'dashboard' | 'machines' | 'demandes' | 'maintenance' | 'alertes' | 'rapports' | 'production' | 'EspaceEmployer'
+  'dashboard' | 'machines' | 'demandes' | 'maintenance' | 'alertes' | 'rapports' | 'production' | 'EspaceEmployer'|'dossier'
 >('dashboard');
-=======
-  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'|'dossier'>('dashboard');
 
->>>>>>> 81f0207d4c680dc9bae879a6b0efbe402bf94fd6
+
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
 
@@ -182,6 +179,8 @@ const [activePage, setActivePage] = useState<
 { key: 'EspaceEmployer' as const, icon: <BarChart2 size={18} />, label: 'Espace Employé' },
     ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
   ];
+
+
 
   return (
     <div className={`flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden relative font-sans ${darkMode ? 'bg-[#0a0e27] text-white' : 'bg-slate-100 text-slate-900'}`}>

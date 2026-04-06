@@ -219,12 +219,17 @@ const DossierPage: React.FC = () => {
           </div>
           <div>
             <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Date de stockage *</label>
-            <input
-              type="date"
-              value={form.storageDate}
-              onChange={(e) => setForm((p) => ({ ...p, storageDate: e.target.value }))}
-              style={inputStyle}
-            />
+<label htmlFor="storageDate" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
+  Date de stockage *
+</label>
+
+<input
+  id="storageDate"
+  type="date"
+  value={form.storageDate}
+  onChange={(e) => setForm((p) => ({ ...p, storageDate: e.target.value }))}
+  style={inputStyle}
+/>
           </div>
           <div>
             <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Nom de la piece *</label>
@@ -319,8 +324,23 @@ const DossierPage: React.FC = () => {
             <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Date de stockage</label>
             <div style={{ position: 'relative' }}>
               <Calendar size={14} color="#64748b" style={{ position: 'absolute', left: 12, top: 12 }} />
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...inputStyle, paddingLeft: 34 }} />
-            </div>
+<label
+  htmlFor="filterDate"
+  style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}
+>
+  Date de stockage
+</label>
+
+<div style={{ position: 'relative' }}>
+  <Calendar size={14} color="#64748b" style={{ position: 'absolute', left: 12, top: 12 }} />
+  <input
+    id="filterDate"
+    type="date"
+    value={date}
+    onChange={(e) => setDate(e.target.value)}
+    style={{ ...inputStyle, paddingLeft: 34 }}
+  />
+</div>            </div>
           </div>
         </div>
       </div>
