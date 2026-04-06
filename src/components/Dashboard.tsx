@@ -20,6 +20,23 @@ interface SensorData {
   pression?: number;
 }
 
+interface EmployeOverview {
+  _id?: string;
+  username: string;
+  assignedMachine?: string | null;
+  machineStatus?: 'started' | 'paused' | 'stopped';
+  currentActivity?: string;
+}
+
+interface ReportsOverview {
+  piecesTraitees: number;
+  pauses: number;
+  anomalies: number;
+  tempsMachine: { machine: string; seconds: number }[];
+  performanceEmployes: { username: string; totalPieces: number; completedPieces: number; assignedMachine?: string | null }[];
+  logs: { machine: string; action: string; at: string; username: string; pieceCount: number | null; pieceName: string | null }[];
+}
+
 const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
 
 const generateSimData = (): SensorData => ({
@@ -45,10 +62,13 @@ const Dashboard: React.FC = () => {
   const role = localStorage.getItem('role');
 
   // ── activePage — 'tasks' retiré, 'maintenance' ajouté ──
-  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'|'dossier'>('dashboard');
+  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'|'dossier'|'employes'>('dashboard');
 
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
+  const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
+  const [reportsOverview, setReportsOverview] = useState<ReportsOverview | null>(null);
+  const machineOptions = ['Rectifieuse', 'Agie Cut', 'Agie Drill', 'HAAS CNC', 'Compresseur ABAC'];
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
@@ -66,6 +86,26 @@ const Dashboard: React.FC = () => {
       })
       .catch(() => {});
   }, [activePage]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token') || '';
+    if (activePage === 'employes' && role === 'admin') {
+      fetch('http://localhost:5000/api/admin/employes-overview', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(r => r.json())
+        .then(data => { if (Array.isArray(data)) setEmployeesOverview(data); })
+        .catch(() => {});
+    }
+    if (activePage === 'rapports' && role === 'admin') {
+      fetch('http://localhost:5000/api/reports/overview', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(r => r.json())
+        .then(data => setReportsOverview(data))
+        .catch(() => {});
+    }
+  }, [activePage, role]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -105,11 +145,22 @@ const Dashboard: React.FC = () => {
       const currentUser = localStorage.getItem('username');
       if (msg.from !== currentUser) setUnreadMessages(prev => prev + 1);
     });
+    socket.on('employee-machine-updated', (payload: EmployeOverview) => {
+      if (!payload?.username) return;
+      setEmployeesOverview(prev => {
+        const idx = prev.findIndex(e => e.username === payload.username);
+        if (idx === -1) return [payload, ...prev];
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...payload };
+        return next;
+      });
+    });
     return () => {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('direct-message');
       socket.off('alert');
+      socket.off('employee-machine-updated');
     };
   }, []);
 
@@ -155,6 +206,16 @@ const Dashboard: React.FC = () => {
   const togglePaused = useCallback(() => setPaused(p => !p), []);
   const handleLogout = useCallback(() => { localStorage.clear(); window.location.href = '/'; }, []);
   const handleOpenMessaging = () => { setShowMessaging(true); setUnreadMessages(0); };
+  const assignMachine = async (userId: string, assignedMachine: string, username: string) => {
+    const token = localStorage.getItem('token') || '';
+    const res = await fetch(`http://localhost:5000/api/admin/employes/${userId}/assign-machine`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ assignedMachine }),
+    });
+    if (!res.ok) return;
+    setEmployeesOverview(prev => prev.map(e => (e.username === username ? { ...e, assignedMachine } : e)));
+  };
 
   const bg2    = darkMode ? 'bg-[#0f172a]'    : 'bg-white';
   const bgCard = darkMode ? 'bg-slate-800/50' : 'bg-white';
@@ -172,8 +233,81 @@ const Dashboard: React.FC = () => {
     { key: 'maintenance' as const, icon: <Wrench size={18} />,          label: 'Maintenance' },
     { key: 'alertes'     as const, icon: <Bell size={18} />,            label: 'Alertes', badge: alertCount },
     { key: 'rapports'    as const, icon: <BarChart2 size={18} />,       label: 'Rapports' },
+    ...(role === 'admin' ? [{ key: 'employes' as const, icon: <UserPlus size={18} />, label: 'Employes' }] : []),
     ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
   ];
+
+  const reportsContent = (
+    <div className="flex-1 p-6 overflow-y-auto">
+      <h2 className="text-2xl font-bold text-white mb-1">Rapports</h2>
+      <p className="text-[13px] text-slate-400 mb-5">Pieces traitees, temps machine, pauses, anomalies et performances employes.</p>
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        {[
+          { label: 'Pieces traitees', value: reportsOverview?.piecesTraitees ?? 0, color: '#22c55e' },
+          { label: 'Pauses', value: reportsOverview?.pauses ?? 0, color: '#f59e0b' },
+          { label: 'Anomalies', value: reportsOverview?.anomalies ?? 0, color: '#ef4444' },
+        ].map((kpi) => (
+          <div key={kpi.label} className={`${bgCard} border ${border} rounded-xl p-4`}>
+            <div style={{ color: kpi.color }} className="text-2xl font-bold">{kpi.value}</div>
+            <div className="text-xs text-slate-400 mt-1">{kpi.label}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+          <h3 className="text-white text-sm font-semibold mb-3">Temps de travail par machine</h3>
+          {(reportsOverview?.tempsMachine || []).length === 0 ? (
+            <div className="text-xs text-slate-500">Aucune donnee.</div>
+          ) : (
+            (reportsOverview?.tempsMachine || []).map((row) => (
+              <div key={row.machine} className="flex justify-between text-sm py-1">
+                <span className="text-slate-300">{row.machine}</span>
+                <span className="text-cyan-300">{Math.round(row.seconds / 60)} min</span>
+              </div>
+            ))
+          )}
+        </div>
+        <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+          <h3 className="text-white text-sm font-semibold mb-3">Performance des employes</h3>
+          {(reportsOverview?.performanceEmployes || []).length === 0 ? (
+            <div className="text-xs text-slate-500">Aucune donnee.</div>
+          ) : (
+            (reportsOverview?.performanceEmployes || []).map((row) => (
+              <div key={row.username} className="flex justify-between text-sm py-1">
+                <span className="text-slate-300">{row.username}</span>
+                <span className="text-green-300">{row.completedPieces}/{row.totalPieces}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      <div className={`${bgCard} border ${border} rounded-xl p-4 mt-4`}>
+        <h3 className="text-white text-sm font-semibold mb-3">Logs des actions</h3>
+        <div className="grid grid-cols-6 gap-2 text-[11px] text-slate-400 border-b border-white/10 pb-2 mb-2">
+          <span>Machine</span>
+          <span>Action</span>
+          <span>Date/Heure</span>
+          <span>Employe</span>
+          <span>Piece</span>
+          <span>Nb pieces</span>
+        </div>
+        {(reportsOverview?.logs || []).length === 0 ? (
+          <div className="text-xs text-slate-500">Aucun log.</div>
+        ) : (
+          (reportsOverview?.logs || []).slice(0, 30).map((log, idx) => (
+            <div key={`${log.username}-${log.at}-${idx}`} className="grid grid-cols-6 gap-2 text-xs py-1 border-b border-white/5">
+              <span className="text-slate-300">{log.machine}</span>
+              <span className="text-slate-300">{log.action}</span>
+              <span className="text-slate-300">{new Date(log.at).toLocaleString('fr-FR')}</span>
+              <span className="text-slate-300">{log.username}</span>
+              <span className="text-slate-300">{log.pieceName || '-'}</span>
+              <span className="text-slate-300">{log.pieceCount ?? '-'}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className={`flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden relative font-sans ${darkMode ? 'bg-[#0a0e27] text-white' : 'bg-slate-100 text-slate-900'}`}>
@@ -280,6 +414,48 @@ const Dashboard: React.FC = () => {
         : activePage === 'alertes'     ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
         : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
         : activePage === 'dossier'     ? <div className="flex-1 overflow-y-auto"><DossierPage /></div>
+        : activePage === 'employes'    ? (
+          <div className="flex-1 p-6 overflow-y-auto">
+            <h2 className="text-2xl font-bold text-white mb-1">Employes</h2>
+            <p className="text-[13px] text-slate-400 mb-5">Machine assignee, statut temps reel et activite actuelle.</p>
+            <div className={`${bgCard} border ${border} rounded-xl overflow-hidden`}>
+              <div className="grid grid-cols-4 gap-3 px-4 py-3 text-[12px] text-slate-400 border-b border-white/10">
+                <span>Employe</span>
+                <span>Machine</span>
+                <span>Statut</span>
+                <span>Activite</span>
+              </div>
+              {employeesOverview.length === 0 ? (
+                <div className="px-4 py-5 text-sm text-slate-400">Aucun employe trouve.</div>
+              ) : (
+                employeesOverview.map((employee) => {
+                  const status = employee.machineStatus || 'stopped';
+                  const statusLabel = status === 'started' ? 'Demarree' : status === 'paused' ? 'En pause' : 'Arretee';
+                  const statusColor = status === 'started' ? '#22c55e' : status === 'paused' ? '#f59e0b' : '#ef4444';
+                  return (
+                    <div key={employee.username} className="grid grid-cols-4 gap-3 px-4 py-3 border-b border-white/5 text-sm">
+                      <span className="text-white">{employee.username}</span>
+                      <select
+                        value={employee.assignedMachine || ''}
+                        onChange={(e) => employee._id && assignMachine(employee._id, e.target.value, employee.username)}
+                        className="bg-slate-900/70 border border-white/10 rounded-md text-slate-200 text-xs px-2 py-1"
+                        title="Machine assignee"
+                      >
+                        <option value="">Non assignee</option>
+                        {machineOptions.map((machine) => (
+                          <option key={machine} value={machine}>{machine}</option>
+                        ))}
+                      </select>
+                      <span style={{ color: statusColor }} className="font-semibold">{statusLabel}</span>
+                      <span className="text-slate-300">{employee.currentActivity || '-'}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )
+        : activePage === 'rapports'    ? reportsContent
         : activePage === 'maintenance' ? (
           <div className="flex-1 flex items-center justify-center flex-col gap-3">
             <div style={{ fontSize: 48 }}>🔧</div>
@@ -287,7 +463,7 @@ const Dashboard: React.FC = () => {
             <div className="text-slate-500 text-sm">Bientôt disponible</div>
           </div>
         )
-        : activePage === 'rapports'    ? (
+        : false ? (
           <div className="flex-1 flex items-center justify-center flex-col gap-3">
             <div style={{ fontSize: 48 }}>📊</div>
             <div className="text-white font-semibold text-lg">Section Rapports</div>

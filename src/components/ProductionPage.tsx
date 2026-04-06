@@ -22,6 +22,10 @@ interface Piece {
   _id: string;
   nom: string;
   machine: string;
+  machineChain?: string[];
+  currentMachine?: string | null;
+  currentStep?: number;
+  history?: { machine: string; action: 'entered'|'completed'; by?: string; at?: string }[];
   employe: string;
   quantite: number;
   prix: number;
@@ -70,6 +74,7 @@ const ProductionPage: React.FC = () => {
   const [selectedPiece, setSelectedPiece] = useState<Piece | null>(null);
   const [activeTab, setActiveTab]         = useState<'details' | 'taches'>('details');
   const [newPiece, setNewPiece]           = useState<Partial<Piece>>({ matiere: true, status: 'En cours' });
+  const [newPieceChain, setNewPieceChain] = useState('Rectifieuse, Agie Cut, HAAS CNC');
   const [newTache, setNewTache]           = useState({ titre: '', employe: '', priorite: 'moyenne' as Tache['priorite'] });
 
   const token   = localStorage.getItem('token') || '';
@@ -140,6 +145,7 @@ const ProductionPage: React.FC = () => {
         body: JSON.stringify({
           nom:            newPiece.nom,
           machine:        newPiece.machine,
+          machineChain:   newPieceChain.split(',').map((m) => m.trim()).filter(Boolean),
           employe:        newPiece.employe,
           quantite:       Number(newPiece.quantite) || 0,
           prix:           Number(newPiece.prix) || 0,
@@ -153,6 +159,7 @@ const ProductionPage: React.FC = () => {
         setPieces(prev => [data, ...prev]);
         setShowForm(false);
         setNewPiece({ matiere: true, status: 'En cours' });
+        setNewPieceChain('Rectifieuse, Agie Cut, HAAS CNC');
       }
     } catch (err) { console.error('Erreur ajout pièce:', err); }
   };
@@ -187,6 +194,21 @@ const ProductionPage: React.FC = () => {
         setSelectedPiece(updated);
       }
     } catch (err) { console.error('Erreur update tâche:', err); }
+  };
+
+  const progresserPiece = async (pieceId: string) => {
+    try {
+      const res = await fetch(`${API}/pieces/${pieceId}/progress`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'next' }),
+      });
+      const updated = await res.json();
+      if (res.ok) {
+        setPieces(prev => prev.map(p => p._id === updated._id ? updated : p));
+        if (selectedPiece?._id === updated._id) setSelectedPiece(updated);
+      }
+    } catch (err) { console.error('Erreur progression piece:', err); }
   };
 
   const card        : React.CSSProperties = { background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 };
@@ -283,12 +305,26 @@ const ProductionPage: React.FC = () => {
               <div style={{ padding: '12px 14px' }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: 'white', marginBottom: 3 }}>{piece.nom}</div>
                 <div style={{ fontSize: 11, color: '#475569', marginBottom: 10 }}>{piece.machine}</div>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
+                  Machine actuelle: <span style={{ color: '#22d3ee' }}>{piece.currentMachine || piece.machine}</span>
+                </div>
+                {piece.machineChain && piece.machineChain.length > 0 && (
+                  <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8 }}>
+                    {piece.machineChain.join(' -> ')}
+                  </div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: st.bg, border: `1px solid ${st.border}`, color: st.color, fontWeight: 600 }}>
                     {st.label}
                   </span>
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#00d4ff' }}>{piece.quantite} pcs</span>
                 </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); progresserPiece(piece._id); }}
+                  style={{ marginTop: 8, width: '100%', border: 'none', borderRadius: 7, background: '#1e40af', color: 'white', padding: '6px 8px', fontSize: 11, cursor: 'pointer' }}
+                >
+                  Avancer dans la chaine
+                </button>
                 {!piece.matiere && (
                   <div style={{ marginTop: 8, fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <AlertTriangle size={11} /> Matière manquante
@@ -347,10 +383,12 @@ const ProductionPage: React.FC = () => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                     {[
                       { label: 'Machine',       value: selectedPiece.machine,                                                  icon: <Wrench size={13} /> },
+                      { label: 'Machine actuelle', value: selectedPiece.currentMachine || selectedPiece.machine,                icon: <Wrench size={13} /> },
                       { label: 'Employé',       value: selectedPiece.employe,                                                  icon: <User size={13} /> },
                       { label: 'Quantité',      value: `${selectedPiece.quantite} pcs`,                                        icon: <Package size={13} /> },
                       { label: 'Prix unitaire', value: `${selectedPiece.prix} DT`,                                             icon: <DollarSign size={13} /> },
                       { label: 'Revenu total',  value: `${(selectedPiece.quantite * selectedPiece.prix).toLocaleString()} DT`, icon: <TrendingUp size={13} /> },
+                      { label: 'Enchainement',  value: (selectedPiece.machineChain || [selectedPiece.machine]).join(' -> '),   icon: <Clock size={13} /> },
                       { label: 'Status',        value: statusConfig[selectedPiece.status].label,                               icon: <CheckCircle size={13} /> },
                     ].map(row => (
                       <div key={row.label} style={{ background: 'rgba(30,41,59,0.6)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -368,6 +406,24 @@ const ProductionPage: React.FC = () => {
                       </div>
                     </div>
                   )}
+                  <button
+                    onClick={() => progresserPiece(selectedPiece._id)}
+                    style={{ width: '100%', padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontSize: 13, fontWeight: 700, marginBottom: 10 }}
+                  >
+                    Avancer la piece dans la chaine
+                  </button>
+                  <div style={{ background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
+                    <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>Historique de passage</div>
+                    {(selectedPiece.history || []).length === 0 ? (
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Aucun historique.</div>
+                    ) : (
+                      (selectedPiece.history || []).slice().reverse().map((entry, idx) => (
+                        <div key={`${entry.machine}-${idx}`} style={{ fontSize: 11, color: '#cbd5e1', marginBottom: 4 }}>
+                          {entry.action === 'entered' ? 'Entree' : 'Sortie'} · {entry.machine}
+                        </div>
+                      ))
+                    )}
+                  </div>
                   {selectedPiece.solidworksPath && (
                     <button onClick={() => alert(`🔷 Ouverture SolidWorks:\n${selectedPiece.solidworksPath}`)}
                       style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 13, fontWeight: 700 }}>
@@ -537,6 +593,17 @@ const ProductionPage: React.FC = () => {
                   <option value="">Choisir une machine</option>
                   {MACHINES.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Enchainement des machines</label>
+                <input
+                  placeholder="Rectifieuse, Agie Cut, HAAS CNC"
+                  value={newPieceChain}
+                  onChange={e => setNewPieceChain(e.target.value)}
+                  style={inputStyle}
+                />
+                <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>Separer les machines par des virgules.</div>
               </div>
 
               <div>

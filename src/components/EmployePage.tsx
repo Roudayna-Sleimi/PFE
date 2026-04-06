@@ -18,6 +18,14 @@ interface Message {
   to: string; text: string; createdAt: string;
 }
 
+interface PieceTracking {
+  _id: string;
+  nom: string;
+  currentMachine?: string | null;
+  machineChain?: string[];
+  status: string;
+}
+
 const EmployePage: React.FC = () => {
   const navigate  = useNavigate();
   const token     = localStorage.getItem("token") || "";
@@ -31,11 +39,26 @@ const EmployePage: React.FC = () => {
   const [messages, setMessages]   = useState<Message[]>([]);
   const [msgText, setMsgText]     = useState("");
   const [unreadMsg, setUnreadMsg] = useState(0);
+  const [assignedMachine, setAssignedMachine] = useState('Rectifieuse');
+  const [machineStatus, setMachineStatus] = useState<'started'|'paused'|'stopped'>('stopped');
+  const [currentActivity, setCurrentActivity] = useState('');
+  const [machinePieces, setMachinePieces] = useState<PieceTracking[]>([]);
+  const [pieceCounts, setPieceCounts] = useState<Record<string, string>>({});
   const msgEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   useEffect(() => {
+    fetch(`${BASE_URL}/api/employe/me/dashboard`, { headers })
+      .then(r => r.json())
+      .then((data: { machine?: string; user?: { machineStatus?: 'started'|'paused'|'stopped'; currentActivity?: string }; pieces?: PieceTracking[] }) => {
+        if (data?.machine) setAssignedMachine(data.machine);
+        if (data?.user?.machineStatus) setMachineStatus(data.user.machineStatus);
+        if (typeof data?.user?.currentActivity === 'string') setCurrentActivity(data.user.currentActivity);
+        if (Array.isArray(data?.pieces)) setMachinePieces(data.pieces);
+      })
+      .catch(() => {});
+
     fetch(`${BASE_URL}/api/sensors/history`, { headers })
       .then(r => r.json())
       .then((data: Sensor[]) => {
@@ -95,8 +118,26 @@ const EmployePage: React.FC = () => {
       if (tab !== 'messages') setUnreadMsg(prev => prev + 1);
     });
 
+    socket.on('employee-machine-updated', (payload: { username: string; machineStatus?: 'started'|'paused'|'stopped'; currentActivity?: string; machine?: string }) => {
+      if (payload.username !== username) return;
+      if (payload.machineStatus) setMachineStatus(payload.machineStatus);
+      if (payload.currentActivity !== undefined) setCurrentActivity(payload.currentActivity);
+      if (payload.machine) setAssignedMachine(payload.machine);
+    });
+
+    socket.on('piece-progressed', (piece: PieceTracking) => {
+      if (piece.currentMachine && piece.currentMachine !== assignedMachine) return;
+      setMachinePieces(prev => {
+        const idx = prev.findIndex(p => p._id === piece._id);
+        if (idx === -1) return [piece, ...prev];
+        const next = [...prev];
+        next[idx] = piece;
+        return next;
+      });
+    });
+
     return () => { socket.disconnect(); };
-  }, []);
+  }, [assignedMachine, tab, username]);
 
   useEffect(() => {
     msgEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -118,6 +159,28 @@ const EmployePage: React.FC = () => {
       from: username, fromRole: "employe", to: "admin", text: msgText.trim(),
     });
     setMsgText("");
+  };
+
+  const updateMachineAction = async (action: 'started'|'paused'|'stopped', opts?: { pieceId?: string; pieceCount?: number }) => {
+    const activity = action === 'started' ? 'Production en cours' : action === 'paused' ? 'Pause operateur' : 'Cycle termine';
+    if (action === 'stopped' && (!opts?.pieceId || !opts?.pieceCount || opts.pieceCount <= 0)) {
+      alert('Le nombre de pieces est obligatoire pour Terminer.');
+      return;
+    }
+    const res = await fetch(`${BASE_URL}/api/employe/machine/action`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action, activity, pieceId: opts?.pieceId || null, pieceCount: opts?.pieceCount || null }),
+    });
+    if (!res.ok) return;
+    const data: { machineStatus?: 'started'|'paused'|'stopped'; currentActivity?: string } = await res.json();
+    if (data.machineStatus) setMachineStatus(data.machineStatus);
+    if (typeof data.currentActivity === 'string') setCurrentActivity(data.currentActivity);
+  };
+
+  const terminerPiece = async (pieceId: string) => {
+    const count = Number(pieceCounts[pieceId] || 0);
+    await updateMachineAction('stopped', { pieceId, pieceCount: count });
   };
 
   const santeRect = rectData ? parseFloat(Math.max(0, Math.min(100, 100 - (rectData.vibX + rectData.vibY + rectData.vibZ) * 5)).toFixed(0)) : 0;
@@ -207,6 +270,50 @@ const EmployePage: React.FC = () => {
           {/* ── Machines ── */}
           {tab === "machines" && (
             <div style={{ maxWidth: 800 }}>
+              <div style={{ background: "#0f172a", borderRadius: 16, padding: 18, marginBottom: 16, border: "1px solid #1e293b" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "white" }}>Machine assignee: {assignedMachine}</div>
+                    <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                      Statut: <span style={{ color: machineStatus === "started" ? "#22c55e" : machineStatus === "paused" ? "#f59e0b" : "#ef4444", fontWeight: 700 }}>
+                        {machineStatus === "started" ? "Demarree" : machineStatus === "paused" ? "En pause" : "Arretee"}
+                      </span> · {currentActivity || "Aucune activite"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button onClick={() => updateMachineAction('started')} style={{ background: "#166534", color: "white", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 600 }}>Demarrer</button>
+                    <button onClick={() => updateMachineAction('paused')} style={{ background: "#92400e", color: "white", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 600 }}>Pause</button>
+                    <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Terminer se fait par piece avec quantite ci-dessous.</span>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Pieces associees a cette machine</div>
+                  {machinePieces.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#475569" }}>Aucune piece active.</div>
+                  ) : (
+                    machinePieces.map((piece) => (
+                      <div key={piece._id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid #1e293b" }}>
+                        <div style={{ fontSize: 13, color: "white" }}>
+                          {piece.nom} <span style={{ color: "#64748b", fontSize: 11 }}>({piece.status})</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="Nb"
+                            value={pieceCounts[piece._id] || ""}
+                            onChange={(e) => setPieceCounts((prev) => ({ ...prev, [piece._id]: e.target.value }))}
+                            style={{ width: 70, background: "#1e293b", color: "white", border: "1px solid #334155", borderRadius: 6, padding: "5px 8px", fontSize: 12 }}
+                          />
+                          <button onClick={() => terminerPiece(piece._id)} style={{ background: "#991b1b", color: "white", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>
+                            Terminer
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
               {/* Rectifieuse */}
               <div style={{ background: "#0f172a", borderRadius: 16, padding: 20, marginBottom: 16, border: `1px solid ${rectData ? "#22c55e44" : "#1e293b"}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>

@@ -6,3 +6,4 @@ paho-mqtt==2.1.0
 pymongo==4.15.3
 python-dotenv==1.2.1
 joblib==1.5.2
+pyttsx3==2.98

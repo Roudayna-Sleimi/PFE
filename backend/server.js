@@ -73,12 +73,28 @@ const userSchema = new mongoose.Schema({
   username:  { type: String, required: true, unique: true },
   password:  { type: String, required: true },
   role:      { type: String, default: 'user' },
+  assignedMachine: { type: String, default: null },
+  machineStatus: { type: String, enum: ['stopped', 'started', 'paused'], default: 'stopped' },
+  currentActivity: { type: String, default: '' },
+  machineStatusUpdatedAt: { type: Date, default: null },
   isOnline:  { type: Boolean, default: false },
   lastSeen:  { type: Date, default: null },
   socketId:  { type: String, default: null },
   createdAt: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
+
+const machineEventSchema = new mongoose.Schema({
+  username: { type: String, required: true },
+  machine: { type: String, required: true },
+  action: { type: String, enum: ['started', 'paused', 'stopped'], required: true },
+  activity: { type: String, default: '' },
+  pieceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Piece', default: null },
+  pieceName: { type: String, default: null },
+  pieceCount: { type: Number, default: null },
+  createdAt: { type: Date, default: Date.now }
+});
+const MachineEvent = mongoose.model('MachineEvent', machineEventSchema);
 
 const demandeSchema = new mongoose.Schema({
   nom:        { type: String, required: true },
@@ -174,6 +190,9 @@ const callLogSchema = new mongoose.Schema({
   attemptNo:    { type: Number, required: true },
   callStatus:   { type: String, default: 'queued' },
   providerRef:  { type: String, default: null },
+  audioFilePath:{ type: String, default: null },
+  audioFormat:  { type: String, default: null },
+  audioBase64:  { type: String, default: null },
   calledAt:     { type: Date, default: Date.now },
   endedAt:      { type: Date, default: null },
   durationSec:  { type: Number, default: null },
@@ -195,6 +214,15 @@ const pieceSchema = new mongoose.Schema({
   fichier:        { type: String, default: null },
   nom:            { type: String, required: true },
   machine:        { type: String, default: 'Rectifieuse' },
+  machineChain:   { type: [String], default: [] },
+  currentStep:    { type: Number, default: 0 },
+  currentMachine: { type: String, default: null },
+  history:        { type: [new mongoose.Schema({
+    machine: { type: String, required: true },
+    action: { type: String, enum: ['entered', 'completed'], required: true },
+    at: { type: Date, default: Date.now },
+    by: { type: String, default: null }
+  }, { _id: false })], default: [] },
   employe:        { type: String, default: '' },
   quantite:       { type: Number, default: 0 },
   prix:           { type: Number, default: 0 },
@@ -259,6 +287,40 @@ const parseStorageDate = (value) => {
   if (!value) return null;
   const parsed = new Date(`${String(value)}T00:00:00`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const normalizeMachineChain = (machine, machineChain) => {
+  const normalizedChain = Array.isArray(machineChain) ? machineChain.filter(Boolean) : [];
+  if (normalizedChain.length > 0) return normalizedChain;
+  return machine ? [machine] : ['Rectifieuse'];
+};
+
+const computeWorkByMachine = (events = []) => {
+  const sorted = [...events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const activeSessions = new Map();
+  const totals = {};
+
+  for (const ev of sorted) {
+    const key = `${ev.username}:${ev.machine}`;
+    const eventTime = new Date(ev.createdAt).getTime();
+    if (ev.action === 'started') {
+      activeSessions.set(key, eventTime);
+      continue;
+    }
+    if (ev.action === 'paused' || ev.action === 'stopped') {
+      const start = activeSessions.get(key);
+      if (start) {
+        const durationMs = Math.max(0, eventTime - start);
+        totals[ev.machine] = (totals[ev.machine] || 0) + durationMs;
+        activeSessions.delete(key);
+      }
+    }
+  }
+
+  return Object.entries(totals).map(([machine, durationMs]) => ({
+    machine,
+    seconds: Math.round(durationMs / 1000),
+  }));
 };
 
 // ═══ Auth Routes ═══
@@ -351,10 +413,178 @@ app.post('/api/demandes/:id/refuser', authMiddleware, adminMiddleware, async (re
 // ═══ Users ═══
 app.get('/api/users', authMiddleware, async (req, res) => {
   try {
-    const users = await User.find({}, 'username role isOnline lastSeen');
+    const users = await User.find({}, 'username role isOnline lastSeen assignedMachine machineStatus currentActivity machineStatusUpdatedAt');
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
+  }
+});
+
+app.patch('/api/admin/employes/:userId/assign-machine', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { assignedMachine } = req.body;
+    if (!assignedMachine) return res.status(400).json({ message: 'Machine assignee requise' });
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.userId, role: 'employe' },
+      { assignedMachine },
+      { new: true }
+    ).select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt isOnline');
+    if (!user) return res.status(404).json({ message: 'Employe introuvable' });
+    io.emit('employee-machine-updated', user);
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/admin/employes-overview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const employes = await User.find({ role: 'employe' })
+      .select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt isOnline lastSeen')
+      .sort({ username: 1 });
+    res.json(employes);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/employe/me/dashboard', authMiddleware, async (req, res) => {
+  try {
+    const me = await User.findOne({ username: req.user.username })
+      .select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt role');
+    if (!me) return res.status(404).json({ message: 'Utilisateur introuvable' });
+    const machine = me.assignedMachine || 'Rectifieuse';
+    const pieces = await Piece.find({
+      $or: [{ currentMachine: machine }, { machine: machine }],
+      status: { $ne: 'Terminé' }
+    }).sort({ createdAt: -1 });
+    res.json({ user: me, machine, pieces });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/employe/machine/action', authMiddleware, async (req, res) => {
+  try {
+    const { action, activity = '', pieceId = null, pieceCount = null } = req.body;
+    if (!['started', 'paused', 'stopped'].includes(action))
+      return res.status(400).json({ message: 'Action invalide' });
+    if (action === 'stopped' && (!pieceId || !Number(pieceCount) || Number(pieceCount) <= 0))
+      return res.status(400).json({ message: 'pieceId et nombre de pieces valides requis pour Terminer' });
+
+    const user = await User.findOne({ username: req.user.username });
+    if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
+    const machine = user.assignedMachine || 'Rectifieuse';
+    let piece = null;
+
+    user.machineStatus = action;
+    user.currentActivity = activity;
+    user.machineStatusUpdatedAt = new Date();
+    await user.save();
+
+    if (action === 'stopped' && pieceId) {
+      piece = await Piece.findById(pieceId);
+      if (!piece) return res.status(404).json({ message: 'Piece introuvable' });
+      const chain = normalizeMachineChain(piece.machine, piece.machineChain);
+      const currentStep = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
+      const currentMachine = chain[currentStep];
+      piece.history = piece.history || [];
+      piece.history.push({ machine: currentMachine, action: 'completed', by: req.user.username });
+
+      if (currentStep >= chain.length - 1) {
+        piece.status = 'TerminÃ©';
+        piece.currentStep = chain.length - 1;
+        piece.currentMachine = chain[chain.length - 1] || currentMachine || null;
+      } else {
+        const nextStep = currentStep + 1;
+        piece.currentStep = nextStep;
+        piece.currentMachine = chain[nextStep];
+        piece.status = 'En cours';
+        piece.history.push({ machine: chain[nextStep], action: 'entered', by: req.user.username });
+      }
+      piece.quantite = Number(pieceCount);
+      await piece.save();
+      io.emit('piece-progressed', piece);
+    }
+
+    const event = await MachineEvent.create({
+      username: user.username,
+      machine,
+      action,
+      activity,
+      pieceId: piece?._id || null,
+      pieceName: piece?.nom || null,
+      pieceCount: action === 'stopped' ? Number(pieceCount) : null,
+    });
+
+    const payload = {
+      username: user.username,
+      machine,
+      assignedMachine: machine,
+      machineStatus: action,
+      currentActivity: activity,
+      machineStatusUpdatedAt: user.machineStatusUpdatedAt,
+      pieceId: piece?._id || null,
+      pieceName: piece?.nom || null,
+      pieceCount: action === 'stopped' ? Number(pieceCount) : null,
+      createdAt: event.createdAt,
+    };
+    io.emit('employee-machine-updated', payload);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/reports/overview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const [pieces, events, alerts, employes] = await Promise.all([
+      Piece.find({}).lean(),
+      MachineEvent.find({}).sort({ createdAt: 1 }).lean(),
+      Alert.find({ createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }).lean(),
+      User.find({ role: 'employe' }).lean(),
+    ]);
+
+    const piecesTraitees = pieces.filter((piece) => piece.status === 'Terminé').reduce((sum, piece) => sum + (piece.quantite || 0), 0);
+    const pauses = events.filter((event) => event.action === 'paused').length;
+    const anomalies = alerts.filter((alert) => alert.severity === 'critical' || alert.type === 'sensor').length;
+    const tempsMachine = computeWorkByMachine(events);
+
+    const performanceEmployes = employes.map((employe) => {
+      const piecesEmploye = pieces.filter((piece) => piece.employe === employe.username);
+      const totalPieces = piecesEmploye.reduce((sum, piece) => sum + (piece.quantite || 0), 0);
+      const completed = piecesEmploye.filter((piece) => piece.status === 'Terminé').length;
+      return {
+        username: employe.username,
+        totalPieces,
+        completedPieces: completed,
+        assignedMachine: employe.assignedMachine || null,
+      };
+    });
+
+    const logs = events
+      .slice()
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 300)
+      .map((event) => ({
+        machine: event.machine,
+        action: event.action,
+        at: event.createdAt,
+        username: event.username,
+        pieceCount: event.action === 'stopped' ? (event.pieceCount || 0) : null,
+        pieceName: event.pieceName || null,
+      }));
+
+    res.json({
+      piecesTraitees,
+      pauses,
+      anomalies,
+      tempsMachine,
+      performanceEmployes,
+      logs,
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
@@ -573,13 +803,14 @@ app.patch('/api/contacts/:id', authMiddleware, adminMiddleware, async (req, res)
 // ═══ Call Logs ═══
 app.post('/api/call-logs', serviceKeyMiddleware, async (req, res) => {
   try {
-    const { alertId, phoneNumber, attemptNo, callStatus, providerRef, durationSec, errorMessage } = req.body;
+    const { alertId, phoneNumber, attemptNo, callStatus, providerRef, durationSec, errorMessage, audioFilePath, audioFormat, audioBase64 } = req.body;
     if (!alertId || !phoneNumber || !attemptNo)
       return res.status(400).json({ message: 'alertId, phoneNumber, attemptNo requis' });
     const log = await CallLog.create({
       alertId, phoneNumber, attemptNo,
       callStatus: callStatus || 'queued', providerRef: providerRef || null,
-      durationSec: durationSec || null, errorMessage: errorMessage || null
+      durationSec: durationSec || null, errorMessage: errorMessage || null,
+      audioFilePath: audioFilePath || null, audioFormat: audioFormat || null, audioBase64: audioBase64 || null
     });
     res.status(201).json(log);
   } catch (err) {
@@ -615,6 +846,62 @@ app.get('/api/pieces', authMiddleware, async (req, res) => {
 });
 
 // POST créer une pièce — FIX: détecte JSON vs FormData automatiquement
+app.get('/api/production/pieces-tracking', authMiddleware, async (req, res) => {
+  try {
+    const pieces = await Piece.find({}).sort({ createdAt: -1 });
+    const mapped = pieces.map((piece) => {
+      const chain = normalizeMachineChain(piece.machine, piece.machineChain);
+      const step = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
+      return {
+        _id: piece._id,
+        nom: piece.nom,
+        quantite: piece.quantite,
+        status: piece.status,
+        chain,
+        currentStep: step,
+        currentMachine: piece.currentMachine || chain[step] || null,
+        history: piece.history || [],
+        employe: piece.employe || '',
+      };
+    });
+    res.json(mapped);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/pieces/:id/progress', authMiddleware, async (req, res) => {
+  try {
+    const { action = 'next' } = req.body || {};
+    const piece = await Piece.findById(req.params.id);
+    if (!piece) return res.status(404).json({ message: 'PiÃ¨ce introuvable' });
+
+    const chain = normalizeMachineChain(piece.machine, piece.machineChain);
+    const currentStep = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
+    const currentMachine = chain[currentStep];
+    piece.history = piece.history || [];
+    piece.history.push({ machine: currentMachine, action: 'completed', by: req.user.username });
+
+    if (action === 'complete' || currentStep >= chain.length - 1) {
+      piece.status = 'TerminÃ©';
+      piece.currentStep = chain.length - 1;
+      piece.currentMachine = chain[chain.length - 1] || currentMachine || null;
+    } else {
+      const nextStep = currentStep + 1;
+      piece.currentStep = nextStep;
+      piece.currentMachine = chain[nextStep];
+      piece.status = 'En cours';
+      piece.history.push({ machine: chain[nextStep], action: 'entered', by: req.user.username });
+    }
+
+    await piece.save();
+    io.emit('piece-progressed', piece);
+    res.json(piece);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 app.post('/api/pieces', authMiddleware, adminMiddleware, (req, res, next) => {
   const contentType = req.headers['content-type'] || '';
   // Si c'est du JSON → pas de multer
@@ -623,13 +910,18 @@ app.post('/api/pieces', authMiddleware, adminMiddleware, (req, res, next) => {
   upload.single('fichier')(req, res, next);
 }, async (req, res) => {
   try {
-    const { nom, machine, employe, quantite, prix, status, matiere, solidworksPath, ref } = req.body;
+    const { nom, machine, machineChain, employe, quantite, prix, status, matiere, solidworksPath, ref } = req.body;
     if (!nom) return res.status(400).json({ message: 'Nom requis' });
+    const chain = normalizeMachineChain(machine, machineChain);
 
     const piece = await Piece.create({
       ref:            ref            || '',
       nom,
       machine:        machine        || 'Rectifieuse',
+      machineChain:   chain,
+      currentStep:    0,
+      currentMachine: chain[0] || machine || 'Rectifieuse',
+      history:        [{ machine: chain[0] || machine || 'Rectifieuse', action: 'entered', by: req.user.username }],
       employe:        employe        || '',
       quantite:       Number(quantite)  || 0,
       prix:           Number(prix)      || 0,
@@ -649,11 +941,20 @@ app.post('/api/pieces', authMiddleware, adminMiddleware, (req, res, next) => {
 // PATCH modifier une pièce
 app.patch('/api/pieces/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const allowed = ['nom', 'machine', 'employe', 'quantite', 'prix', 'status', 'matiere', 'solidworksPath', 'ref', 'stock', 'maxStock', 'seuil'];
+    const allowed = ['nom', 'machine', 'machineChain', 'employe', 'quantite', 'prix', 'status', 'matiere', 'solidworksPath', 'ref', 'stock', 'maxStock', 'seuil', 'currentStep', 'currentMachine'];
     const updates = allowed.reduce((acc, key) => {
       if (req.body[key] !== undefined) acc[key] = req.body[key];
       return acc;
     }, {});
+    if (updates.machineChain || updates.machine) {
+      const existing = await Piece.findById(req.params.id);
+      if (!existing) return res.status(404).json({ message: 'PiÃ¨ce introuvable' });
+      const nextChain = normalizeMachineChain(updates.machine || existing.machine, updates.machineChain || existing.machineChain);
+      updates.machineChain = nextChain;
+      const safeStep = Math.min(Math.max(Number(updates.currentStep ?? existing.currentStep ?? 0), 0), Math.max(nextChain.length - 1, 0));
+      updates.currentStep = safeStep;
+      updates.currentMachine = nextChain[safeStep] || null;
+    }
     const piece = await Piece.findByIdAndUpdate(req.params.id, updates, { new: true });
     if (!piece) return res.status(404).json({ message: 'Pièce introuvable' });
     res.json(piece);

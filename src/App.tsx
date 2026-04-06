@@ -6,7 +6,7 @@ import EmployePage from "./components/EmployePage";
 import ProductionPage from "./components/ProductionPage";
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(Boolean(localStorage.getItem('token')));
 
   return (
     <Router>
