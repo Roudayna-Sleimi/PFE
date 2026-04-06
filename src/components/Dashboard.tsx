@@ -62,10 +62,7 @@ const Dashboard: React.FC = () => {
   const [alertCount, setAlertCount]         = useState(0);
   const role = localStorage.getItem('role');
 
-  // ── activePage — 'tasks' retiré, 'maintenance' ajouté ──
-const [activePage, setActivePage] = useState<
-  'dashboard' | 'machines' | 'demandes' | 'maintenance' | 'alertes' | 'rapports' | 'production' | 'EspaceEmployer'|'dossier'
->('dashboard');
+
 
   const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'|'dossier'|'employes'>('dashboard');
 
@@ -230,22 +227,21 @@ const [activePage, setActivePage] = useState<
   const txtMut = darkMode ? 'text-slate-500'  : 'text-slate-400';
 
   // ── navItems — 'tasks' retiré, 'maintenance' ajouté ──
-  const navItems = [
-    { key: 'dashboard'   as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
-    { key: 'production'  as const, icon: <Package size={18} />,         label: 'Production' },
-    { key: 'dossier'     as const, icon: <FolderOpen size={18} />,      label: 'Dossier' },
-    { key: 'machines'    as const, icon: <Settings size={18} />,        label: 'Machines' },
-    { key: 'maintenance' as const, icon: <Wrench size={18} />,          label: 'Maintenance' },
-    { key: 'alertes'     as const, icon: <Bell size={18} />,            label: 'Alertes', badge: alertCount },
-    { key: 'rapports'    as const, icon: <BarChart2 size={18} />,       label: 'Rapports' },
-{ key: 'EspaceEmployer' as const, icon: <BarChart2 size={18} />, label: 'Espace Employé' },
-    ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
-  ];
+const navItems = [
+  { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
+  { key: 'production' as const, icon: <Package size={18} />, label: 'Production' },
+  { key: 'dossier' as const, icon: <FolderOpen size={18} />, label: 'Dossier' },
+  { key: 'machines' as const, icon: <Settings size={18} />, label: 'Machines' },
+  { key: 'maintenance' as const, icon: <Wrench size={18} />, label: 'Maintenance' },
+  { key: 'alertes' as const, icon: <Bell size={18} />, label: 'Alertes', badge: alertCount },
+  { key: 'rapports' as const, icon: <BarChart2 size={18} />, label: 'Rapports' },
+  { key: 'EspaceEmployer' as const, icon: <BarChart2 size={18} />, label: 'Espace Employé' },
+  ...(role === 'admin' ? [
+    { key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" },
+    { key: 'employes' as const, icon: <UserPlus size={18} />, label: 'Employes' }
+  ] : []),
+];
 
-
-    ...(role === 'admin' ? [{ key: 'employes' as const, icon: <UserPlus size={18} />, label: 'Employes' }] : []),
-    ...(role === 'admin' ? [{ key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" }] : []),
-  ];
 
   const reportsContent = (
     <div className="flex-1 p-6 overflow-y-auto">
