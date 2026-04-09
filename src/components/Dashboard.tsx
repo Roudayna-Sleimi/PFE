@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import {
   LayoutDashboard, Settings, Activity, Bell,
   Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut,
-  BarChart2, Package, Heart, Wrench, FolderOpen
+  BarChart2, Package, Heart, FolderOpen
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import MessagingPage from './MessagingPage';
@@ -11,7 +11,6 @@ import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import AlertesPage from './AlertesPage';
 import ProductionPage from './ProductionPage';
-import EspaceEmployer from './EspaceEmployer';
 import DossierPage from './DossierPage';
 import './Dashboard.css';
 
@@ -29,13 +28,11 @@ interface EmployeOverview {
   currentActivity?: string;
 }
 
-interface ReportsOverview {
-  piecesTraitees: number;
-  pauses: number;
-  anomalies: number;
-  tempsMachine: { machine: string; seconds: number }[];
-  performanceEmployes: { username: string; totalPieces: number; completedPieces: number; assignedMachine?: string | null }[];
-  logs: { machine: string; action: string; at: string; username: string; pieceCount: number | null; pieceName: string | null }[];
+interface MachineApi {
+  id: string;
+  name: string;
+  hasSensors?: boolean;
+  node?: string | null;
 }
 
 const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
@@ -64,13 +61,28 @@ const Dashboard: React.FC = () => {
 
 
 
-  const [activePage, setActivePage] = useState<'dashboard'|'machines'|'demandes'|'maintenance'|'alertes'|'rapports'|'production'|'dossier'|'employes'>('dashboard');
-
+const [activePage, setActivePage] = useState<
+  'dashboard' | 'production' | 'dossier' | 'machines' | 'maintenance' | 'alertes' | 'rapports' | 'employes' | 'demandes'
+>('dashboard');
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
   const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
-  const [reportsOverview, setReportsOverview] = useState<ReportsOverview | null>(null);
-  const machineOptions = ['Rectifieuse', 'Agie Cut', 'Agie Drill', 'HAAS CNC', 'Compresseur ABAC'];
+  const [machineOptions, setMachineOptions] = useState<string[]>([]);
+  const [machineNameById, setMachineNameById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const token = localStorage.getItem('token') || '';
+    fetch('http://localhost:5000/api/machines', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then((data: MachineApi[]) => {
+        if (!Array.isArray(data)) return;
+        setMachineOptions(data.map(m => m?.name).filter(Boolean));
+        const byId: Record<string, string> = {};
+        data.forEach(m => { if (m?.id && m?.name) byId[m.id] = m.name; });
+        setMachineNameById(byId);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
@@ -97,14 +109,6 @@ const Dashboard: React.FC = () => {
       })
         .then(r => r.json())
         .then(data => { if (Array.isArray(data)) setEmployeesOverview(data); })
-        .catch(() => {});
-    }
-    if (activePage === 'rapports' && role === 'admin') {
-      fetch('http://localhost:5000/api/reports/overview', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then(r => r.json())
-        .then(data => setReportsOverview(data))
         .catch(() => {});
     }
   }, [activePage, role]);
@@ -226,94 +230,23 @@ const Dashboard: React.FC = () => {
   const txt2   = darkMode ? 'text-slate-400'  : 'text-slate-500';
   const txtMut = darkMode ? 'text-slate-500'  : 'text-slate-400';
 
-  // ── navItems — 'tasks' retiré, 'maintenance' ajouté ──
+  // ── navItems ──
 const navItems = [
   { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
   { key: 'production' as const, icon: <Package size={18} />, label: 'Production' },
-  { key: 'dossier' as const, icon: <FolderOpen size={18} />, label: 'Dossier' },
+  { key: 'dossier' as const, icon: <FolderOpen size={18} />, label: 'Clients' },
   { key: 'machines' as const, icon: <Settings size={18} />, label: 'Machines' },
-  { key: 'maintenance' as const, icon: <Wrench size={18} />, label: 'Maintenance' },
+  { key: 'maintenance' as const, icon: <BarChart2 size={18} />, label: 'Maintenance' },
   { key: 'alertes' as const, icon: <Bell size={18} />, label: 'Alertes', badge: alertCount },
   { key: 'rapports' as const, icon: <BarChart2 size={18} />, label: 'Rapports' },
-  { key: 'EspaceEmployer' as const, icon: <BarChart2 size={18} />, label: 'Espace Employé' },
   ...(role === 'admin' ? [
+    { key: 'employes' as const, icon: <UserPlus size={18} />, label: 'Employes' },
     { key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demandes d'accès" },
-    { key: 'employes' as const, icon: <UserPlus size={18} />, label: 'Employes' }
   ] : []),
 ];
 
 
-  const reportsContent = (
-    <div className="flex-1 p-6 overflow-y-auto">
-      <h2 className="text-2xl font-bold text-white mb-1">Rapports</h2>
-      <p className="text-[13px] text-slate-400 mb-5">Pieces traitees, temps machine, pauses, anomalies et performances employes.</p>
-      <div className="grid grid-cols-3 gap-4 mb-4">
-        {[
-          { label: 'Pieces traitees', value: reportsOverview?.piecesTraitees ?? 0, color: '#22c55e' },
-          { label: 'Pauses', value: reportsOverview?.pauses ?? 0, color: '#f59e0b' },
-          { label: 'Anomalies', value: reportsOverview?.anomalies ?? 0, color: '#ef4444' },
-        ].map((kpi) => (
-          <div key={kpi.label} className={`${bgCard} border ${border} rounded-xl p-4`}>
-            <div style={{ color: kpi.color }} className="text-2xl font-bold">{kpi.value}</div>
-            <div className="text-xs text-slate-400 mt-1">{kpi.label}</div>
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className={`${bgCard} border ${border} rounded-xl p-4`}>
-          <h3 className="text-white text-sm font-semibold mb-3">Temps de travail par machine</h3>
-          {(reportsOverview?.tempsMachine || []).length === 0 ? (
-            <div className="text-xs text-slate-500">Aucune donnee.</div>
-          ) : (
-            (reportsOverview?.tempsMachine || []).map((row) => (
-              <div key={row.machine} className="flex justify-between text-sm py-1">
-                <span className="text-slate-300">{row.machine}</span>
-                <span className="text-cyan-300">{Math.round(row.seconds / 60)} min</span>
-              </div>
-            ))
-          )}
-        </div>
-        <div className={`${bgCard} border ${border} rounded-xl p-4`}>
-          <h3 className="text-white text-sm font-semibold mb-3">Performance des employes</h3>
-          {(reportsOverview?.performanceEmployes || []).length === 0 ? (
-            <div className="text-xs text-slate-500">Aucune donnee.</div>
-          ) : (
-            (reportsOverview?.performanceEmployes || []).map((row) => (
-              <div key={row.username} className="flex justify-between text-sm py-1">
-                <span className="text-slate-300">{row.username}</span>
-                <span className="text-green-300">{row.completedPieces}/{row.totalPieces}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-      <div className={`${bgCard} border ${border} rounded-xl p-4 mt-4`}>
-        <h3 className="text-white text-sm font-semibold mb-3">Logs des actions</h3>
-        <div className="grid grid-cols-6 gap-2 text-[11px] text-slate-400 border-b border-white/10 pb-2 mb-2">
-          <span>Machine</span>
-          <span>Action</span>
-          <span>Date/Heure</span>
-          <span>Employe</span>
-          <span>Piece</span>
-          <span>Nb pieces</span>
-        </div>
-        {(reportsOverview?.logs || []).length === 0 ? (
-          <div className="text-xs text-slate-500">Aucun log.</div>
-        ) : (
-          (reportsOverview?.logs || []).slice(0, 30).map((log, idx) => (
-            <div key={`${log.username}-${log.at}-${idx}`} className="grid grid-cols-6 gap-2 text-xs py-1 border-b border-white/5">
-              <span className="text-slate-300">{log.machine}</span>
-              <span className="text-slate-300">{log.action}</span>
-              <span className="text-slate-300">{new Date(log.at).toLocaleString('fr-FR')}</span>
-              <span className="text-slate-300">{log.username}</span>
-              <span className="text-slate-300">{log.pieceName || '-'}</span>
-              <span className="text-slate-300">{log.pieceCount ?? '-'}</span>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
+  const reportsContent = <div className="flex-1 p-6 overflow-y-auto" />;
 
   return (
     <div className={`flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden relative font-sans ${darkMode ? 'bg-[#0a0e27] text-white' : 'bg-slate-100 text-slate-900'}`}>
@@ -337,7 +270,10 @@ const navItems = [
             <ul className="list-none flex flex-col gap-1 p-0 m-0">
               {navItems.map(item => (
                 <li key={item.key}
-                  onClick={() => { setActivePage(item.key as typeof activePage); if (item.key === 'alertes') setAlertCount(0); }}
+                  onClick={() => {
+                    setActivePage(item.key as typeof activePage);
+                    if (item.key === 'alertes') setAlertCount(0);
+                  }}
                   className={`flex items-center gap-3 px-3 py-3 rounded-[10px] cursor-pointer transition-all duration-300 text-sm font-medium
                     ${activePage === item.key
                       ? 'text-[#00d4ff] border border-[rgba(0,212,255,0.2)]'
@@ -416,8 +352,14 @@ const navItems = [
 
         {/* ── Content ── */}
         {activePage === 'machines'     ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
+        : activePage === 'maintenance' ? (
+          <div className="flex-1 flex items-center justify-center flex-col gap-3">
+            <div style={{ fontSize: 48 }}>🔧</div>
+            <div className="text-white font-semibold text-lg">Section Maintenance</div>
+            <div className="text-slate-500 text-sm">Bientôt disponible</div>
+          </div>
+        )
         : activePage === 'demandes'    ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
-        : activePage === 'EspaceEmployer'  ? <div className="flex-1 overflow-y-auto"><EspaceEmployer /></div>
         : activePage === 'alertes'     ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
         : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
         : activePage === 'dossier'     ? <div className="flex-1 overflow-y-auto"><DossierPage /></div>
@@ -463,21 +405,6 @@ const navItems = [
           </div>
         )
         : activePage === 'rapports'    ? reportsContent
-        : activePage === 'maintenance' ? (
-          <div className="flex-1 flex items-center justify-center flex-col gap-3">
-            <div style={{ fontSize: 48 }}>🔧</div>
-            <div className="text-white font-semibold text-lg">Section Maintenance</div>
-            <div className="text-slate-500 text-sm">Bientôt disponible</div>
-          </div>
-        )
-        : false ? (
-          <div className="flex-1 flex items-center justify-center flex-col gap-3">
-            <div style={{ fontSize: 48 }}>📊</div>
-            <div className="text-white font-semibold text-lg">Section Rapports</div>
-            <div className="text-slate-500 text-sm">Bientôt disponible</div>
-          </div>
-
-        )
         : (
           /* ── DASHBOARD PRINCIPAL ── */
           <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 w-full">
@@ -526,7 +453,7 @@ const navItems = [
               <div className="grid grid-cols-2 gap-6">
                 {[
                   {
-                    name: 'Rectifieuse', node: 'ESP32-NODE-01', color: '#3b82f6', value: sante,
+                    name: machineNameById.rectifieuse || 'Rectifieuse', node: 'ESP32-NODE-01', color: '#3b82f6', value: sante,
                     sensors: [
                       { label: 'Courant',   val: `${latest.courant} A`,         color: latest.courant > 15 ? '#ef4444' : '#22c55e' },
                       { label: 'Vibration', val: `${latest.vibX.toFixed(2)} g`, color: latest.vibX > 2 ? '#f97316' : '#3b82f6' },
@@ -534,7 +461,7 @@ const navItems = [
                     ]
                   },
                   {
-                    name: 'Compresseur ABAC', node: 'compresseur', color: '#06b6d4', value: santeComp,
+                    name: machineNameById.compresseur || 'Compresseur', node: 'compresseur', color: '#06b6d4', value: santeComp,
                     sensors: [
                       { label: 'Courant',   val: `${latestComp.courant.toFixed(1)} A`,           color: latestComp.courant > 15 ? '#ef4444' : '#22c55e' },
                       { label: 'Vibration', val: `${latestComp.vibX.toFixed(2)} g`,              color: latestComp.vibX > 2 ? '#f97316' : '#3b82f6' },
