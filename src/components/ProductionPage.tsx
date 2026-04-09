@@ -35,7 +35,12 @@ interface Piece {
   taches: Tache[];
 }
 
-const MACHINES = ['Rectifieuse', 'Agie Cut', 'Agie Drill', 'HAAS CNC', 'Compresseur ABAC'];
+interface MachineApi {
+  id: string;
+  name: string;
+  hasSensors?: boolean;
+  node?: string | null;
+}
 
 const statusConfig = {
   'Terminé':  { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',   border: 'rgba(34,197,94,0.3)',   label: '✅ Terminé' },
@@ -68,13 +73,16 @@ const ProductionPage: React.FC = () => {
   const [pieces, setPieces]               = useState<Piece[]>([]);
   const [dossierPieceNames, setDossierPieceNames] = useState<string[]>([]);
   const [employes, setEmployes]           = useState<string[]>([]);
+  const [machines, setMachines]           = useState<MachineApi[]>([]);
   const [loading, setLoading]             = useState(true);
   const [filtre, setFiltre]               = useState('Toutes');
   const [showForm, setShowForm]           = useState(false);
   const [selectedPiece, setSelectedPiece] = useState<Piece | null>(null);
   const [activeTab, setActiveTab]         = useState<'details' | 'taches'>('details');
   const [newPiece, setNewPiece]           = useState<Partial<Piece>>({ matiere: true, status: 'En cours' });
-  const [newPieceChain, setNewPieceChain] = useState('Rectifieuse, Agie Cut, HAAS CNC');
+  const [chainEnabled, setChainEnabled]   = useState(false);
+  const [chainSteps, setChainSteps]       = useState<string[]>([]);
+  const [chainNext, setChainNext]         = useState('');
   const [newTache, setNewTache]           = useState({ titre: '', employe: '', priorite: 'moyenne' as Tache['priorite'] });
 
   const token   = localStorage.getItem('token') || '';
@@ -125,6 +133,14 @@ const ProductionPage: React.FC = () => {
     fetchEmployes();
     fetchPieces();
     fetchDossierPieceNames();
+
+    fetch(`${API}/machines`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then((data: MachineApi[]) => {
+        if (!Array.isArray(data)) return;
+        setMachines(data.filter((m) => m && m.id !== 'compresseur'));
+      })
+      .catch(() => {});
   }, []);
 
   // Stats
@@ -140,12 +156,16 @@ const ProductionPage: React.FC = () => {
   const ajouterPiece = async () => {
     if (!newPiece.nom || !newPiece.machine || !newPiece.employe) return;
     try {
+      const effectiveChain = chainEnabled
+        ? [newPiece.machine, ...chainSteps.filter((m) => m !== newPiece.machine)]
+        : [];
+
       const res  = await fetch(`${API}/pieces`, {
         method: 'POST', headers,
         body: JSON.stringify({
           nom:            newPiece.nom,
           machine:        newPiece.machine,
-          machineChain:   newPieceChain.split(',').map((m) => m.trim()).filter(Boolean),
+          ...(effectiveChain.length > 1 ? { machineChain: effectiveChain } : {}),
           employe:        newPiece.employe,
           quantite:       Number(newPiece.quantite) || 0,
           prix:           Number(newPiece.prix) || 0,
@@ -159,7 +179,9 @@ const ProductionPage: React.FC = () => {
         setPieces(prev => [data, ...prev]);
         setShowForm(false);
         setNewPiece({ matiere: true, status: 'En cours' });
-        setNewPieceChain('Rectifieuse, Agie Cut, HAAS CNC');
+        setChainEnabled(false);
+        setChainSteps([]);
+        setChainNext('');
       }
     } catch (err) { console.error('Erreur ajout pièce:', err); }
   };
@@ -308,7 +330,7 @@ const ProductionPage: React.FC = () => {
                 <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
                   Machine actuelle: <span style={{ color: '#22d3ee' }}>{piece.currentMachine || piece.machine}</span>
                 </div>
-                {piece.machineChain && piece.machineChain.length > 0 && (
+                {piece.machineChain && piece.machineChain.length > 1 && (
                   <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8 }}>
                     {piece.machineChain.join(' -> ')}
                   </div>
@@ -319,12 +341,14 @@ const ProductionPage: React.FC = () => {
                   </span>
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#00d4ff' }}>{piece.quantite} pcs</span>
                 </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); progresserPiece(piece._id); }}
-                  style={{ marginTop: 8, width: '100%', border: 'none', borderRadius: 7, background: '#1e40af', color: 'white', padding: '6px 8px', fontSize: 11, cursor: 'pointer' }}
-                >
-                  Avancer dans la chaine
-                </button>
+                {piece.machineChain && piece.machineChain.length > 1 && piece.status !== 'Terminé' && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); progresserPiece(piece._id); }}
+                    style={{ marginTop: 8, width: '100%', border: 'none', borderRadius: 7, background: '#1e40af', color: 'white', padding: '6px 8px', fontSize: 11, cursor: 'pointer' }}
+                  >
+                    Avancer dans la chaine
+                  </button>
+                )}
                 {!piece.matiere && (
                   <div style={{ marginTop: 8, fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <AlertTriangle size={11} /> Matière manquante
@@ -388,8 +412,10 @@ const ProductionPage: React.FC = () => {
                       { label: 'Quantité',      value: `${selectedPiece.quantite} pcs`,                                        icon: <Package size={13} /> },
                       { label: 'Prix unitaire', value: `${selectedPiece.prix} DT`,                                             icon: <DollarSign size={13} /> },
                       { label: 'Revenu total',  value: `${(selectedPiece.quantite * selectedPiece.prix).toLocaleString()} DT`, icon: <TrendingUp size={13} /> },
-                      { label: 'Enchainement',  value: (selectedPiece.machineChain || [selectedPiece.machine]).join(' -> '),   icon: <Clock size={13} /> },
                       { label: 'Status',        value: statusConfig[selectedPiece.status].label,                               icon: <CheckCircle size={13} /> },
+                      ...((selectedPiece.machineChain && selectedPiece.machineChain.length > 1)
+                        ? [{ label: 'Enchainement', value: selectedPiece.machineChain.join(' -> '), icon: <Clock size={13} /> }]
+                        : []),
                     ].map(row => (
                       <div key={row.label} style={{ background: 'rgba(30,41,59,0.6)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(255,255,255,0.06)' }}>
                         <div style={{ fontSize: 11, color: '#475569', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -406,12 +432,14 @@ const ProductionPage: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  <button
-                    onClick={() => progresserPiece(selectedPiece._id)}
-                    style={{ width: '100%', padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontSize: 13, fontWeight: 700, marginBottom: 10 }}
-                  >
-                    Avancer la piece dans la chaine
-                  </button>
+                  {((selectedPiece.machineChain || []).length > 1) && selectedPiece.status !== 'Terminé' && (
+                    <button
+                      onClick={() => progresserPiece(selectedPiece._id)}
+                      style={{ width: '100%', padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontSize: 13, fontWeight: 700, marginBottom: 10 }}
+                    >
+                      Avancer la piece dans la chaine
+                    </button>
+                  )}
                   <div style={{ background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
                     <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>Historique de passage</div>
                     {(selectedPiece.history || []).length === 0 ? (
@@ -588,22 +616,102 @@ const ProductionPage: React.FC = () => {
                 <label htmlFor="select-machine" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Machine *</label>
                 <select id="select-machine" title="Machine"
                   value={newPiece.machine || ''}
-                  onChange={e => setNewPiece(p => ({ ...p, machine: e.target.value }))}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setNewPiece(p => ({ ...p, machine: value }));
+                    if (chainEnabled && value) {
+                      setChainSteps(prev => [value, ...prev.filter(m => m !== value)].slice(1));
+                    }
+                  }}
                   style={selectStyle}>
                   <option value="">Choisir une machine</option>
-                  {MACHINES.map(m => <option key={m} value={m}>{m}</option>)}
+                  {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                 </select>
               </div>
 
               <div>
-                <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Enchainement des machines</label>
-                <input
-                  placeholder="Rectifieuse, Agie Cut, HAAS CNC"
-                  value={newPieceChain}
-                  onChange={e => setNewPieceChain(e.target.value)}
-                  style={inputStyle}
-                />
-                <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>Separer les machines par des virgules.</div>
+                <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Enchainement (optionnel)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <input
+                    id="enable-chain"
+                    type="checkbox"
+                    checked={chainEnabled}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      setChainEnabled(enabled);
+                      setChainNext('');
+                      if (!enabled) {
+                        setChainSteps([]);
+                      } else if (newPiece.machine) {
+                        setChainSteps([newPiece.machine]);
+                      } else {
+                        setChainSteps([]);
+                      }
+                    }}
+                  />
+                  <label htmlFor="enable-chain" style={{ fontSize: 13, color: '#94a3b8', cursor: 'pointer' }}>
+                    Activer l'enchainement des machines
+                  </label>
+                </div>
+
+                {chainEnabled && (
+                  <>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <select
+                        value={chainNext}
+                        onChange={(e) => setChainNext(e.target.value)}
+                        style={selectStyle}
+                        title="Ajouter une machine"
+                      >
+                        <option value="">Ajouter une machine…</option>
+                        {machines
+                          .map((m) => m.name)
+                          .filter(Boolean)
+                          .filter((name) => name !== 'Compresseur ABAC')
+                          .filter((name) => !chainSteps.includes(name))
+                          .map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!chainNext) return;
+                          setChainSteps((prev) => [...prev, chainNext]);
+                          setChainNext('');
+                        }}
+                        style={{ padding: '10px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontWeight: 700 }}
+                      >
+                        + Ajouter
+                      </button>
+                    </div>
+
+                    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {(chainSteps.length > 0 ? chainSteps : (newPiece.machine ? [newPiece.machine] : [])).map((step) => (
+                        <span
+                          key={step}
+                          style={{ background: 'rgba(0,212,255,0.08)', border: '1px solid rgba(0,212,255,0.18)', color: '#00d4ff', padding: '4px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                        >
+                          {step}
+                          {step !== newPiece.machine && (
+                            <button
+                              type="button"
+                              onClick={() => setChainSteps((prev) => prev.filter((m) => m !== step))}
+                              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#94a3b8', fontWeight: 900 }}
+                              aria-label="Supprimer"
+                              title="Supprimer"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>
+                      La 1ère machine est la machine choisie. Le bouton "Avancer" déplace la pièce vers l'étape suivante.
+                    </div>
+                  </>
+                )}
               </div>
 
               <div>

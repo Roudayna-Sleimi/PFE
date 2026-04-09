@@ -89,11 +89,39 @@ const EmployePage: React.FC = () => {
   const msgEndRef = useRef<HTMLDivElement>(null);
 
   // Pointage
-  const [pointageAujourdhui, setPointageAujourdhui] = useState<Pointage | null>(null);
-  const [historique, setHistorique]                 = useState<Pointage[]>([]);
-  const [machineSelectee, setMachineSelectee]       = useState('');
-  const [piecesProduites, setPiecesProduites]       = useState(0);
-  const [enTravail, setEnTravail]                   = useState(false);
+  const [initialPointage] = useState(() => {
+    const empty = {
+      historique: [] as Pointage[],
+      today: null as Pointage | null,
+      machine: "",
+      piecesProduites: 0,
+      enTravail: false,
+    };
+
+    const saved = localStorage.getItem(`pointage_${username}`);
+    if (!saved) return empty;
+
+    try {
+      const parsed: Pointage[] = JSON.parse(saved);
+      const today = parsed.find(p => p.date === todayStr()) ?? null;
+      const enTravail = Boolean(today && !today.heureSortie);
+      return {
+        historique: parsed,
+        today: enTravail ? today : null,
+        machine: enTravail && today ? today.machine : "",
+        piecesProduites: enTravail && today ? today.piecesProduites : 0,
+        enTravail,
+      };
+    } catch {
+      return empty;
+    }
+  });
+
+  const [pointageAujourdhui, setPointageAujourdhui] = useState<Pointage | null>(initialPointage.today);
+  const [historique, setHistorique]                 = useState<Pointage[]>(initialPointage.historique);
+  const [machineSelectee, setMachineSelectee]       = useState(initialPointage.machine);
+  const [piecesProduites, setPiecesProduites]       = useState(initialPointage.piecesProduites);
+  const [enTravail, setEnTravail]                   = useState(initialPointage.enTravail);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -140,18 +168,6 @@ const EmployePage: React.FC = () => {
         }
       }).catch(() => {});
 
-    // Pointage du localStorage (simple persistance côté client)
-    const saved = localStorage.getItem(`pointage_${username}`);
-    if (saved) {
-      const parsed: Pointage[] = JSON.parse(saved);
-      setHistorique(parsed);
-      const today = parsed.find(p => p.date === todayStr());
-      if (today && !today.heureSortie) {
-        setPointageAujourdhui(today);
-        setMachineSelectee(today.machine);
-        setEnTravail(true);
-      }
-    }
   }, []);
 
   // ── Socket ──
@@ -261,8 +277,6 @@ const EmployePage: React.FC = () => {
     setMsgText("");
   };
 
-  const santeRect = rectData ? Math.max(0, Math.min(100, 100 - (rectData.vibX + rectData.vibY + rectData.vibZ) * 5)) : 0;
-  const santeComp = compData ? Math.max(0, Math.min(100, 100 - (compData.vibX + compData.vibY + compData.vibZ) * 5)) : 0;
   const updateMachineAction = async (action: 'started'|'paused'|'stopped', opts?: { pieceId?: string; pieceCount?: number }) => {
     const activity = action === 'started' ? 'Production en cours' : action === 'paused' ? 'Pause operateur' : 'Cycle termine';
     if (action === 'stopped' && (!opts?.pieceId || !opts?.pieceCount || opts.pieceCount <= 0)) {
@@ -301,63 +315,54 @@ const EmployePage: React.FC = () => {
   return (
     <div style={{ display:"flex", minHeight:"100vh", background:"#0a0e27", color:"white", fontFamily:"sans-serif" }}>
 
-      {/* ── SIDEBAR ── */}
-      <aside style={{ width:240, minWidth:240, background:"#0f172a", borderRight:"1px solid #1e293b", display:"flex", flexDirection:"column", padding:"20px 12px" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:32, paddingBottom:20, borderBottom:"1px solid #1e293b" }}>
-          <div style={{ width:38, height:38, borderRadius:10, background:"linear-gradient(135deg,#0066ff,#00d4ff)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>⚡</div>
-          <div>
-            <div style={{ fontSize:15, fontWeight:700, background:"linear-gradient(135deg,#0066ff,#00d4ff)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>CNC Pulse</div>
-            <div style={{ fontSize:10, color:"#475569", textTransform:"uppercase", letterSpacing:1 }}>Employé</div>
-          </div>
-        </div>
-        <nav style={{ flex:1 }}>
-          <div style={{ fontSize:10, color:"#334155", fontWeight:600, textTransform:"uppercase", letterSpacing:2, marginBottom:8, paddingLeft:12 }}>NAVIGATION</div>
-          {navItems.map(item => (
-            <button key={item.key}
-              onClick={() => { setTab(item.key); if (item.key === 'messages') setUnreadMsg(0); }}
-              style={{
-                width:"100%", display:"flex", alignItems:"center", gap:10,
-                padding:"11px 12px", borderRadius:10, border:"none", cursor:"pointer",
-                marginBottom:4, fontSize:13, fontWeight:600, textAlign:"left",
-                background: tab===item.key ? "linear-gradient(135deg,rgba(0,102,255,0.2),rgba(0,212,255,0.2))" : "transparent",
-                color: tab===item.key ? "#00d4ff" : "#475569",
-                outline: tab===item.key ? "1px solid rgba(0,212,255,0.2)" : "none",
-              }}>
-              <span style={{ fontSize:16 }}>{item.icon}</span>
-              <span style={{ flex:1 }}>{item.label}</span>
-              {'badge' in item && (item as {badge:number}).badge > 0 && (
-                <span style={{ background:"#ef4444", borderRadius:"50%", width:18, height:18, fontSize:10, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  {item.badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div style={{ borderTop:"1px solid #1e293b", paddingTop:16 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", background:"#1e293b", borderRadius:10, marginBottom:8 }}>
-            <div style={{ width:28, height:28, borderRadius:"50%", background:"linear-gradient(135deg,#0066ff,#00d4ff)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, flexShrink:0 }}>
-              {username.charAt(0).toUpperCase()}
-            </div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:12, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{username}</div>
-              <div style={{ fontSize:10, color:"#475569" }}>Employé</div>
-            </div>
-          </div>
-          <button onClick={() => { localStorage.clear(); navigate("/"); }}
-            style={{ width:"100%", display:"flex", alignItems:"center", gap:8, padding:"9px 12px", background:"transparent", border:"none", borderRadius:10, color:"#f87171", cursor:"pointer", fontSize:12, fontWeight:600 }}>
-            🚪 Déconnexion
-          </button>
-        </div>
-      </aside>
-
       {/* ── MAIN ── */}
       <main style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
         <header style={{ background:"#0f172a", padding:"0 24px", height:60, display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:"1px solid #1e293b", flexShrink:0 }}>
           <span style={{ fontSize:16, fontWeight:700 }}>
             {tab==="machines" ? "🏭 Mes Machines" : tab==="pieces" ? "⚙️ Mes Pièces" : tab==="pointage" ? "🕐 Pointage" : tab==="taches" ? "✅ Mes Tâches" : "💬 Messages"}
           </span>
-          <div style={{ fontSize:12, color:"#475569" }}>Bonjour, {username}</div>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ fontSize:12, color:"#475569" }}>Bonjour, {username}</div>
+            <button
+              onClick={() => { localStorage.clear(); navigate("/"); }}
+              title="Déconnexion"
+              style={{ height:34, padding:"0 12px", borderRadius:10, background:"transparent", border:"1px solid #1e293b", color:"#f87171", cursor:"pointer", fontSize:12, fontWeight:700 }}
+            >
+              🚪
+            </button>
+          </div>
         </header>
+
+        <div style={{ background:"#0f172a", borderBottom:"1px solid #1e293b", padding:"10px 16px", display:"flex", gap:8, overflowX:"auto", flexShrink:0 }}>
+          {navItems.map(item => (
+            <button
+              key={item.key}
+              onClick={() => { setTab(item.key); if (item.key === 'messages') setUnreadMsg(0); }}
+              style={{
+                display:"flex",
+                alignItems:"center",
+                gap:8,
+                padding:"8px 12px",
+                borderRadius:999,
+                border:"1px solid #1e293b",
+                cursor:"pointer",
+                fontSize:12,
+                fontWeight:700,
+                background: tab===item.key ? "linear-gradient(135deg,rgba(0,102,255,0.22),rgba(0,212,255,0.18))" : "#0a1228",
+                color: tab===item.key ? "#00d4ff" : "#94a3b8",
+                whiteSpace:"nowrap",
+              }}
+            >
+              <span style={{ fontSize:14 }}>{item.icon}</span>
+              <span>{item.label}</span>
+              {'badge' in item && (item as { badge: number }).badge > 0 && (
+                <span style={{ marginLeft:2, background:"#ef4444", borderRadius:"50%", width:18, height:18, fontSize:10, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", color:"white" }}>
+                  {(item as { badge: number }).badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
 
         <div style={{ flex:1, overflowY:"auto", padding:24 }}>
 
@@ -367,88 +372,59 @@ const EmployePage: React.FC = () => {
               {mesMachines.length === 0 && (
                 <div style={{ textAlign:"center", color:"#475569", padding:"60px 0" }}>Aucune machine assignée à votre compte.</div>
               )}
+
+              {mesMachines.length > 0 && (
+                <div style={{ background: "#0f172a", borderRadius: 16, padding: 18, marginBottom: 16, border: "1px solid #1e293b" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "white" }}>Machine assignee: {assignedMachine}</div>
+                      <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                        Statut: <span style={{ color: machineStatus === "started" ? "#22c55e" : machineStatus === "paused" ? "#f59e0b" : "#ef4444", fontWeight: 700 }}>
+                          {machineStatus === "started" ? "Demarree" : machineStatus === "paused" ? "En pause" : "Arretee"}
+                        </span> · {currentActivity || "Aucune activite"}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={() => updateMachineAction('started')} style={{ background: "#166534", color: "white", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 600 }}>Demarrer</button>
+                      <button onClick={() => updateMachineAction('paused')} style={{ background: "#92400e", color: "white", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 600 }}>Pause</button>
+                      <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Terminer se fait par piece avec quantite ci-dessous.</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Pieces associees a cette machine</div>
+                    {machinePieces.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "#475569" }}>Aucune piece active.</div>
+                    ) : (
+                      machinePieces.map((piece) => (
+                        <div key={piece._id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid #1e293b" }}>
+                          <div style={{ fontSize: 13, color: "white" }}>
+                            {piece.nom} <span style={{ color: "#64748b", fontSize: 11 }}>({piece.status})</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="Nb"
+                              value={pieceCounts[piece._id] || ""}
+                              onChange={(e) => setPieceCounts((prev) => ({ ...prev, [piece._id]: e.target.value }))}
+                              style={{ width: 70, background: "#1e293b", color: "white", border: "1px solid #334155", borderRadius: 6, padding: "5px 8px", fontSize: 12 }}
+                            />
+                            <button onClick={() => terminerPiece(piece._id)} style={{ background: "#991b1b", color: "white", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>
+                              Terminer
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
               {mesMachines.map(machineName => {
                 const isRect = machineName.includes('Rectifieuse');
                 const isComp = machineName.includes('Compresseur');
                 const data   = isRect ? rectData : isComp ? compData : null;
                 const sante  = isRect ? santeRect : isComp ? santeComp : 80;
                 const hasLive = isRect || isComp;
-            <div style={{ maxWidth: 800 }}>
-              <div style={{ background: "#0f172a", borderRadius: 16, padding: 18, marginBottom: 16, border: "1px solid #1e293b" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "white" }}>Machine assignee: {assignedMachine}</div>
-                    <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                      Statut: <span style={{ color: machineStatus === "started" ? "#22c55e" : machineStatus === "paused" ? "#f59e0b" : "#ef4444", fontWeight: 700 }}>
-                        {machineStatus === "started" ? "Demarree" : machineStatus === "paused" ? "En pause" : "Arretee"}
-                      </span> · {currentActivity || "Aucune activite"}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => updateMachineAction('started')} style={{ background: "#166534", color: "white", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 600 }}>Demarrer</button>
-                    <button onClick={() => updateMachineAction('paused')} style={{ background: "#92400e", color: "white", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 600 }}>Pause</button>
-                    <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Terminer se fait par piece avec quantite ci-dessous.</span>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Pieces associees a cette machine</div>
-                  {machinePieces.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#475569" }}>Aucune piece active.</div>
-                  ) : (
-                    machinePieces.map((piece) => (
-                      <div key={piece._id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid #1e293b" }}>
-                        <div style={{ fontSize: 13, color: "white" }}>
-                          {piece.nom} <span style={{ color: "#64748b", fontSize: 11 }}>({piece.status})</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <input
-                            type="number"
-                            min={1}
-                            placeholder="Nb"
-                            value={pieceCounts[piece._id] || ""}
-                            onChange={(e) => setPieceCounts((prev) => ({ ...prev, [piece._id]: e.target.value }))}
-                            style={{ width: 70, background: "#1e293b", color: "white", border: "1px solid #334155", borderRadius: 6, padding: "5px 8px", fontSize: 12 }}
-                          />
-                          <button onClick={() => terminerPiece(piece._id)} style={{ background: "#991b1b", color: "white", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>
-                            Terminer
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              {/* Rectifieuse */}
-              <div style={{ background: "#0f172a", borderRadius: 16, padding: 20, marginBottom: 16, border: `1px solid ${rectData ? "#22c55e44" : "#1e293b"}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>⚙️ Rectifieuse</h3>
-                    <span style={{ fontSize: 11, color: "#475569" }}>ESP32-NODE-01</span>
-                  </div>
-                  <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: rectData ? "#14532d" : "#1e293b", color: rectData ? "#4ade80" : "#475569", border: `1px solid ${rectData ? "#22c55e44" : "#334155"}` }}>
-                    {rectData ? "✅ EN MARCHE" : "⭕ ARRÊT"}
-                  </span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
-                  {[
-                    { label: "Courant", value: `${rectData?.courant ?? 0} A`, color: (rectData?.courant ?? 0) > 15 ? "#ef4444" : "#22c55e", alert: (rectData?.courant ?? 0) > 15 },
-                    { label: "Vibration", value: `${rectData?.vibX?.toFixed(2) ?? 0} g`, color: (rectData?.vibX ?? 0) > 2 ? "#f97316" : "#3b82f6", alert: (rectData?.vibX ?? 0) > 2 },
-                    { label: "RPM", value: `${rectData?.rpm ?? 0}`, color: "#a855f7", alert: false },
-                  ].map(s => (
-                    <div key={s.label} style={{ background: "#1e293b", borderRadius: 10, padding: "14px 10px", textAlign: "center", border: s.alert ? "1px solid rgba(239,68,68,0.3)" : "1px solid #334155" }}>
-                      <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</p>
-                      <p style={{ margin: "5px 0 0", fontSize: 11, color: "#64748b" }}>{s.label}</p>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ flex: 1, background: "#1e293b", borderRadius: 999, height: 6 }}>
-                    <div style={{ height: 6, borderRadius: 999, width: `${santeRect}%`, background: santeRect > 70 ? "#22c55e" : santeRect > 40 ? "#f97316" : "#ef4444", transition: "width 0.5s" }} />
-                  </div>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", whiteSpace: "nowrap" }}>Santé {santeRect}%</span>
-                </div>
-              </div>
-
                 return (
                   <div key={machineName} style={{ background:"#0f172a", borderRadius:16, padding:20, marginBottom:16, border:`1px solid ${data ? "#22c55e44" : "#1e293b"}` }}>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>

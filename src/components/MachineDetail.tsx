@@ -30,10 +30,14 @@ interface Props { machine: Machine; onBack: () => void; }
 const LIVE_MACHINES = ['rectifieuse', 'compresseur'];
 
 const getTabs = (machineId: string): string[] => {
-  if (LIVE_MACHINES.includes(machineId)) {
-    return ['Capteurs', 'Fonctions', 'Pièces', 'Maintenance', 'Historique'];
+  const isLive = LIVE_MACHINES.includes(machineId);
+  const isComp = machineId === 'compresseur';
+
+  // Maintenance not used for now.
+  if (isLive) {
+    return isComp ? ['Capteurs', 'Fonctions', 'Historique'] : ['Capteurs', 'Fonctions', 'Pièces', 'Historique'];
   }
-  return ['Fonctions', 'Pièces', 'Maintenance', 'Historique'];
+  return ['Fonctions', 'Pièces', 'Historique'];
 };
 
 const tabIcon: Record<string, string> = {
@@ -66,17 +70,35 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     rpm: machine.rpm, pression: 0, isLive: false,
   });
   const st = statusStyle(machine.status);
+  const hasPieces = tabs.includes('Pièces');
+
+  const piecesMachineName = (() => {
+    if (machine.id === 'rectifieuse') return 'Rectifieuse';
+    if (machine.id === 'agie-cut') return 'Agie Cut';
+    if (machine.id === 'agie-drill') return 'Agie Drill';
+    if (machine.id === 'haas-cnc') return 'HAAS CNC';
+    if (machine.id === 'tour-cnc') return 'Tour CNC';
+    // fallback for legacy names
+    if (/rectifi/i.test(machine.name)) return 'Rectifieuse';
+    if (/compresse/i.test(machine.name)) return 'Compresseur ABAC';
+    if (/agie cut/i.test(machine.name)) return 'Agie Cut';
+    if (/agie drill/i.test(machine.name)) return 'Agie Drill';
+    if (/haas/i.test(machine.name)) return 'HAAS CNC';
+    if (/mazak|tour cnc/i.test(machine.name)) return 'Tour CNC';
+    return machine.name;
+  })();
 
   // Fetch pièces de cette machine
   useEffect(() => {
+    if (!hasPieces) return;
     const token = localStorage.getItem('token') || '';
-    fetch(`http://localhost:5000/api/pieces?machine=${encodeURIComponent(machine.name)}`, {
+    fetch(`http://localhost:5000/api/pieces?machine=${encodeURIComponent(piecesMachineName)}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setPieces(data); })
       .catch(() => {});
-  }, [machine.name]);
+  }, [piecesMachineName, hasPieces]);
 
   // Socket live — seulement pour les machines avec capteurs
   useEffect(() => {
@@ -245,7 +267,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       )}
 
       {/* ── PIÈCES (liées à cette machine mel MongoDB) ── */}
-      {activeTab === 'Pièces' && (
+      {hasPieces && activeTab === 'Pièces' && (
         <div>
           <div className="flex items-center gap-2 mb-4">
             <span className="text-base">⚙️</span>

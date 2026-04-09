@@ -11,6 +11,7 @@ const path       = require('path');
 const fs         = require('fs');
 const helmet     = require('helmet');
 const rateLimit  = require('express-rate-limit');
+const { startDossierWatcher } = require('./dossierWatcher');
 require('dotenv').config();
 
 const app    = express();
@@ -32,10 +33,9 @@ const dossierStorage = multer.diskStorage({
 });
 const dossierUpload = multer({
   storage: dossierStorage,
-  fileFilter: (_, file, cb) => {
-    if (file.mimetype !== 'application/pdf') return cb(new Error('Seuls les fichiers PDF sont autorises'));
-    cb(null, true);
-  }
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB per file
+  // Accept all file types. Preview is handled on the frontend (PDF/images),
+  // other types remain downloadable.
 });
 app.use('/uploads', express.static(uploadDir));
 
@@ -64,8 +64,28 @@ const authLimiter = rateLimit({
 app.use('/api/auth/', authLimiter);
 
 // ═══ MongoDB ═══
+// Start the folder watcher only after MongoDB + the Dossier model are ready,
+// otherwise the initial scan can fail to persist (or the model is not registered yet).
+let dossierWatcherHandle = null;
+let mongoConnected = false;
+let dossierModelRef = null;
+const WATCH_DIR = process.env.DOSSIER_WATCH_DIR || 'C:\\data CNC CONCEPT';
+const maybeStartWatcher = async () => {
+  if (dossierWatcherHandle) return;
+  if (!mongoConnected) return;
+  if (!dossierModelRef) return;
+  try {
+    dossierWatcherHandle = await startDossierWatcher({ rootDir: WATCH_DIR, Dossier: dossierModelRef, logger: console });
+  } catch (err) {
+    console.error('[dossier-watcher] failed to start:', err?.message || err);
+  }
+};
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connecté'))
+  .then(async () => {
+    console.log('✅ MongoDB connecté');
+    mongoConnected = true;
+    await maybeStartWatcher();
+  })
   .catch(err => console.error('❌ MongoDB:', err));
 
 // ═══ Schemas ═══
@@ -246,13 +266,19 @@ const dossierSchema = new mongoose.Schema({
   size:           { type: Number, default: 0 },
   clientLastName: { type: String, default: '' },
   clientFirstName:{ type: String, default: '' },
+  projectName:    { type: String, default: '' },
   pieceName:      { type: String, default: '' },
+  batchId:        { type: String, default: '' },
   storageDate:    { type: Date, required: true },
   searchableText: { type: String, default: '' },
   uploadedBy:     { type: String, default: null },
   createdAt:      { type: Date, default: Date.now }
 });
 const Dossier = mongoose.model('Dossier', dossierSchema);
+
+// Mark model as ready and attempt starting the watcher (if Mongo is already connected).
+dossierModelRef = Dossier;
+maybeStartWatcher();
 
 // ═══ Middlewares ═══
 const authMiddleware = (req, res, next) => {
@@ -282,6 +308,23 @@ const serviceKeyMiddleware = (req, res, next) => {
 const sanitizeSeverity = (value) => value === 'critical' ? 'critical' : 'warning';
 
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const slugify = (value = '') => {
+  return String(value)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+};
+
+const machineMeta = (name) => {
+  const n = String(name || '');
+  const isRect = /rectifi/i.test(n);
+  const isComp = /compresse/i.test(n);
+  if (isRect) return { id: 'rectifieuse', hasSensors: true, node: 'ESP32-NODE-03' };
+  if (isComp) return { id: 'compresseur', hasSensors: true, node: 'compresseur' };
+  return { id: slugify(n) || `machine-${Date.now()}`, hasSensors: false, node: null };
+};
 
 const parseStorageDate = (value) => {
   if (!value) return null;
@@ -1032,26 +1075,118 @@ app.delete('/api/pieces/:id/taches/:tacheId', authMiddleware, adminMiddleware, a
 });
 
 // ═══ MQTT ═══
+app.get('/api/machines', authMiddleware, async (req, res) => {
+  try {
+    const BASE_MACHINES = [
+      { id: 'rectifieuse', name: 'Rectifieuse', hasSensors: true, node: 'ESP32-NODE-03' },
+      { id: 'agie-cut', name: 'Agie Cut', hasSensors: false, node: null },
+      { id: 'agie-drill', name: 'Agie Drill', hasSensors: false, node: null },
+      { id: 'haas-cnc', name: 'HAAS CNC', hasSensors: false, node: null },
+      { id: 'tour-cnc', name: 'Tour CNC', hasSensors: false, node: null },
+      { id: 'compresseur', name: 'Compresseur ABAC', hasSensors: true, node: 'compresseur' },
+    ];
+
+    const [pieceMachines, assignedMachines] = await Promise.all([
+      Piece.distinct('machine', { machine: { $ne: '' } }),
+      User.distinct('assignedMachine', { assignedMachine: { $ne: null } }),
+    ]);
+
+    const names = [...pieceMachines, ...assignedMachines]
+      .map((v) => String(v || '').trim())
+      .filter(Boolean);
+
+    const extra = Array.from(new Set(names))
+      .filter((name) => !BASE_MACHINES.some((m) => m.name.toLowerCase() === name.toLowerCase()))
+      .map((name) => {
+        const meta = machineMeta(name);
+        return { id: meta.id, name, hasSensors: meta.hasSensors, node: meta.node };
+      });
+
+    const machines = [...BASE_MACHINES, ...extra].sort((a, b) => a.name.localeCompare(b.name));
+    res.json(machines);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/dossiers/watcher-status', authMiddleware, async (req, res) => {
+  try {
+    const exists = fs.existsSync(WATCH_DIR);
+    const indexedCount = await Dossier.countDocuments({});
+    if (!dossierWatcherHandle) {
+      return res.status(503).json({ running: false, watchDir: WATCH_DIR, exists, mongoConnected, indexedCount, message: 'Watcher non demarre' });
+    }
+    res.json({ running: true, watchDir: dossierWatcherHandle.rootAbs || WATCH_DIR, exists, mongoConnected, indexedCount });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/dossiers/rescan', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!dossierWatcherHandle) {
+      return res.status(503).json({ message: 'Watcher non demarre' });
+    }
+    await dossierWatcherHandle.rescan('manual-rescan');
+    res.json({ message: 'Rescan termine' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 app.get('/api/dossiers', authMiddleware, async (req, res) => {
   try {
-    const { client, piece, date, q } = req.query;
+    const { client, piece, date, from, to, q, type, project, batchId } = req.query;
     const filter = {};
 
+    if (batchId) filter.batchId = String(batchId);
     if (client) {
       const pattern = { $regex: escapeRegex(String(client)), $options: 'i' };
-      filter.$or = [{ clientLastName: pattern }, { clientFirstName: pattern }];
+      filter.$or = [
+        { clientLastName: pattern },
+        { clientFirstName: pattern },
+        { searchableText: { $regex: escapeRegex(String(client).toLowerCase()), $options: 'i' } }
+      ];
     }
     if (piece) filter.pieceName = { $regex: escapeRegex(String(piece)), $options: 'i' };
+    if (project) filter.projectName = { $regex: escapeRegex(String(project)), $options: 'i' };
     if (q) filter.searchableText = { $regex: escapeRegex(String(q).toLowerCase()), $options: 'i' };
-    if (date) {
+
+    const buildRange = (start, end) => {
+      if (!start && !end) return null;
+      const range = {};
+      if (start) range.$gte = start;
+      if (end) range.$lte = end;
+      return Object.keys(range).length ? range : null;
+    };
+
+    // Single-day exact filter (legacy)
+    if (date && !from && !to) {
       const parsedDate = parseStorageDate(String(date));
       if (parsedDate) {
         const start = new Date(parsedDate);
         start.setHours(0, 0, 0, 0);
         const end = new Date(parsedDate);
         end.setHours(23, 59, 59, 999);
-        filter.storageDate = { $gte: start, $lte: end };
+        filter.storageDate = buildRange(start, end);
       }
+    }
+
+    // Range filter
+    if (from || to) {
+      const start = parseStorageDate(String(from || ''));
+      const endBase = parseStorageDate(String(to || ''));
+      const end = endBase ? new Date(endBase) : null;
+      if (end) end.setHours(23, 59, 59, 999);
+      const range = buildRange(start, end);
+      if (range) filter.storageDate = range;
+    }
+
+    if (type) {
+      const t = String(type);
+      if (t === 'pdf') filter.mimeType = 'application/pdf';
+      else if (t === 'image') filter.mimeType = { $regex: '^image\\/' };
+      else if (t === 'cad') filter.originalName = { $regex: '\\.(step|stp|iges|igs|sldprt|sldasm|slddrw|dxf|dwg)$', $options: 'i' };
     }
 
     const dossiers = await Dossier.find(filter).sort({ createdAt: -1 });
@@ -1063,17 +1198,17 @@ app.get('/api/dossiers', authMiddleware, async (req, res) => {
 
 app.post('/api/dossiers', authMiddleware, (req, res, next) => {
   dossierUpload.array('documents', 20)(req, res, (err) => {
-    if (err) return res.status(400).json({ message: err.message || 'Upload PDF invalide' });
+    if (err) return res.status(400).json({ message: err.message || 'Upload invalide' });
     next();
   });
 }, async (req, res) => {
   try {
-    const { clientLastName, clientFirstName, pieceName, storageDate } = req.body;
+    const { clientLastName, clientFirstName, pieceName, storageDate, projectName, batchId } = req.body;
     const parsedStorageDate = parseStorageDate(storageDate);
     const files = Array.isArray(req.files) ? req.files : [];
     if (!clientLastName || !clientFirstName || !pieceName || !parsedStorageDate)
       return res.status(400).json({ message: 'Nom, prenom, date de stockage et nom de la piece sont requis' });
-    if (files.length === 0) return res.status(400).json({ message: 'Aucun fichier PDF recu' });
+    if (files.length === 0) return res.status(400).json({ message: 'Aucun fichier recu' });
 
     const savedDocuments = [];
 
@@ -1082,8 +1217,10 @@ app.post('/api/dossiers', authMiddleware, (req, res, next) => {
       const searchableText = [
         String(clientLastName).toLowerCase(),
         String(clientFirstName).toLowerCase(),
+        String(projectName || '').toLowerCase(),
         String(pieceName).toLowerCase(),
         String(file.originalname).toLowerCase(),
+        String(batchId || '').toLowerCase(),
       ].join(' ');
 
       const dossier = await Dossier.create({
@@ -1095,7 +1232,9 @@ app.post('/api/dossiers', authMiddleware, (req, res, next) => {
         size: file.size,
         clientLastName: String(clientLastName).trim(),
         clientFirstName: String(clientFirstName).trim(),
+        projectName: String(projectName || '').trim(),
         pieceName: String(pieceName).trim(),
+        batchId: String(batchId || '').trim(),
         storageDate: parsedStorageDate,
         searchableText,
         uploadedBy: req.user?.username || null,
@@ -1110,11 +1249,72 @@ app.post('/api/dossiers', authMiddleware, (req, res, next) => {
   }
 });
 
+app.get('/api/dossiers/clients', authMiddleware, async (req, res) => {
+  try {
+    const docs = await Dossier.find({}).select('clientLastName clientFirstName -_id').lean();
+    const uniq = new Set();
+    for (const d of docs) {
+      const name = `${(d.clientLastName || '').trim()} ${(d.clientFirstName || '').trim()}`.trim();
+      if (name) uniq.add(name);
+    }
+    res.json(Array.from(uniq).sort((a, b) => a.localeCompare(b)));
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/dossiers/projects', authMiddleware, async (req, res) => {
+  try {
+    const names = await Dossier.distinct('projectName', { projectName: { $ne: '' } });
+    const sorted = names.sort((a, b) => a.localeCompare(b));
+    res.json(sorted);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 app.get('/api/dossiers/piece-names', authMiddleware, async (req, res) => {
   try {
     const names = await Dossier.distinct('pieceName', { pieceName: { $ne: '' } });
     const sorted = names.sort((a, b) => a.localeCompare(b));
     res.json(sorted);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/dossiers/batches', authMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit || 30), 1), 100);
+    const rows = await Dossier.aggregate([
+      { $match: { batchId: { $exists: true, $ne: '' } } },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: '$batchId',
+          createdAt: { $first: '$createdAt' },
+          storageDate: { $first: '$storageDate' },
+          clientLastName: { $first: '$clientLastName' },
+          clientFirstName: { $first: '$clientFirstName' },
+          projectName: { $first: '$projectName' },
+          count: { $sum: 1 },
+          totalSize: { $sum: '$size' },
+        }
+      },
+      { $sort: { createdAt: -1 } },
+      { $limit: limit },
+    ]);
+
+    res.json(rows.map((r) => ({
+      batchId: r._id,
+      createdAt: r.createdAt,
+      storageDate: r.storageDate,
+      clientLastName: r.clientLastName,
+      clientFirstName: r.clientFirstName,
+      projectName: r.projectName,
+      count: r.count,
+      totalSize: r.totalSize,
+    })));
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -1138,6 +1338,39 @@ app.delete('/api/dossiers/:id', authMiddleware, adminMiddleware, async (req, res
     if (fs.existsSync(dossier.filePath)) fs.unlinkSync(dossier.filePath);
     await dossier.deleteOne();
     res.json({ message: 'Document supprime avec succes' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.put('/api/dossiers/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const dossier = await Dossier.findById(req.params.id);
+    if (!dossier) return res.status(404).json({ message: 'Document introuvable' });
+
+    const { clientLastName, clientFirstName, projectName, pieceName, storageDate } = req.body || {};
+
+    if (typeof clientLastName === 'string') dossier.clientLastName = clientLastName.trim();
+    if (typeof clientFirstName === 'string') dossier.clientFirstName = clientFirstName.trim();
+    if (typeof projectName === 'string') dossier.projectName = projectName.trim();
+    if (typeof pieceName === 'string') dossier.pieceName = pieceName.trim();
+
+    if (typeof storageDate === 'string') {
+      const parsed = parseStorageDate(storageDate);
+      if (!parsed) return res.status(400).json({ message: 'Date de stockage invalide' });
+      dossier.storageDate = parsed;
+    }
+
+    dossier.searchableText = [
+      String(dossier.clientLastName || '').toLowerCase(),
+      String(dossier.clientFirstName || '').toLowerCase(),
+      String(dossier.projectName || '').toLowerCase(),
+      String(dossier.pieceName || '').toLowerCase(),
+      String(dossier.originalName || '').toLowerCase(),
+    ].join(' ');
+
+    await dossier.save();
+    res.json(dossier);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
