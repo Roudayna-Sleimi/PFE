@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Package, Plus, X, AlertTriangle, CheckCircle, Clock, User, Wrench, TrendingUp, DollarSign } from 'lucide-react';
+import DossierPage from './DossierPage';
 
 const API = 'http://localhost:5000/api';
 
@@ -71,6 +72,7 @@ const PieceIcon = ({ nom }: { nom: string }) => {
 
 const ProductionPage: React.FC = () => {
   const [pieces, setPieces]               = useState<Piece[]>([]);
+  const [mainTab, setMainTab]             = useState<'production' | 'clients'>('production');
   const [dossierPieceNames, setDossierPieceNames] = useState<string[]>([]);
   const [employes, setEmployes]           = useState<string[]>([]);
   const [machines, setMachines]           = useState<MachineApi[]>([]);
@@ -239,6 +241,26 @@ const ProductionPage: React.FC = () => {
 
   return (
     <div style={{ flex: 1, padding: 24, overflowY: 'auto', minWidth: 0, width: '100%' }}>
+
+      {/* ── Tab Navigation ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+        {(['production', 'clients'] as const).map(tab => (
+          <button key={tab} onClick={() => setMainTab(tab)} style={{
+            padding: '9px 22px', borderRadius: 10, border: `1px solid ${mainTab === tab ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.08)'}`,
+            cursor: 'pointer', fontSize: 13, fontWeight: 600, transition: 'all 0.15s',
+            background: mainTab === tab ? 'linear-gradient(135deg,rgba(0,102,255,0.15),rgba(0,212,255,0.15))' : 'rgba(30,41,59,0.6)',
+            color: mainTab === tab ? '#00d4ff' : '#64748b',
+          }}>
+            {tab === 'production' ? '🏭 Production' : '📁 Clients'}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Clients Tab ── */}
+      {mainTab === 'clients' && <DossierPage />}
+
+      {/* ── Production Tab ── */}
+      {mainTab === 'production' && <>
 
       {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
@@ -756,6 +778,7 @@ const ProductionPage: React.FC = () => {
           </div>
         </div>
       )}
+      </>}
     </div>
   );
 };
