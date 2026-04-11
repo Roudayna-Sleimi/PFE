@@ -1,17 +1,15 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {
-  LayoutDashboard, Settings, Activity, Bell,
+  LayoutDashboard, Settings, Activity,
   Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut,
-  BarChart2, Package, Heart, FolderOpen
+  BarChart2, Package, Heart
 } from 'lucide-react';
-import { ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import MessagingPage from './MessagingPage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
-import AlertesPage from './AlertesPage';
 import ProductionPage from './ProductionPage';
-import DossierPage from './DossierPage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -24,8 +22,38 @@ interface EmployeOverview {
   _id?: string;
   username: string;
   assignedMachine?: string | null;
+  currentPieceName?: string | null;
+  currentPieceId?: string | null;
   machineStatus?: 'started' | 'paused' | 'stopped';
   currentActivity?: string;
+  machineStatusUpdatedAt?: string;
+  connectedAt?: string;
+  isOnline?: boolean;
+}
+
+interface MachineEvent {
+  _id: string;
+  username: string;
+  machine: string;
+  action: 'started' | 'paused' | 'stopped';
+  activity?: string;
+  pieceName?: string;
+  pieceCount?: number;
+  createdAt: string;
+}
+
+interface EmployeHistorique {
+  events: MachineEvent[];
+  stats: {
+    totalPieces: number;
+    totalSessions: number;
+    totalPausees: number;
+    totalTerminees: number;
+    piecesProduites: number;
+    piecesAujourd: number;
+    workSecondsToday: number;
+    pauseSecondsToday: number;
+  };
 }
 
 interface MachineApi {
@@ -33,6 +61,18 @@ interface MachineApi {
   name: string;
   hasSensors?: boolean;
   node?: string | null;
+}
+
+interface DashboardStats {
+  kpi: { totalPcs: number; totalRevenu: number; enCours: number; totalPieces: number; alertesActives: number; };
+  prodParJour: { label: string; pcs: number }[];
+  repartition: { name: string; value: number }[];
+  tempsMachines: { machine: string; seconds: number }[];
+  totalFonctionSeconds: number;
+  totalPauseSeconds: number;
+  activiteEmployes: { username: string; machineStatus?: string; assignedMachine?: string; sessions: number; pcs: number }[];
+  machinesActives: { machine?: string; username: string }[];
+  employes: { total: number; actifs: number; enPause: number; enligne: number };
 }
 
 const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
@@ -62,13 +102,16 @@ const Dashboard: React.FC = () => {
 
 
 const [activePage, setActivePage] = useState<
-  'dashboard' | 'production' | 'dossier' | 'machines' | 'maintenance' | 'alertes' | 'rapports' | 'employes' | 'demandes'
+  'dashboard' | 'production' | 'machines' | 'rapports' | 'employes' | 'demandes'
 >('dashboard');
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
   const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
   const [machineOptions, setMachineOptions] = useState<string[]>([]);
-  const [machineNameById, setMachineNameById] = useState<Record<string, string>>({});
+  const [selectedEmploye, setSelectedEmploye] = useState<string | null>(null);
+  const [historique, setHistorique] = useState<EmployeHistorique | null>(null);
+  const [loadingHisto, setLoadingHisto] = useState(false);
+  const [dashStats, setDashStats] = useState<DashboardStats | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
@@ -77,9 +120,6 @@ const [activePage, setActivePage] = useState<
       .then((data: MachineApi[]) => {
         if (!Array.isArray(data)) return;
         setMachineOptions(data.map(m => m?.name).filter(Boolean));
-        const byId: Record<string, string> = {};
-        data.forEach(m => { if (m?.id && m?.name) byId[m.id] = m.name; });
-        setMachineNameById(byId);
       })
       .catch(() => {});
   }, []);
@@ -116,6 +156,16 @@ const [activePage, setActivePage] = useState<
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  const fetchDashStats = useCallback(async () => {
+    const token = localStorage.getItem('token') || '';
+    try {
+      const res = await fetch('http://localhost:5000/api/dashboard/stats', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) { const data = await res.json(); setDashStats(data); }
+    } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -160,6 +210,18 @@ const [activePage, setActivePage] = useState<
         next[idx] = { ...next[idx], ...payload };
         return next;
       });
+      // Refresh dashboard stats when employee status changes
+      fetchDashStats();
+    });
+    socket.on('user-status', (payload: { username: string; isOnline: boolean }) => {
+      if (!payload?.username) return;
+      setEmployeesOverview(prev => prev.map(e =>
+        e.username === payload.username ? { ...e, isOnline: payload.isOnline } : e
+      ));
+      fetchDashStats();
+    });
+    socket.on('dashboard-refresh', () => {
+      fetchDashStats();
     });
     return () => {
       socket.off('connect');
@@ -167,6 +229,8 @@ const [activePage, setActivePage] = useState<
       socket.off('direct-message');
       socket.off('alert');
       socket.off('employee-machine-updated');
+      socket.off('user-status');
+      socket.off('dashboard-refresh');
     };
   }, []);
 
@@ -223,6 +287,26 @@ const [activePage, setActivePage] = useState<
     setEmployeesOverview(prev => prev.map(e => (e.username === username ? { ...e, assignedMachine } : e)));
   };
 
+
+  useEffect(() => {
+    fetchDashStats();
+    const interval = setInterval(fetchDashStats, 30000);
+    return () => clearInterval(interval);
+  }, [fetchDashStats]);
+
+  const fetchHistorique = async (username: string) => {    setLoadingHisto(true);
+    setHistorique(null);
+    const token = localStorage.getItem('token') || '';
+    try {
+      const res = await fetch(`http://localhost:5000/api/admin/employes/${username}/historique`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setHistorique(data);
+    } catch { /* ignore */ }
+    finally { setLoadingHisto(false); }
+  };
+
   const bg2    = darkMode ? 'bg-[#0f172a]'    : 'bg-white';
   const bgCard = darkMode ? 'bg-slate-800/50' : 'bg-white';
   const border = darkMode ? 'border-white/[0.08]' : 'border-slate-200';
@@ -234,10 +318,7 @@ const [activePage, setActivePage] = useState<
 const navItems = [
   { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
   { key: 'production' as const, icon: <Package size={18} />, label: 'Production' },
-  { key: 'dossier' as const, icon: <FolderOpen size={18} />, label: 'Clients' },
   { key: 'machines' as const, icon: <Settings size={18} />, label: 'Machines' },
-  { key: 'maintenance' as const, icon: <BarChart2 size={18} />, label: 'Maintenance' },
-  { key: 'alertes' as const, icon: <Bell size={18} />, label: 'Alertes', badge: alertCount },
   { key: 'rapports' as const, icon: <BarChart2 size={18} />, label: 'Rapports' },
   ...(role === 'admin' ? [
     { key: 'employes' as const, icon: <UserPlus size={18} />, label: 'Employes' },
@@ -272,7 +353,6 @@ const navItems = [
                 <li key={item.key}
                   onClick={() => {
                     setActivePage(item.key as typeof activePage);
-                    if (item.key === 'alertes') setAlertCount(0);
                   }}
                   className={`flex items-center gap-3 px-3 py-3 rounded-[10px] cursor-pointer transition-all duration-300 text-sm font-medium
                     ${activePage === item.key
@@ -352,55 +432,198 @@ const navItems = [
 
         {/* ── Content ── */}
         {activePage === 'machines'     ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
-        : activePage === 'maintenance' ? (
-          <div className="flex-1 flex items-center justify-center flex-col gap-3">
-            <div style={{ fontSize: 48 }}>🔧</div>
-            <div className="text-white font-semibold text-lg">Section Maintenance</div>
-            <div className="text-slate-500 text-sm">Bientôt disponible</div>
-          </div>
-        )
         : activePage === 'demandes'    ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
-        : activePage === 'alertes'     ? <div className="flex-1 overflow-y-auto"><AlertesPage /></div>
         : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
-        : activePage === 'dossier'     ? <div className="flex-1 overflow-y-auto"><DossierPage /></div>
         : activePage === 'employes'    ? (
           <div className="flex-1 p-6 overflow-y-auto">
-            <h2 className="text-2xl font-bold text-white mb-1">Employes</h2>
-            <p className="text-[13px] text-slate-400 mb-5">Machine assignee, statut temps reel et activite actuelle.</p>
-            <div className={`${bgCard} border ${border} rounded-xl overflow-hidden`}>
-              <div className="grid grid-cols-4 gap-3 px-4 py-3 text-[12px] text-slate-400 border-b border-white/10">
-                <span>Employe</span>
-                <span>Machine</span>
-                <span>Statut</span>
-                <span>Activite</span>
+            {/* Header */}
+            <div className="flex items-start justify-between mb-5 flex-wrap gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-white mb-1">Suivi des Employés</h2>
+                <p className="text-[13px] text-slate-400">Temps réel · Production · Historique complet</p>
               </div>
-              {employeesOverview.length === 0 ? (
-                <div className="px-4 py-5 text-sm text-slate-400">Aucun employe trouve.</div>
-              ) : (
-                employeesOverview.map((employee) => {
-                  const status = employee.machineStatus || 'stopped';
-                  const statusLabel = status === 'started' ? 'Demarree' : status === 'paused' ? 'En pause' : 'Arretee';
-                  const statusColor = status === 'started' ? '#22c55e' : status === 'paused' ? '#f59e0b' : '#ef4444';
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold animate-pulse"
+                style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e' }}>
+                ● Live
+              </div>
+            </div>
+
+            {/* Stats globales */}
+            <div className="grid grid-cols-4 gap-3 mb-5">
+              {[
+                { label: 'En production', value: employeesOverview.filter(e => e.machineStatus === 'started').length, color: '#22c55e', icon: '▶' },
+                { label: 'En pause',      value: employeesOverview.filter(e => e.machineStatus === 'paused').length,  color: '#f59e0b', icon: '⏸' },
+                { label: 'En ligne',      value: employeesOverview.filter(e => e.isOnline).length, color: '#00d4ff', icon: '🟢' },
+                { label: 'Total',         value: employeesOverview.length, color: '#a855f7', icon: '👥' },
+              ].map(s => (
+                <div key={s.label} className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-3 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center text-base flex-shrink-0"
+                    style={{ background: s.color + '15', border: `1px solid ${s.color}30` }}>{s.icon}</div>
+                  <div>
+                    <div className="text-[20px] font-bold" style={{ color: s.color }}>{s.value}</div>
+                    <div className="text-[10px] text-slate-500">{s.label}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-5">
+              {/* ── Cards employés ── */}
+              <div className="flex flex-col gap-3">
+                {employeesOverview.length === 0 ? (
+                  <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-8 text-center text-slate-500">Aucun employé trouvé</div>
+                ) : employeesOverview.map(emp => {
+                  const st = emp.machineStatus || 'stopped';
+                  const stColor = st === 'started' ? '#22c55e' : st === 'paused' ? '#f59e0b' : '#64748b';
+                  const stLabel = st === 'started' ? '▶ En production' : st === 'paused' ? '⏸ En pause' : '⏹ Arrêté';
+                  const isSelected = selectedEmploye === emp.username;
+                  const connectedAt = emp.connectedAt;
+                  const currentPieceName = emp.currentPieceName;
                   return (
-                    <div key={employee.username} className="grid grid-cols-4 gap-3 px-4 py-3 border-b border-white/5 text-sm">
-                      <span className="text-white">{employee.username}</span>
-                      <select
-                        value={employee.assignedMachine || ''}
-                        onChange={(e) => employee._id && assignMachine(employee._id, e.target.value, employee.username)}
-                        className="bg-slate-900/70 border border-white/10 rounded-md text-slate-200 text-xs px-2 py-1"
-                        title="Machine assignee"
-                      >
-                        <option value="">Non assignee</option>
-                        {machineOptions.map((machine) => (
-                          <option key={machine} value={machine}>{machine}</option>
-                        ))}
-                      </select>
-                      <span style={{ color: statusColor }} className="font-semibold">{statusLabel}</span>
-                      <span className="text-slate-300">{employee.currentActivity || '-'}</span>
+                    <div key={emp.username}
+                      onClick={() => {
+                        if (isSelected) { setSelectedEmploye(null); setHistorique(null); }
+                        else { setSelectedEmploye(emp.username); fetchHistorique(emp.username); }
+                      }}
+                      className="border rounded-xl p-4 cursor-pointer transition-all"
+                      style={{
+                        borderColor: isSelected ? 'rgba(0,212,255,0.4)' : st === 'started' ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.08)',
+                        background: isSelected ? 'rgba(0,102,255,0.08)' : st === 'started' ? 'rgba(34,197,94,0.04)' : 'rgba(15,23,42,0.5)',
+                      }}>
+                      {/* Top row */}
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="relative flex-shrink-0">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
+                            style={{ background: stColor + '20', border: `2px solid ${stColor}50`, color: stColor }}>
+                            {emp.username.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-900"
+                            style={{ background: emp.isOnline ? '#22c55e' : '#64748b' }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-bold text-white">{emp.username}</div>
+                          <div className="text-[11px] font-semibold" style={{ color: stColor }}>{stLabel}</div>
+                        </div>
+                        <div className="text-[10px] text-slate-500 text-right">
+                          {connectedAt && emp.isOnline && (
+                            <div className="text-[#22c55e]">Connecté {new Date(connectedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
+                          )}
+                          {!emp.isOnline && emp.machineStatusUpdatedAt && (
+                            <div>Vu {new Date(emp.machineStatusUpdatedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Info row */}
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <div className="rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          <div className="text-[9px] text-slate-500 mb-0.5">🏭 MACHINE</div>
+                          <div className="text-[12px] font-bold text-white truncate">{emp.assignedMachine || '—'}</div>
+                        </div>
+                        <div className="rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          <div className="text-[9px] text-slate-500 mb-0.5">⚙️ PIÈCE</div>
+                          <div className="text-[12px] font-bold text-white truncate">{currentPieceName || '—'}</div>
+                        </div>
+                      </div>
+
+                      {/* Status update time */}
+                      {emp.machineStatusUpdatedAt && (
+                        <div className="text-[10px] text-slate-600 flex items-center gap-1">
+                          <span>Dernière action:</span>
+                          <span className="text-slate-500">{new Date(emp.machineStatusUpdatedAt).toLocaleTimeString('fr-FR')}</span>
+                        </div>
+                      )}
+
+                      <div className="mt-2 text-[10px] text-slate-600 text-right">{isSelected ? '▲ Fermer' : '▼ Voir historique'}</div>
                     </div>
                   );
-                })
-              )}
+                })}
+              </div>
+
+              {/* ── Détail employé ── */}
+              <div>
+                {!selectedEmploye ? (
+                  <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-10 text-center">
+                    <div className="text-3xl mb-3">👆</div>
+                    <div className="text-slate-500 text-sm">Cliquez sur un employé pour voir le détail</div>
+                  </div>
+                ) : loadingHisto ? (
+                  <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-10 text-center text-slate-500 text-sm animate-pulse">Chargement...</div>
+                ) : historique ? (() => {
+                  const h = historique as typeof historique & { stats: { piecesAujourd?: number; workSecondsToday?: number; pauseSecondsToday?: number } };
+                  const fmtTime = (s: number) => { if (!s) return '0m'; const h2 = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return h2 > 0 ? `${h2}h ${String(m).padStart(2,'0')}m` : `${m}m`; };
+                  return (
+                    <div className="flex flex-col gap-3">
+                      {/* En-tête employé */}
+                      <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-4">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">{selectedEmploye} — Aujourd'hui</div>
+                        <div className="grid grid-cols-2 gap-3 mb-3">
+                          <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.15)' }}>
+                            <div className="text-[22px] font-bold text-[#22c55e]">{h.stats.piecesAujourd ?? 0}</div>
+                            <div className="text-[10px] text-slate-500">Pièces produites aujourd'hui</div>
+                          </div>
+                          <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)' }}>
+                            <div className="text-[22px] font-bold text-[#3b82f6]">{fmtTime(h.stats.workSecondsToday ?? 0)}</div>
+                            <div className="text-[10px] text-slate-500">Temps travaillé aujourd'hui</div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { label: 'Sessions', value: h.stats.totalSessions, color: '#3b82f6' },
+                            { label: 'Pauses',   value: h.stats.totalPausees,  color: '#f59e0b' },
+                            { label: 'Pièces',   value: h.stats.piecesProduites, color: '#22c55e' },
+                          ].map(s => (
+                            <div key={s.label} className="bg-slate-900/50 rounded-lg p-2 text-center border border-white/[0.05]">
+                              <div className="text-[16px] font-bold" style={{ color: s.color }}>{s.value}</div>
+                              <div className="text-[9px] text-slate-500">{s.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Timeline événements */}
+                      <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl overflow-hidden">
+                        <div className="px-4 py-2.5 border-b border-white/[0.06] text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                          <span>Timeline</span>
+                          <span className="text-slate-600">{historique.events.length} événements</span>
+                        </div>
+                        <div className="max-h-72 overflow-y-auto">
+                          {historique.events.length === 0 ? (
+                            <div className="p-6 text-center text-slate-500 text-sm">Aucun événement</div>
+                          ) : historique.events.map(ev => {
+                            const evColor = ev.action === 'started' ? '#22c55e' : ev.action === 'paused' ? '#f59e0b' : '#ef4444';
+                            const evIcon  = ev.action === 'started' ? '▶' : ev.action === 'paused' ? '⏸' : '⏹';
+                            const evLabel = ev.action === 'started' ? 'Démarré' : ev.action === 'paused' ? 'Pause' : 'Arrêté';
+                            return (
+                              <div key={ev._id} className="flex items-start gap-3 px-4 py-2.5 border-b border-white/[0.03] last:border-0">
+                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5"
+                                  style={{ background: evColor + '18', color: evColor, border: `1px solid ${evColor}30` }}>
+                                  {evIcon}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                                    <span className="text-[11px] font-bold" style={{ color: evColor }}>{evLabel}</span>
+                                    <span className="text-[10px] text-slate-500 truncate">· {ev.machine}</span>
+                                  </div>
+                                  {ev.pieceName && (
+                                    <div className="text-[11px] text-slate-400">
+                                      ⚙️ {ev.pieceName}
+                                      {ev.pieceCount ? <span className="ml-1 text-[#22c55e] font-bold">→ {ev.pieceCount} pcs</span> : null}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-600 flex-shrink-0">
+                                  {new Date(ev.createdAt).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })() : null}
+              </div>
             </div>
           </div>
         )
@@ -410,115 +633,274 @@ const navItems = [
           <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 w-full">
 
             {/* Title */}
-            <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
+            <div className="flex justify-between items-start mb-5 flex-wrap gap-4">
               <div>
-                <h2 className={`text-2xl font-bold mb-1 ${txt1}`}>Tableau de Bord</h2>
+                <h2 className={`text-2xl font-bold mb-1 ${txt1}`}>Production Dashboard</h2>
                 <p className={`text-[13px] ${txtMut}`}>CNC Concept — Vue Générale Usine</p>
               </div>
-              <div className="text-right">
-                <div className={`text-[13px] ${txt2} capitalize`}>
-                  {currentTime.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold" style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e' }}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                  IoT Monitoring
                 </div>
-                <div className="text-[20px] font-bold text-[#00d4ff] font-mono">
-                  {currentTime.toLocaleTimeString('fr-FR')}
+                <div className="text-right">
+                  <div className={`text-[12px] ${txt2} capitalize`}>{currentTime.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' })}</div>
+                  <div className="text-[18px] font-bold text-[#00d4ff] font-mono">{currentTime.toLocaleTimeString('fr-FR')}</div>
                 </div>
               </div>
             </div>
 
-            {/* ── KPI Cards ── */}
-            <div className="grid grid-cols-4 gap-4 mb-6">
+            {/* ── KPI Row ── */}
+            <div className="grid grid-cols-3 gap-4 mb-5">
               {[
-                { label: 'Production Totale', value: `${prodStats.totalPcs.toLocaleString()} pcs`, color: '#3b82f6', icon: '📦', sub: 'MongoDB' },
-                { label: 'Revenu Estimé',     value: `${prodStats.totalRevenu.toLocaleString()} DT`, color: '#22c55e', icon: '💰', sub: 'MongoDB' },
-                { label: 'Pièces En cours',   value: `${prodStats.enCours} pièces`, color: '#f59e0b', icon: '🔄', sub: 'En production' },
-                { label: 'Alertes actives',   value: `${alertCount}`, color: alertCount > 0 ? '#ef4444' : '#22c55e', icon: '🚨', sub: 'Machines' },
+                {
+                  icon: '⚙️', title: 'Total Produites',
+                  main: (dashStats?.kpi.totalPcs ?? prodStats.totalPcs).toLocaleString(),
+                  sub: `${prodStats.enCours} en cours`,
+                  color: '#3b82f6', bg: 'rgba(59,130,246,0.08)',
+                },
+                {
+                  icon: '🏭', title: 'Actifs Machines',
+                  main: `${dashStats?.employes.actifs ?? 0} ON`,
+                  sub: `${dashStats?.employes.enPause ?? 0} pause · ${(dashStats?.employes.total ?? 0) - (dashStats?.employes.actifs ?? 0) - (dashStats?.employes.enPause ?? 0)} arrêt`,
+                  color: '#22c55e', bg: 'rgba(34,197,94,0.08)',
+                },
+                {
+                  icon: '👥', title: 'Employés Connectés',
+                  main: `${dashStats?.employes.enligne ?? employeesOverview.filter(e => e.isOnline).length}`,
+                  sub: `${dashStats?.employes.actifs ?? 0} en production`,
+                  color: '#00d4ff', bg: 'rgba(0,212,255,0.08)',
+                },
               ].map(k => (
-                <div key={k.label} className={`${bgCard} border ${border} rounded-xl p-4`}>
+                <div key={k.title} className={`${bgCard} border ${border} rounded-xl p-4`} style={{ background: k.bg }}>
                   <div className="flex items-center justify-between mb-3">
-                    <span style={{ fontSize: 22 }}>{k.icon}</span>
-                    <span className="text-[10px] px-2 py-1 rounded-full" style={{ background: k.color + '20', color: k.color }}>{k.sub}</span>
+                    <span style={{ fontSize: 24 }}>{k.icon}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: k.color + '20', color: k.color }}>LIVE</span>
                   </div>
-                  <div className="text-[22px] font-bold" style={{ color: k.color }}>{k.value}</div>
-                  <div className={`text-[11px] ${txtMut} mt-1`}>{k.label}</div>
+                  <div className="text-[24px] font-bold mb-0.5" style={{ color: k.color }}>{k.main}</div>
+                  <div className={`text-[11px] font-semibold ${txt1} mb-1`}>{k.title}</div>
+                  <div className={`text-[10px] ${txtMut}`}>{k.sub}</div>
                 </div>
               ))}
             </div>
 
-            {/* ── Santé des Machines ── */}
-            <div className={`${bgCard} border ${border} rounded-xl p-5`}>
-              <div className="flex items-center gap-2 mb-6">
-                <Heart size={15} className="text-[#00d4ff]" />
-                <span className={`text-sm font-semibold ${txt1}`}>Santé des Machines</span>
-              </div>
-              <div className="grid grid-cols-2 gap-6">
-                {[
-                  {
-                    name: machineNameById.rectifieuse || 'Rectifieuse', node: 'ESP32-NODE-01', color: '#3b82f6', value: sante,
-                    sensors: [
-                      { label: 'Courant',   val: `${latest.courant} A`,         color: latest.courant > 15 ? '#ef4444' : '#22c55e' },
-                      { label: 'Vibration', val: `${latest.vibX.toFixed(2)} g`, color: latest.vibX > 2 ? '#f97316' : '#3b82f6' },
-                      { label: 'RPM',       val: `${latest.rpm}`,               color: '#a855f7' },
-                    ]
-                  },
-                  {
-                    name: machineNameById.compresseur || 'Compresseur', node: 'compresseur', color: '#06b6d4', value: santeComp,
-                    sensors: [
-                      { label: 'Courant',   val: `${latestComp.courant.toFixed(1)} A`,           color: latestComp.courant > 15 ? '#ef4444' : '#22c55e' },
-                      { label: 'Vibration', val: `${latestComp.vibX.toFixed(2)} g`,              color: latestComp.vibX > 2 ? '#f97316' : '#3b82f6' },
-                      { label: 'Pression',  val: `${(latestComp.pression ?? 0).toFixed(1)} bar`, color: '#06b6d4' },
-                    ]
-                  },
-                ].map((machine, i) => (
-                  <div key={i} className={`${darkMode ? 'bg-slate-900/40' : 'bg-slate-50'} rounded-xl p-5 border ${border}`}>
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <div className={`text-sm font-bold ${txt1}`}>{i === 0 ? '⚙️' : '🔧'} {machine.name}</div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">{machine.node}</div>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <div className="relative" style={{ width: 70, height: 70 }}>
-                          <ResponsiveContainer width={70} height={70}>
-                            <PieChart>
-                              <Pie
-                                data={[{ value: machine.value }, { value: 100 - machine.value }]}
-                                cx={35} cy={35} innerRadius={26} outerRadius={34}
-                                startAngle={90} endAngle={-270} dataKey="value" stroke="none">
-                                <Cell fill={machine.color} />
-                                <Cell fill={darkMode ? '#1e293b' : '#e2e8f0'} />
-                              </Pie>
-                            </PieChart>
-                          </ResponsiveContainer>
-                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[13px] font-bold" style={{ color: machine.color }}>
-                            {machine.value.toFixed(0)}%
-                          </div>
+            {/* ── Row 2: Production en Cours + Chart + Répartition ── */}
+            <div className="grid grid-cols-3 gap-4 mb-4">
+
+              {/* Production en Cours */}
+              <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+                <div className="flex items-center justify-between mb-4">
+                  <span className={`text-sm font-bold ${txt1}`}>👷 Production en Cours</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>● EN LIVE</span>
+                </div>
+                {dashStats?.machinesActives && dashStats.machinesActives.length > 0 ? (
+                  <div className="flex flex-col gap-3">
+                    {dashStats.machinesActives.slice(0, 4).map((m, i) => (
+                      <div key={i} className="flex items-center justify-between">
+                        <div>
+                          <div className={`text-[13px] font-bold ${txt1}`}>{m.machine || '—'}</div>
+                          <div className="text-[10px] text-slate-500">{m.username}</div>
                         </div>
-                        <span className="text-[10px] text-slate-500 mt-1">Santé</span>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-16 h-1.5 rounded-full bg-slate-700/50">
+                            <div className="h-full rounded-full bg-[#22c55e]" style={{ width: '70%' }} />
+                          </div>
+                          <span className="text-[12px] font-bold text-[#22c55e]">En cours</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {machine.sensors.map(s => (
-                        <div key={s.label} className={`${darkMode ? 'bg-slate-800/60' : 'bg-white'} rounded-lg p-2.5 text-center border ${border}`}>
-                          <div className="text-[15px] font-bold" style={{ color: s.color }}>{s.val}</div>
-                          <div className={`text-[10px] ${txtMut} mt-1`}>{s.label}</div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-slate-500 text-sm">Aucune production active</div>
+                )}
+
+                {/* Activité employés */}
+                <div className={`mt-4 pt-4 border-t ${border}`}>
+                  <div className={`text-[11px] font-bold ${txtMut} mb-3 uppercase tracking-wider`}>Activité Employés</div>
+                  {(dashStats?.activiteEmployes ?? []).slice(0, 3).map(e => {
+                    const stColor = e.machineStatus === 'started' ? '#22c55e' : e.machineStatus === 'paused' ? '#f59e0b' : '#64748b';
+                    return (
+                      <div key={e.username} className="flex items-center gap-2 mb-2">
+                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: stColor + '20', color: stColor }}>{e.username.charAt(0).toUpperCase()}</div>
+                        <span className={`text-[12px] font-semibold ${txt1} w-16 truncate`}>{e.username}</span>
+                        <div className="flex-1 h-1.5 rounded-full bg-slate-700/50">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, e.sessions * 10)}%`, background: stColor }} />
+                        </div>
+                        <span className="text-[11px] font-bold" style={{ color: stColor }}>{e.pcs} pcs</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Chart Production Journalière */}
+              <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+                <div className={`text-sm font-bold ${txt1} mb-4`}>📈 Production Journalière</div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={dashStats?.prodParJour ?? []} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="prodGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} />
+                    <Area type="monotone" dataKey="pcs" stroke="#3b82f6" strokeWidth={2} fill="url(#prodGrad)" dot={{ fill: '#3b82f6', r: 3 }} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Répartition par Machine */}
+              <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+                <div className={`text-sm font-bold ${txt1} mb-4`}>🥧 Répartition par Machine</div>
+                {dashStats?.repartition && dashStats.repartition.length > 0 ? (
+                  <>
+                    <ResponsiveContainer width="100%" height={130}>
+                      <PieChart>
+                        <Pie data={dashStats.repartition} cx="50%" cy="50%" outerRadius={55} dataKey="value" stroke="none">
+                          {dashStats.repartition.map((_, i) => (
+                            <Cell key={i} fill={['#3b82f6','#f59e0b','#ef4444','#22c55e','#a855f7'][i % 5]} />
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex flex-col gap-1.5 mt-2">
+                      {dashStats.repartition.slice(0, 4).map((r, i) => (
+                        <div key={r.name} className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: ['#3b82f6','#f59e0b','#ef4444','#22c55e','#a855f7'][i % 5] }} />
+                          <span className={`text-[11px] ${txt2} flex-1 truncate`}>{r.name}</span>
+                          <span className={`text-[11px] font-bold ${txt1}`}>{r.value} pcs</span>
                         </div>
                       ))}
                     </div>
-                    <div className="mt-3 flex items-center gap-2">
-                      <div className="flex-1 bg-slate-700/50 rounded-full h-1.5">
-                        <div className="h-1.5 rounded-full transition-all duration-500"
-                          style={{ width: `${machine.value}%`, background: machine.value > 70 ? '#22c55e' : machine.value > 40 ? '#f97316' : '#ef4444' }} />
-                      </div>
-                      <span className={`text-[11px] font-bold ${txt2}`}>
-                        {machine.value > 70 ? '✅ Bon' : machine.value > 40 ? '⚠️ Moyen' : '🔴 Critique'}
-                      </span>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center h-32 text-slate-500 text-sm">Aucune donnée</div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Row 3: Temps Machines + Santé + Alertes ── */}
+            <div className="grid grid-cols-3 gap-4 mb-4">
+
+              {/* Temps des Machines */}
+              <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+                <div className={`text-sm font-bold ${txt1} mb-4`}>⏱ Temps des Machines</div>
+                {(() => {
+                  const fonctionSec = dashStats?.totalFonctionSeconds ?? 0;
+                  const pauseSec    = dashStats?.totalPauseSeconds ?? 0;
+                  const fmt = (s: number) => {
+                    if (s <= 0) return '0h 00m';
+                    const h = Math.floor(s/3600);
+                    const m = Math.floor((s%3600)/60);
+                    return `${h}h ${String(m).padStart(2,'0')}m`;
+                  };
+                  const items = [
+                    { label: 'En Fonction', seconds: fonctionSec, color: '#22c55e', icon: '🟢' },
+                    { label: 'En Pause',    seconds: pauseSec,    color: '#f59e0b', icon: '🟡' },
+                    { label: 'Arrêt',       seconds: Math.max(0, 7*24*3600 - fonctionSec - pauseSec), color: '#ef4444', icon: '🔴' },
+                  ];
+                  return (
+                    <div className="flex flex-col gap-3">
+                      {items.map(it => (
+                        <div key={it.label} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: it.color + '10', border: `1px solid ${it.color}25` }}>
+                          <span className="text-lg">{it.icon}</span>
+                          <div className="flex-1">
+                            <div className={`text-[10px] ${txtMut} mb-1`}>{it.label}</div>
+                            <div className="h-1.5 rounded-full bg-black/20">
+                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, it.seconds / Math.max(1, 7*24*3600) * 100)}%`, background: it.color }} />
+                            </div>
+                          </div>
+                          <div className="text-[15px] font-bold" style={{ color: it.color }}>{fmt(it.seconds)}</div>
+                        </div>
+                      ))}
                     </div>
+                  );
+                })()}
+              </div>
+
+              {/* Santé des Machines Live */}
+              <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+                <div className="flex items-center gap-2 mb-4">
+                  <Heart size={14} className="text-[#00d4ff]" />
+                  <span className={`text-sm font-bold ${txt1}`}>Santé des Machines</span>
+                </div>
+                <div className="flex flex-col gap-3">
+                  {[
+                    { name: 'Rectifieuse', node: 'ESP32-NODE-01', value: sante, color: '#3b82f6' },
+                    { name: 'Compresseur', node: 'compresseur',   value: santeComp, color: '#06b6d4' },
+                  ].map((m, i) => (
+                    <div key={i} className={`${darkMode ? 'bg-slate-900/40' : 'bg-slate-50'} rounded-xl p-3 border ${border}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <div className={`text-[12px] font-bold ${txt1}`}>{i === 0 ? '⚙️' : '🔧'} {m.name}</div>
+                          <div className="text-[10px] text-slate-500">{m.node}</div>
+                        </div>
+                        <span className="text-[18px] font-bold" style={{ color: m.color }}>{m.value.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-slate-700/50">
+                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${m.value}%`, background: m.value > 70 ? '#22c55e' : m.value > 40 ? '#f97316' : '#ef4444' }} />
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 mt-2">
+                        {(i === 0 ? [
+                          { l: 'Courant', v: `${latest.courant}A`, c: latest.courant > 15 ? '#ef4444' : '#22c55e' },
+                          { l: 'Vib.', v: `${latest.vibX.toFixed(1)}g`, c: latest.vibX > 2 ? '#f97316' : '#3b82f6' },
+                          { l: 'RPM', v: `${latest.rpm}`, c: '#a855f7' },
+                        ] : [
+                          { l: 'Courant', v: `${latestComp.courant.toFixed(1)}A`, c: latestComp.courant > 15 ? '#ef4444' : '#22c55e' },
+                          { l: 'Vib.', v: `${latestComp.vibX.toFixed(2)}g`, c: latestComp.vibX > 2 ? '#f97316' : '#3b82f6' },
+                          { l: 'Bar', v: `${(latestComp.pression ?? 0).toFixed(1)}`, c: '#06b6d4' },
+                        ]).map(s => (
+                          <div key={s.l} className={`${darkMode ? 'bg-slate-800/60' : 'bg-white'} rounded-lg p-1.5 text-center border ${border}`}>
+                            <div className="text-[12px] font-bold" style={{ color: s.c }}>{s.v}</div>
+                            <div className={`text-[9px] ${txtMut}`}>{s.l}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Alertes */}
+              <div className={`${bgCard} border ${border} rounded-xl p-4`}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className={`text-sm font-bold ${txt1}`}>🚨 Alertes</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ background: alertCount > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)', color: alertCount > 0 ? '#ef4444' : '#22c55e', border: `1px solid ${alertCount > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.25)'}` }}>
+                    {alertCount > 0 ? `${alertCount} active(s)` : '✓ Aucune'}
+                  </span>
+                </div>
+                {alertCount === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 gap-2">
+                    <div className="text-3xl">✅</div>
+                    <div className="text-slate-500 text-xs text-center">Aucune alerte active<br/>Toutes les machines fonctionnent normalement</div>
                   </div>
-                ))}
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {[
+                      { label: 'Vibration élevée', machine: 'Rectifieuse', color: '#f97316' },
+                      { label: 'Courant anormal',  machine: 'Compresseur', color: '#ef4444' },
+                    ].slice(0, alertCount).map((a, i) => (
+                      <div key={i} className="flex items-center gap-2 p-2 rounded-lg" style={{ background: a.color + '10', border: `1px solid ${a.color}25` }}>
+                        <span style={{ color: a.color }}>⚠️</span>
+                        <div>
+                          <div className="text-[11px] font-bold" style={{ color: a.color }}>{a.label}</div>
+                          <div className="text-[10px] text-slate-500">{a.machine}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
           </div>
         )}
+
       </main>
 
       {/* Messaging Overlay */}

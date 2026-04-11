@@ -94,9 +94,12 @@ const userSchema = new mongoose.Schema({
   password:  { type: String, required: true },
   role:      { type: String, default: 'user' },
   assignedMachine: { type: String, default: null },
+  currentPieceName: { type: String, default: null },
+  currentPieceId:   { type: String, default: null },
   machineStatus: { type: String, enum: ['stopped', 'started', 'paused'], default: 'stopped' },
   currentActivity: { type: String, default: '' },
   machineStatusUpdatedAt: { type: Date, default: null },
+  connectedAt: { type: Date, default: null },
   isOnline:  { type: Boolean, default: false },
   lastSeen:  { type: Date, default: null },
   socketId:  { type: String, default: null },
@@ -115,6 +118,28 @@ const machineEventSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 const MachineEvent = mongoose.model('MachineEvent', machineEventSchema);
+
+// ── Machine Model ──
+const machineSchema = new mongoose.Schema({
+  id:         { type: String, required: true, unique: true },
+  name:       { type: String, required: true },
+  model:      { type: String, default: '' },
+  hasSensors: { type: Boolean, default: false },
+  node:       { type: String, default: null },
+  icon:       { type: String, default: 'gear', enum: ['gear', 'wrench', 'bolt', 'drill'] },
+  status:     { type: String, default: 'Arrêt', enum: ['En marche', 'Avertissement', 'Arrêt', 'En maintenance'] },
+  protocol:   { type: String, default: 'MQTT' },
+  broker:     { type: String, default: 'localhost' },
+  latence:    { type: String, default: '—' },
+  uptime:     { type: String, default: '—' },
+  chipModel:  { type: String, default: '—' },
+  sante:      { type: Number, default: 100 },
+  production: { type: Number, default: 0 },
+  objectif:   { type: Number, default: 0 },
+  isBase:     { type: Boolean, default: false },
+  createdAt:  { type: Date, default: Date.now },
+});
+const MachineModel = mongoose.model('Machine', machineSchema);
 
 const demandeSchema = new mongoose.Schema({
   nom:        { type: String, required: true },
@@ -483,9 +508,63 @@ app.patch('/api/admin/employes/:userId/assign-machine', authMiddleware, adminMid
 app.get('/api/admin/employes-overview', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const employes = await User.find({ role: 'employe' })
-      .select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt isOnline lastSeen')
+      .select('username assignedMachine currentPieceName currentPieceId machineStatus currentActivity machineStatusUpdatedAt connectedAt isOnline lastSeen')
       .sort({ username: 1 });
     res.json(employes);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/admin/employes/:username/historique', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { limit = 50 } = req.query;
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+
+    const [events, pieces, user] = await Promise.all([
+      MachineEvent.find({ username }).sort({ createdAt: -1 }).limit(Number(limit)).lean(),
+      Piece.find({ employe: username }).lean(),
+      User.findOne({ username }).select('connectedAt isOnline assignedMachine currentPieceName machineStatus machineStatusUpdatedAt').lean(),
+    ]);
+
+    const todayEvents = [...events].filter(e => new Date(e.createdAt) >= todayStart);
+    const totalPieces     = pieces.reduce((s, p) => s + (p.quantite || 0), 0);
+    const totalSessions   = events.filter(e => e.action === 'started').length;
+    const totalPausees    = events.filter(e => e.action === 'paused').length;
+    const totalTerminees  = events.filter(e => e.action === 'stopped').length;
+    const piecesProduites = events.filter(e => e.action === 'stopped').reduce((s, e) => s + (e.pieceCount || 0), 0);
+    const piecesAujourd   = todayEvents.filter(e => e.action === 'stopped').reduce((s, e) => s + (e.pieceCount || 0), 0);
+
+    // Compute work/pause time today
+    const sortedToday = [...todayEvents].sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
+    let workSeconds = 0, pauseSeconds = 0, lastStart = null, lastPause = null;
+    for (const ev of sortedToday) {
+      if (ev.action === 'started') {
+        if (lastPause) { pauseSeconds += (new Date(ev.createdAt) - lastPause) / 1000; lastPause = null; }
+        lastStart = new Date(ev.createdAt);
+      }
+      if (ev.action === 'paused') {
+        if (lastStart) { workSeconds += (new Date(ev.createdAt) - lastStart) / 1000; lastStart = null; }
+        lastPause = new Date(ev.createdAt);
+      }
+      if (ev.action === 'stopped') {
+        if (lastStart) { workSeconds += (new Date(ev.createdAt) - lastStart) / 1000; lastStart = null; }
+      }
+    }
+    if (lastStart) workSeconds += (Date.now() - lastStart.getTime()) / 1000;
+
+    res.json({
+      user,
+      events,
+      pieces,
+      stats: {
+        totalPieces, totalSessions, totalPausees, totalTerminees,
+        piecesProduites, piecesAujourd,
+        workSecondsToday: Math.round(workSeconds),
+        pauseSecondsToday: Math.round(pauseSeconds),
+      }
+    });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -509,7 +588,7 @@ app.get('/api/employe/me/dashboard', authMiddleware, async (req, res) => {
 
 app.post('/api/employe/machine/action', authMiddleware, async (req, res) => {
   try {
-    const { action, activity = '', pieceId = null, pieceCount = null } = req.body;
+    const { action, activity = '', pieceId = null, pieceCount = null, machineName = null } = req.body;
     if (!['started', 'paused', 'stopped'].includes(action))
       return res.status(400).json({ message: 'Action invalide' });
     if (action === 'stopped' && (!pieceId || !Number(pieceCount) || Number(pieceCount) <= 0))
@@ -517,12 +596,27 @@ app.post('/api/employe/machine/action', authMiddleware, async (req, res) => {
 
     const user = await User.findOne({ username: req.user.username });
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
-    const machine = user.assignedMachine || 'Rectifieuse';
+
+    // Update assignedMachine if provided
+    if (machineName && action === 'started') {
+      user.assignedMachine = machineName;
+    }
+    const machine = machineName || user.assignedMachine || 'Inconnue';
     let piece = null;
 
     user.machineStatus = action;
     user.currentActivity = activity;
     user.machineStatusUpdatedAt = new Date();
+
+    // Track current piece
+    if (action === 'started' && pieceId) {
+      const p = await Piece.findById(pieceId).lean();
+      if (p) { user.currentPieceName = p.nom; user.currentPieceId = String(pieceId); }
+    }
+    if (action === 'stopped') {
+      user.currentPieceName = null;
+      user.currentPieceId = null;
+    }
     await user.save();
 
     if (action === 'stopped' && pieceId) {
@@ -566,18 +660,123 @@ app.post('/api/employe/machine/action', authMiddleware, async (req, res) => {
       assignedMachine: machine,
       machineStatus: action,
       currentActivity: activity,
+      currentPieceName: user.currentPieceName || null,
+      currentPieceId: user.currentPieceId || null,
       machineStatusUpdatedAt: user.machineStatusUpdatedAt,
+      connectedAt: user.connectedAt,
       pieceId: piece?._id || null,
       pieceName: piece?.nom || null,
       pieceCount: action === 'stopped' ? Number(pieceCount) : null,
       createdAt: event.createdAt,
     };
     io.emit('employee-machine-updated', payload);
+    io.emit('dashboard-refresh', { username: user.username, action, machine });
     res.json(payload);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
+app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const last7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const [pieces, events, alerts, employes] = await Promise.all([
+      Piece.find({}).lean(),
+      MachineEvent.find({ createdAt: { $gte: last7 } }).sort({ createdAt: 1 }).lean(),
+      Alert.find({ status: { $ne: 'resolved' } }).lean(),
+      User.find({ role: 'employe' }).select('username assignedMachine machineStatus currentActivity isOnline').lean(),
+    ]);
+
+    // KPIs
+    const totalPcs      = pieces.reduce((s, p) => s + (p.quantite || 0), 0);
+    const totalRevenu   = pieces.reduce((s, p) => s + (p.quantite || 0) * (p.prix || 0), 0);
+    const enCours       = pieces.filter(p => p.status === 'En cours').length;
+    const totalPieces   = pieces.length;
+
+    // Production par jour (7 derniers jours)
+    const prodParJour = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      const label = d.toLocaleDateString('fr-FR', { weekday: 'short' });
+      const dayStart = new Date(d); dayStart.setHours(0,0,0,0);
+      const dayEnd   = new Date(d); dayEnd.setHours(23,59,59,999);
+      const dayEvents = events.filter(e => new Date(e.createdAt) >= dayStart && new Date(e.createdAt) <= dayEnd && e.action === 'stopped');
+      const pcs = dayEvents.reduce((s, e) => s + (e.pieceCount || 0), 0);
+      prodParJour.push({ label, pcs });
+    }
+
+    // Répartition par machine — machines actives (started) seulement
+    const activeMachineMap = {};
+    for (const e of employes.filter(e => e.machineStatus === 'started' && e.assignedMachine)) {
+      activeMachineMap[e.assignedMachine] = (activeMachineMap[e.assignedMachine] || 0) + 1;
+    }
+    // Fallback: si aucune active, montrer répartition pièces
+    const machineMap = Object.keys(activeMachineMap).length > 0 ? activeMachineMap : {};
+    if (Object.keys(machineMap).length === 0) {
+      for (const p of pieces) {
+        const m = p.machine || 'Inconnue';
+        machineMap[m] = (machineMap[m] || 0) + (p.quantite || 0);
+      }
+    }
+    const repartition = Object.entries(machineMap).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value).slice(0, 5);
+
+    // Temps machines (7 derniers jours) — réel par action
+    const tempsMachines = computeWorkByMachine(events);
+    const totalFonction = tempsMachines.reduce((s, m) => s + m.seconds, 0);
+
+    // Temps en pause (started→paused sessions)
+    const computePauseTime = (evts) => {
+      const sorted = [...evts].sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+      const sessions = new Map();
+      let totalPauseMs = 0;
+      for (const ev of sorted) {
+        const key = ev.username;
+        if (ev.action === 'paused') sessions.set(key, new Date(ev.createdAt).getTime());
+        if (ev.action === 'started' && sessions.has(key)) {
+          totalPauseMs += new Date(ev.createdAt).getTime() - sessions.get(key);
+          sessions.delete(key);
+        }
+      }
+      return Math.round(totalPauseMs / 1000);
+    };
+    const totalPauseSeconds = computePauseTime(events);
+
+    // Activité employés
+    const activiteEmployes = employes.map(e => {
+      const empEvents = events.filter(ev => ev.username === e.username);
+      const sessions  = empEvents.filter(ev => ev.action === 'started').length;
+      const pcsEmp    = empEvents.filter(ev => ev.action === 'stopped').reduce((s, ev) => s + (ev.pieceCount || 0), 0);
+      const pauseMs   = 0; // simplified
+      return { username: e.username, machineStatus: e.machineStatus, assignedMachine: e.assignedMachine, sessions, pcs: pcsEmp, pauseMs };
+    });
+
+    // Machines actives (celles qui ont au moins 1 started aujourd'hui sans stopped après)
+    const machinesActives = employes.filter(e => e.machineStatus === 'started').map(e => ({ machine: e.assignedMachine, username: e.username }));
+
+    res.json({
+      kpi: { totalPcs, totalRevenu, enCours, totalPieces, alertesActives: alerts.length },
+      prodParJour,
+      repartition,
+      tempsMachines,
+      totalFonctionSeconds: totalFonction,
+      totalPauseSeconds,
+      activiteEmployes,
+      machinesActives,
+      employes: {
+        total: employes.length,
+        actifs: employes.filter(e => e.machineStatus === 'started').length,
+        enPause: employes.filter(e => e.machineStatus === 'paused').length,
+        enligne: employes.filter(e => e.isOnline).length,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 
 app.get('/api/reports/overview', authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -1078,13 +1277,16 @@ app.delete('/api/pieces/:id/taches/:tacheId', authMiddleware, adminMiddleware, a
 app.get('/api/machines', authMiddleware, async (req, res) => {
   try {
     const BASE_MACHINES = [
-      { id: 'rectifieuse', name: 'Rectifieuse', hasSensors: true, node: 'ESP32-NODE-03' },
-      { id: 'agie-cut', name: 'Agie Cut', hasSensors: false, node: null },
-      { id: 'agie-drill', name: 'Agie Drill', hasSensors: false, node: null },
-      { id: 'haas-cnc', name: 'HAAS CNC', hasSensors: false, node: null },
-      { id: 'tour-cnc', name: 'Tour CNC', hasSensors: false, node: null },
-      { id: 'compresseur', name: 'Compresseur ABAC', hasSensors: true, node: 'compresseur' },
+      { id: 'rectifieuse',  name: 'Rectifieuse',       hasSensors: true,  node: 'ESP32-NODE-03', isBase: true },
+      { id: 'agie-cut',     name: 'Agie Cut',           hasSensors: false, node: null, isBase: true },
+      { id: 'agie-drill',   name: 'Agie Drill',         hasSensors: false, node: null, isBase: true },
+      { id: 'haas-cnc',     name: 'HAAS CNC',           hasSensors: false, node: null, isBase: true },
+      { id: 'tour-cnc',     name: 'Tour CNC',           hasSensors: false, node: null, isBase: true },
+      { id: 'compresseur',  name: 'Compresseur ABAC',   hasSensors: true,  node: 'compresseur', isBase: true },
     ];
+
+    // Get custom machines from DB
+    const dbMachines = await MachineModel.find({ isBase: false }).lean();
 
     const [pieceMachines, assignedMachines] = await Promise.all([
       Piece.distinct('machine', { machine: { $ne: '' } }),
@@ -1095,15 +1297,63 @@ app.get('/api/machines', authMiddleware, async (req, res) => {
       .map((v) => String(v || '').trim())
       .filter(Boolean);
 
+    const allKnownNames = [
+      ...BASE_MACHINES.map(m => m.name.toLowerCase()),
+      ...dbMachines.map(m => m.name.toLowerCase()),
+    ];
+
     const extra = Array.from(new Set(names))
-      .filter((name) => !BASE_MACHINES.some((m) => m.name.toLowerCase() === name.toLowerCase()))
+      .filter((name) => !allKnownNames.includes(name.toLowerCase()))
       .map((name) => {
         const meta = machineMeta(name);
-        return { id: meta.id, name, hasSensors: meta.hasSensors, node: meta.node };
+        return { id: meta.id, name, hasSensors: meta.hasSensors, node: meta.node, isBase: false };
       });
 
-    const machines = [...BASE_MACHINES, ...extra].sort((a, b) => a.name.localeCompare(b.name));
+    const machines = [...BASE_MACHINES, ...dbMachines, ...extra].sort((a, b) => a.name.localeCompare(b.name));
     res.json(machines);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/machines', authMiddleware, async (req, res) => {
+  try {
+    const { name, model, icon, status, hasSensors, node, objectif } = req.body;
+    if (!name) return res.status(400).json({ message: 'Nom requis' });
+    const id = slugify(name) || `machine-${Date.now()}`;
+    const exists = await MachineModel.findOne({ $or: [{ id }, { name: { $regex: new RegExp(`^${name}$`, 'i') } }] });
+    if (exists) return res.status(409).json({ message: 'Machine déjà existante' });
+    const machine = await MachineModel.create({
+      id, name, model: model || '', icon: icon || 'gear',
+      status: status || 'Arrêt', hasSensors: hasSensors || false,
+      node: node || null, objectif: objectif || 0, isBase: false,
+    });
+    res.status(201).json(machine);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.delete('/api/machines/:id', authMiddleware, async (req, res) => {
+  try {
+    const machine = await MachineModel.findOneAndDelete({ id: req.params.id, isBase: false });
+    if (!machine) return res.status(404).json({ message: 'Machine introuvable ou machine de base non supprimable' });
+    res.json({ message: 'Machine supprimée' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.patch('/api/machines/:id', authMiddleware, async (req, res) => {
+  try {
+    const { name, model, icon, status, objectif } = req.body;
+    const machine = await MachineModel.findOneAndUpdate(
+      { id: req.params.id, isBase: false },
+      { $set: { name, model, icon, status, objectif } },
+      { new: true }
+    );
+    if (!machine) return res.status(404).json({ message: 'Machine introuvable ou non modifiable' });
+    res.json(machine);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -1434,8 +1684,12 @@ io.on('connection', (socket) => {
 
   socket.on('user-online', async ({ username, role }) => {
     connectedUsers.set(socket.id, { username, role });
-    await User.updateOne({ username }, { isOnline: true, socketId: socket.id });
+    await User.updateOne({ username }, { isOnline: true, socketId: socket.id, connectedAt: new Date() });
     io.emit('user-status', { username, isOnline: true });
+    if (role === 'employe') {
+      const emp = await User.findOne({ username }).select('username assignedMachine currentPieceName machineStatus currentActivity machineStatusUpdatedAt connectedAt isOnline').lean();
+      if (emp) io.emit('employee-machine-updated', { ...emp, isOnline: true });
+    }
   });
 
   socket.on('send-direct-message', async ({ from, fromRole, to, text }) => {
@@ -1474,7 +1728,34 @@ io.on('connection', (socket) => {
     const userData = connectedUsers.get(socket.id);
     if (userData) {
       connectedUsers.delete(socket.id);
-      await User.updateOne({ username: userData.username }, { isOnline: false, lastSeen: new Date(), socketId: null });
+      // Auto-stop machine if employee was working
+      const user = await User.findOne({ username: userData.username });
+      if (user && user.role === 'employe') {
+        const wasActive = user.machineStatus === 'started' || user.machineStatus === 'paused';
+        await User.updateOne(
+          { username: userData.username },
+          { isOnline: false, lastSeen: new Date(), socketId: null, machineStatus: 'stopped', currentActivity: '' }
+        );
+        if (wasActive) {
+          // Log a stop event
+          await MachineEvent.create({
+            username: userData.username,
+            machine: user.assignedMachine || 'Inconnue',
+            action: 'stopped',
+            activity: 'Déconnexion automatique',
+          }).catch(() => {});
+        }
+        io.emit('employee-machine-updated', {
+          username: userData.username,
+          isOnline: false,
+          machineStatus: 'stopped',
+          currentActivity: '',
+          assignedMachine: user.assignedMachine,
+          lastSeen: new Date().toISOString(),
+        });
+      } else {
+        await User.updateOne({ username: userData.username }, { isOnline: false, lastSeen: new Date(), socketId: null });
+      }
       io.emit('user-status', { username: userData.username, isOnline: false, lastSeen: new Date().toISOString() });
     }
     console.log('🖥️ Client déconnecté:', socket.id);

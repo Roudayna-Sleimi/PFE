@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Zap, Thermometer, Activity } from 'lucide-react';
+import { RefreshCw, Zap, Thermometer, Activity, Search, Plus, X, Trash2 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import MachineDetail from './MachineDetail';
 
@@ -124,8 +124,72 @@ const statusConfig = {
 const MachinesPage: React.FC = () => {
   const [machines, setMachines]     = useState<Machine[]>(INITIAL_MACHINES);
   const [filtre, setFiltre]         = useState<'Toutes' | 'En marche'>('Toutes');
+  const [search, setSearch]         = useState('');
   const [selected, setSelected]     = useState<Machine | null>(null);
   const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [adding, setAdding]         = useState(false);
+  const [newMachine, setNewMachine] = useState({ name: '', model: '', icon: 'gear' as Machine['icon'], status: 'Arrêt' as Machine['status'], objectif: '' });
+  const role = localStorage.getItem('role');
+
+  // Fetch custom machines from DB and merge with base
+  const fetchCustomMachines = useCallback(async () => {
+    const token = localStorage.getItem('token') || '';
+    try {
+      const res = await fetch('http://localhost:5000/api/machines', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      setMachines(prev => {
+        const baseIds = INITIAL_MACHINES.map(m => m.id);
+        const custom: Machine[] = data
+          .filter((d: {id:string; isBase?:boolean}) => !baseIds.includes(d.id))
+          .map((d: {id:string; name:string; model?:string; icon?:string; status?:string; objectif?:number; isBase?:boolean}) => ({
+            id: d.id, name: d.name, model: d.model || '—', type: '—',
+            node: '—', ip: '—', icon: (d.icon || 'gear') as Machine['icon'],
+            sensors: [], status: (d.status || 'Arrêt') as Machine['status'],
+            sante: 100, production: 0, objectif: d.objectif || 0,
+            efficacite: 0, heures: 0, temperature: 0, courant: 0,
+            vibration: 0, rpm: 0, protocol: '—', broker: '—',
+            latence: '—', uptime: '—', chipModel: '—',
+            machId: `MACH-${d.id.toUpperCase()}`,
+            problems: [], fonctions: [],
+          }));
+        const baseOnly = prev.filter(m => baseIds.includes(m.id));
+        return [...baseOnly, ...custom];
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchCustomMachines(); }, [fetchCustomMachines]);
+
+  const handleAddMachine = async () => {
+    if (!newMachine.name) return;
+    const token = localStorage.getItem('token') || '';
+    setAdding(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/machines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...newMachine, objectif: Number(newMachine.objectif) || 0 }),
+      });
+      if (res.ok) {
+        setShowAddModal(false);
+        setNewMachine({ name: '', model: '', icon: 'gear', status: 'Arrêt', objectif: '' });
+        await fetchCustomMachines();
+      }
+    } catch { /* ignore */ }
+    finally { setAdding(false); }
+  };
+
+  const handleDeleteMachine = async (machineId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Supprimer cette machine ?')) return;
+    const token = localStorage.getItem('token') || '';
+    await fetch(`http://localhost:5000/api/machines/${machineId}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
+    });
+    await fetchCustomMachines();
+  };
 
   // ── Socket live ──
   useEffect(() => {
@@ -143,7 +207,9 @@ const MachinesPage: React.FC = () => {
     return () => { socket.off('sensor-data'); };
   }, []);
 
-  const filtrees = filtre === 'Toutes' ? machines : machines.filter(m => m.status === filtre);
+  const filtrees = machines
+    .filter(m => filtre === 'Toutes' || m.status === filtre)
+    .filter(m => !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.model.toLowerCase().includes(search.toLowerCase()));
   const refresh  = useCallback(() => setLastUpdate(new Date()), []);
 
 
@@ -160,11 +226,27 @@ const MachinesPage: React.FC = () => {
           <p className="text-sm text-slate-500">{machines.length} machines actives</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Search */}
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/[0.08] bg-slate-800/50">
+            <Search size={14} color="#64748b" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Rechercher une machine..."
+              className="bg-transparent text-sm text-white outline-none placeholder-slate-500 w-44"
+            />
+          </div>
           <span className="text-xs text-slate-500">Mise à jour : {lastUpdate.toLocaleTimeString('fr-FR')}</span>
           <button onClick={refresh} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
             style={{ background: 'linear-gradient(135deg,#0066ff,#00d4ff)' }}>
             <RefreshCw size={14} /> Actualiser
           </button>
+          {role === 'admin' && (
+            <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
+              style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}>
+              <Plus size={14} /> Ajouter Machine
+            </button>
+          )}
         </div>
       </div>
 
@@ -208,6 +290,13 @@ const MachinesPage: React.FC = () => {
                     <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: st.dot, boxShadow: `0 0 6px ${st.dot}` }} />
                     <span className="text-[15px] font-bold text-white">{machine.name}</span>
                   </div>
+                  {role === 'admin' && !['rectifieuse','compresseur','agie-cut','agie-drill','haas-cnc','tour-cnc'].includes(machine.id) && (
+                    <button onClick={e => handleDeleteMachine(machine.id, e)} title="Supprimer"
+                      className="p-1.5 rounded-lg cursor-pointer transition-all hover:bg-red-500/20"
+                      style={{ border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', background: 'transparent' }}>
+                      <Trash2 size={13} />
+                    </button>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500 ml-4">{machine.type}</p>
               </div>
@@ -276,6 +365,74 @@ const MachinesPage: React.FC = () => {
           );
         })}
       </div>
+
+      {/* ── Modal Ajouter Machine ── */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
+          <div className="bg-slate-800 border border-white/[0.1] rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <span className="text-base font-bold text-white">➕ Nouvelle Machine</span>
+              <button onClick={() => setShowAddModal(false)} title="Fermer"
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer bg-transparent border-none">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Nom de la machine *</label>
+                <input value={newMachine.name} onChange={e => setNewMachine(p => ({ ...p, name: e.target.value }))}
+                  placeholder="Ex: Fraiseuse DMG"
+                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Modèle</label>
+                <input value={newMachine.model} onChange={e => setNewMachine(p => ({ ...p, model: e.target.value }))}
+                  placeholder="Ex: DMG MORI CMX 600"
+                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Icône</label>
+                  <select aria-label="Icône de la machine" value={newMachine.icon} onChange={e => setNewMachine(p => ({ ...p, icon: e.target.value as Machine['icon'] }))}
+                    className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors">
+                    <option value="gear">⚙️ Engrenage</option>
+                    <option value="bolt">⚡ Éclair</option>
+                    <option value="drill">🔩 Foret</option>
+                    <option value="wrench">🔧 Clé</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Statut initial</label>
+                  <select aria-label="Statut initial de la machine" value={newMachine.status} onChange={e => setNewMachine(p => ({ ...p, status: e.target.value as Machine['status'] }))}
+                    className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors">
+                    <option value="En marche">✅ En marche</option>
+                    <option value="Arrêt">🔴 Arrêt</option>
+                    <option value="En maintenance">🔧 En maintenance</option>
+                    <option value="Avertissement">⚠️ Avertissement</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Objectif production (pcs)</label>
+                <input type="number" value={newMachine.objectif} onChange={e => setNewMachine(p => ({ ...p, objectif: e.target.value }))}
+                  placeholder="0"
+                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setShowAddModal(false)}
+                className="flex-1 py-2 rounded-lg text-sm font-medium text-slate-400 border border-white/10 hover:border-white/20 transition-all cursor-pointer bg-transparent">
+                Annuler
+              </button>
+              <button onClick={handleAddMachine} disabled={adding || !newMachine.name}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer disabled:opacity-50 border-none"
+                style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', color: 'white' }}>
+                {adding ? 'Ajout...' : 'Ajouter'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
