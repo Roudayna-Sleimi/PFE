@@ -107,7 +107,7 @@ const [activePage, setActivePage] = useState<
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
   const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
-  const [machineOptions, setMachineOptions] = useState<string[]>([]);
+
   const [selectedEmploye, setSelectedEmploye] = useState<string | null>(null);
   const [historique, setHistorique] = useState<EmployeHistorique | null>(null);
   const [loadingHisto, setLoadingHisto] = useState(false);
@@ -119,7 +119,7 @@ const [activePage, setActivePage] = useState<
       .then(r => r.json())
       .then((data: MachineApi[]) => {
         if (!Array.isArray(data)) return;
-        setMachineOptions(data.map(m => m?.name).filter(Boolean));
+
       })
       .catch(() => {});
   }, []);
@@ -223,6 +223,7 @@ const [activePage, setActivePage] = useState<
     socket.on('dashboard-refresh', () => {
       fetchDashStats();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -276,16 +277,7 @@ const [activePage, setActivePage] = useState<
   const togglePaused = useCallback(() => setPaused(p => !p), []);
   const handleLogout = useCallback(() => { localStorage.clear(); window.location.href = '/'; }, []);
   const handleOpenMessaging = () => { setShowMessaging(true); setUnreadMessages(0); };
-  const assignMachine = async (userId: string, assignedMachine: string, username: string) => {
-    const token = localStorage.getItem('token') || '';
-    const res = await fetch(`http://localhost:5000/api/admin/employes/${userId}/assign-machine`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ assignedMachine }),
-    });
-    if (!res.ok) return;
-    setEmployeesOverview(prev => prev.map(e => (e.username === username ? { ...e, assignedMachine } : e)));
-  };
+
 
 
   useEffect(() => {

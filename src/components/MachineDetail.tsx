@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { io } from 'socket.io-client';
-import { ArrowLeft, Activity, Zap, Bell, CheckCircle, Eye, Clock, Wrench, Plus, X } from 'lucide-react';
+import { ArrowLeft, Activity, Zap, Bell, CheckCircle, Eye, Clock, Plus, X } from 'lucide-react';
 
 interface Alert {
   _id: string;
@@ -52,15 +52,14 @@ const getTabs = (machineId: string): string[] => {
       'Fonctions',
       ...(!isCompresseur ? ['Pièces'] : []),
       'Alertes',
-      'Maintenance',
       'Historique',
     ];
   }
-  return ['Fonctions', 'Pièces', 'Maintenance', 'Historique'];
+  return ['Fonctions', 'Pièces', 'Historique'];
 };
 
 const tabIcon: Record<string, string> = {
-  Capteurs: '🔌', Fonctions: '⚡', Pièces: '⚙️', Alertes: '🔔', Maintenance: '🔧', Historique: '📋',
+  Capteurs: '🔌', Fonctions: '⚡', Pièces: '⚙️', Alertes: '🔔', Historique: '📋',
 };
 
 const getMachineStatusStyle = (s: Machine['status']) => {
@@ -617,25 +616,6 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
           </div>
         );
       })()}
-
-      {/* ── MAINTENANCE ── */}
-      {activeTab === 'Maintenance' && (
-        <div className="flex flex-col items-center justify-center py-16 gap-4">
-          <div className="w-20 h-20 rounded-2xl flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg,rgba(168,85,247,0.15),rgba(0,212,255,0.15))', border: '1px solid rgba(168,85,247,0.3)' }}>
-            <Wrench size={36} color="#a855f7" />
-          </div>
-          <div className="text-[18px] font-bold text-white">Maintenance Prédictive</div>
-          <div className="text-sm text-slate-400 text-center max-w-sm">
-            Module IA en cours de développement.<br />
-            Prédiction des pannes et planning automatique bientôt disponibles.
-          </div>
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold"
-            style={{ background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.3)', color: '#a855f7' }}>
-            🤖 IA Prédictive — Coming Soon
-          </div>
-        </div>
-      )}
 
       {/* ── HISTORIQUE ── */}
       {activeTab === 'Historique' && (

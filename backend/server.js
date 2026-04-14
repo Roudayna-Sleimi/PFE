@@ -270,6 +270,7 @@ const pieceSchema = new mongoose.Schema({
   }, { _id: false })], default: [] },
   employe:        { type: String, default: '' },
   quantite:       { type: Number, default: 0 },
+  quantiteProduite: { type: Number, default: 0 },
   prix:           { type: Number, default: 0 },
   status:         { type: String, enum: ['Terminé', 'En cours', 'Contrôle'], default: 'En cours' },
   matiere:        { type: Boolean, default: true },
@@ -591,8 +592,8 @@ app.post('/api/employe/machine/action', authMiddleware, async (req, res) => {
     const { action, activity = '', pieceId = null, pieceCount = null, machineName = null } = req.body;
     if (!['started', 'paused', 'stopped'].includes(action))
       return res.status(400).json({ message: 'Action invalide' });
-    if (action === 'stopped' && (!pieceId || !Number(pieceCount) || Number(pieceCount) <= 0))
-      return res.status(400).json({ message: 'pieceId et nombre de pieces valides requis pour Terminer' });
+    if (action === 'stopped' && !pieceId)
+      return res.status(400).json({ message: 'pieceId requis pour terminer' });
 
     const user = await User.findOne({ username: req.user.username });
     if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
@@ -629,7 +630,7 @@ app.post('/api/employe/machine/action', authMiddleware, async (req, res) => {
       piece.history.push({ machine: currentMachine, action: 'completed', by: req.user.username });
 
       if (currentStep >= chain.length - 1) {
-        piece.status = 'TerminÃ©';
+        piece.status = 'Terminé';
         piece.currentStep = chain.length - 1;
         piece.currentMachine = chain[chain.length - 1] || currentMachine || null;
       } else {
@@ -639,7 +640,11 @@ app.post('/api/employe/machine/action', authMiddleware, async (req, res) => {
         piece.status = 'En cours';
         piece.history.push({ machine: chain[nextStep], action: 'entered', by: req.user.username });
       }
-      piece.quantite = Number(pieceCount);
+      piece.quantiteProduite = (piece.quantiteProduite || 0) + Number(pieceCount);
+      // Update status based on produced vs required
+      if (piece.quantiteProduite >= piece.quantite && piece.quantite > 0) {
+        piece.status = 'Terminé';
+      }
       await piece.save();
       io.emit('piece-progressed', piece);
     }
@@ -1116,7 +1121,7 @@ app.post('/api/pieces/:id/progress', authMiddleware, async (req, res) => {
   try {
     const { action = 'next' } = req.body || {};
     const piece = await Piece.findById(req.params.id);
-    if (!piece) return res.status(404).json({ message: 'PiÃ¨ce introuvable' });
+    if (!piece) return res.status(404).json({ message: 'Pièce introuvable' });
 
     const chain = normalizeMachineChain(piece.machine, piece.machineChain);
     const currentStep = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
@@ -1125,7 +1130,7 @@ app.post('/api/pieces/:id/progress', authMiddleware, async (req, res) => {
     piece.history.push({ machine: currentMachine, action: 'completed', by: req.user.username });
 
     if (action === 'complete' || currentStep >= chain.length - 1) {
-      piece.status = 'TerminÃ©';
+      piece.status = 'Terminé';
       piece.currentStep = chain.length - 1;
       piece.currentMachine = chain[chain.length - 1] || currentMachine || null;
     } else {
@@ -1190,7 +1195,7 @@ app.patch('/api/pieces/:id', authMiddleware, adminMiddleware, async (req, res) =
     }, {});
     if (updates.machineChain || updates.machine) {
       const existing = await Piece.findById(req.params.id);
-      if (!existing) return res.status(404).json({ message: 'PiÃ¨ce introuvable' });
+      if (!existing) return res.status(404).json({ message: 'Pièce introuvable' });
       const nextChain = normalizeMachineChain(updates.machine || existing.machine, updates.machineChain || existing.machineChain);
       updates.machineChain = nextChain;
       const safeStep = Math.min(Math.max(Number(updates.currentStep ?? existing.currentStep ?? 0), 0), Math.max(nextChain.length - 1, 0));
