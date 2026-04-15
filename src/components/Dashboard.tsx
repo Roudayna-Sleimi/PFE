@@ -10,6 +10,7 @@ import MessagingPage from './MessagingPage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import ProductionPage from './ProductionPage';
+import ReportsPage from './ReportsPage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -319,7 +320,7 @@ const navItems = [
 ];
 
 
-  const reportsContent = <div className="flex-1 p-6 overflow-y-auto" />;
+  const reportsContent = <ReportsPage darkMode={darkMode} />;
 
   return (
     <div className={`flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden relative font-sans ${darkMode ? 'bg-[#0a0e27] text-white' : 'bg-slate-100 text-slate-900'}`}>

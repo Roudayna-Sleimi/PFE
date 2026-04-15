@@ -1,4 +1,4 @@
-const express    = require('express');
+﻿const express    = require('express');
 const mongoose   = require('mongoose');
 const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
@@ -274,6 +274,9 @@ const pieceSchema = new mongoose.Schema({
   prix:           { type: Number, default: 0 },
   status:         { type: String, enum: ['Terminé', 'En cours', 'Contrôle'], default: 'En cours' },
   matiere:        { type: Boolean, default: true },
+  dimension:      { type: String, default: '' },
+  matiereType:    { type: String, default: '' },
+  matiereReference:{ type: String, default: '' },
   solidworksPath: { type: String, default: null },
   taches:         { type: [tacheSchema], default: [] },
   stock:          { type: Number, default: 0 },
@@ -390,6 +393,127 @@ const computeWorkByMachine = (events = []) => {
     machine,
     seconds: Math.round(durationMs / 1000),
   }));
+};
+
+const normalizeReportMachineName = (value = '') => {
+  const name = String(value || '').trim();
+  if (/rectifi/i.test(name)) return 'Rectifieuse';
+  if (/agie cut/i.test(name)) return 'Agie Cut';
+  if (/agie drill/i.test(name)) return 'Agie Drill';
+  if (/haas/i.test(name)) return 'HAAS CNC';
+  if (/mazak|tour cnc/i.test(name)) return 'Tour CNC';
+  if (/compresse/i.test(name)) return 'Compresseur ABAC';
+  return name || 'Inconnue';
+};
+
+const estimateMachinePowerKw = (machineName = '') => {
+  const normalized = normalizeReportMachineName(machineName);
+  const powerMap = {
+    'Rectifieuse': 5.5,
+    'Agie Cut': 7.5,
+    'Agie Drill': 6.5,
+    'HAAS CNC': 12,
+    'Tour CNC': 9,
+    'Compresseur ABAC': 7.5,
+    'Inconnue': 5,
+  };
+  return powerMap[normalized] || 5;
+};
+
+const computeRuntimeByGroup = (events = [], groupBy = 'machine', activeUserState = new Map()) => {
+  const sorted = [...events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const activeSessions = new Map();
+  const totals = {};
+  const now = Date.now();
+
+  for (const ev of sorted) {
+    const normalizedMachine = normalizeReportMachineName(ev.machine);
+    const sessionKey = `${ev.username}:${normalizedMachine}`;
+    const eventTime = new Date(ev.createdAt).getTime();
+
+    if (ev.action === 'started') {
+      activeSessions.set(sessionKey, {
+        startedAt: eventTime,
+        username: ev.username || 'Inconnu',
+        machine: normalizedMachine,
+      });
+      continue;
+    }
+
+    if (ev.action === 'paused' || ev.action === 'stopped') {
+      const session = activeSessions.get(sessionKey);
+      if (!session) continue;
+      const durationMs = Math.max(0, eventTime - session.startedAt);
+      const groupKey = groupBy === 'employee' ? session.username : session.machine;
+      totals[groupKey] = (totals[groupKey] || 0) + durationMs;
+      activeSessions.delete(sessionKey);
+    }
+  }
+
+  for (const session of activeSessions.values()) {
+    const userState = activeUserState.get(session.username);
+    const isStillRunning =
+      userState?.machineStatus === 'started' &&
+      normalizeReportMachineName(userState?.assignedMachine) === session.machine;
+    if (!isStillRunning) continue;
+    const durationMs = Math.max(0, now - session.startedAt);
+    const groupKey = groupBy === 'employee' ? session.username : session.machine;
+    totals[groupKey] = (totals[groupKey] || 0) + durationMs;
+  }
+
+  return Object.entries(totals).map(([label, durationMs]) => ({
+    label,
+    seconds: Math.round(durationMs / 1000),
+  }));
+};
+
+const computeRuntimeByEmployeeMachine = (events = [], activeUserState = new Map()) => {
+  const sorted = [...events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const activeSessions = new Map();
+  const totals = {};
+  const now = Date.now();
+
+  for (const ev of sorted) {
+    const normalizedMachine = normalizeReportMachineName(ev.machine);
+    const sessionKey = `${ev.username}:${normalizedMachine}`;
+    const eventTime = new Date(ev.createdAt).getTime();
+
+    if (ev.action === 'started') {
+      activeSessions.set(sessionKey, {
+        startedAt: eventTime,
+        username: ev.username || 'Inconnu',
+        machine: normalizedMachine,
+      });
+      continue;
+    }
+
+    if (ev.action === 'paused' || ev.action === 'stopped') {
+      const session = activeSessions.get(sessionKey);
+      if (!session) continue;
+      const durationMs = Math.max(0, eventTime - session.startedAt);
+      totals[sessionKey] = (totals[sessionKey] || 0) + durationMs;
+      activeSessions.delete(sessionKey);
+    }
+  }
+
+  for (const [sessionKey, session] of activeSessions.entries()) {
+    const userState = activeUserState.get(session.username);
+    const isStillRunning =
+      userState?.machineStatus === 'started' &&
+      normalizeReportMachineName(userState?.assignedMachine) === session.machine;
+    if (!isStillRunning) continue;
+    const durationMs = Math.max(0, now - session.startedAt);
+    totals[sessionKey] = (totals[sessionKey] || 0) + durationMs;
+  }
+
+  return Object.entries(totals).map(([key, durationMs]) => {
+    const [username, machine] = key.split(':');
+    return {
+      username,
+      machine,
+      seconds: Math.round(durationMs / 1000),
+    };
+  });
 };
 
 // ═══ Auth Routes ═══
@@ -576,12 +700,24 @@ app.get('/api/employe/me/dashboard', authMiddleware, async (req, res) => {
     const me = await User.findOne({ username: req.user.username })
       .select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt role');
     if (!me) return res.status(404).json({ message: 'Utilisateur introuvable' });
-    const machine = me.assignedMachine || 'Rectifieuse';
+
     const pieces = await Piece.find({
-      $or: [{ currentMachine: machine }, { machine: machine }],
-      status: { $ne: 'Terminé' }
+      $and: [
+        { status: { $ne: 'Terminé' } },
+        {
+          $or: [
+            { employe: req.user.username },
+            { 'taches.employe': req.user.username },
+          ],
+        },
+      ],
     }).sort({ createdAt: -1 });
-    res.json({ user: me, machine, pieces });
+    res.json({
+      user: me,
+      machine: me.assignedMachine || null,
+      canUseAllMachines: true,
+      pieces,
+    });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -792,10 +928,105 @@ app.get('/api/reports/overview', authMiddleware, adminMiddleware, async (req, re
       User.find({ role: 'employe' }).lean(),
     ]);
 
+    const activeUserState = new Map(
+      employes.map((employe) => [employe.username, {
+        machineStatus: employe.machineStatus,
+        assignedMachine: employe.assignedMachine || null,
+      }])
+    );
+
     const piecesTraitees = pieces.filter((piece) => piece.status === 'Terminé').reduce((sum, piece) => sum + (piece.quantite || 0), 0);
     const pauses = events.filter((event) => event.action === 'paused').length;
     const anomalies = alerts.filter((alert) => alert.severity === 'critical' || alert.type === 'sensor').length;
     const tempsMachine = computeWorkByMachine(events);
+    const stoppedEvents = events.filter((event) => event.action === 'stopped');
+    const runtimeByMachine = computeRuntimeByGroup(events, 'machine', activeUserState);
+    const runtimeByEmployee = computeRuntimeByGroup(events, 'employee', activeUserState);
+    const runtimeByEmployeeMachine = computeRuntimeByEmployeeMachine(events, activeUserState);
+
+    const piecesProducedByMachine = stoppedEvents.reduce((acc, event) => {
+      const machine = normalizeReportMachineName(event.machine);
+      acc[machine] = (acc[machine] || 0) + Number(event.pieceCount || 0);
+      return acc;
+    }, {});
+
+    const piecesProducedByEmployee = stoppedEvents.reduce((acc, event) => {
+      const username = event.username || 'Inconnu';
+      acc[username] = (acc[username] || 0) + Number(event.pieceCount || 0);
+      return acc;
+    }, {});
+
+    const energyByMachine = runtimeByMachine.reduce((acc, item) => {
+      const energyKwh = Number(((item.seconds / 3600) * estimateMachinePowerKw(item.label)).toFixed(2));
+      acc[item.label] = energyKwh;
+      return acc;
+    }, {});
+
+    const energyByEmployee = runtimeByEmployeeMachine.reduce((acc, item) => {
+      const energyKwh = (item.seconds / 3600) * estimateMachinePowerKw(item.machine);
+      acc[item.username] = Number(((acc[item.username] || 0) + energyKwh).toFixed(2));
+      return acc;
+    }, {});
+
+    const runtimeByMachineMap = runtimeByMachine.reduce((acc, item) => {
+      acc[item.label] = Number(item.seconds || 0);
+      return acc;
+    }, {});
+
+    const runtimeByEmployeeMap = runtimeByEmployee.reduce((acc, item) => {
+      acc[item.label] = Number(item.seconds || 0);
+      return acc;
+    }, {});
+
+    const machineLabels = new Set([
+      ...runtimeByMachine.map((item) => item.label),
+      ...Object.keys(piecesProducedByMachine),
+      ...events.map((event) => normalizeReportMachineName(event.machine)),
+      ...pieces.flatMap((piece) => {
+        const chain = normalizeMachineChain(piece.machine, piece.machineChain);
+        const normalizedChain = chain.map((name) => normalizeReportMachineName(name));
+        const currentMachine = piece.currentMachine ? [normalizeReportMachineName(piece.currentMachine)] : [];
+        return [...normalizedChain, ...currentMachine];
+      }),
+      ...employes
+        .map((employe) => employe.assignedMachine ? normalizeReportMachineName(employe.assignedMachine) : null)
+        .filter(Boolean),
+    ]);
+
+    const reportByMachine = Array.from(machineLabels)
+      .filter(Boolean)
+      .map((machine) => ({
+        machine,
+        piecesProduced: Number(piecesProducedByMachine[machine] || 0),
+        machiningSeconds: Number(runtimeByMachineMap[machine] || 0),
+        energyKwh: Number(energyByMachine[machine] || 0),
+      }))
+      .sort((a, b) => (b.machiningSeconds - a.machiningSeconds) || (b.piecesProduced - a.piecesProduced));
+
+    const employeeLabels = new Set([
+      ...runtimeByEmployee.map((item) => item.label),
+      ...Object.keys(piecesProducedByEmployee),
+      ...events.map((event) => event.username || 'Inconnu'),
+      ...employes.map((employe) => employe.username),
+    ]);
+
+    const reportByEmployee = Array.from(employeeLabels)
+      .filter(Boolean)
+      .map((username) => {
+        const employe = employes.find((entry) => entry.username === username);
+        return {
+          username,
+          piecesProduced: Number(piecesProducedByEmployee[username] || 0),
+          machiningSeconds: Number(runtimeByEmployeeMap[username] || 0),
+          energyKwh: Number(energyByEmployee[username] || 0),
+          assignedMachine: employe?.assignedMachine || null,
+        };
+      })
+      .sort((a, b) => (b.machiningSeconds - a.machiningSeconds) || (b.piecesProduced - a.piecesProduced));
+
+    const totalEnergyKwh = Number(reportByMachine.reduce((sum, item) => sum + item.energyKwh, 0).toFixed(2));
+    const totalMachiningSeconds = reportByMachine.reduce((sum, item) => sum + item.machiningSeconds, 0);
+    const totalPiecesProduced = reportByMachine.reduce((sum, item) => sum + item.piecesProduced, 0);
 
     const performanceEmployes = employes.map((employe) => {
       const piecesEmploye = pieces.filter((piece) => piece.employe === employe.username);
@@ -827,6 +1058,12 @@ app.get('/api/reports/overview', authMiddleware, adminMiddleware, async (req, re
       pauses,
       anomalies,
       tempsMachine,
+      totalEnergyKwh,
+      totalMachiningSeconds,
+      totalPiecesProduced,
+      reportByMachine,
+      reportByEmployee,
+      energyEstimated: true,
       performanceEmployes,
       logs,
     });
@@ -1143,6 +1380,7 @@ app.post('/api/pieces/:id/progress', authMiddleware, async (req, res) => {
 
     await piece.save();
     io.emit('piece-progressed', piece);
+    io.emit('dashboard-refresh', { pieceId: piece._id, action: 'updated' });
     res.json(piece);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
@@ -1157,7 +1395,7 @@ app.post('/api/pieces', authMiddleware, adminMiddleware, (req, res, next) => {
   upload.single('fichier')(req, res, next);
 }, async (req, res) => {
   try {
-    const { nom, machine, machineChain, employe, quantite, prix, status, matiere, solidworksPath, ref } = req.body;
+    const { nom, machine, machineChain, employe, quantite, prix, status, matiere, dimension, matiereType, matiereReference, solidworksPath, ref } = req.body;
     if (!nom) return res.status(400).json({ message: 'Nom requis' });
     const chain = normalizeMachineChain(machine, machineChain);
 
@@ -1175,6 +1413,9 @@ app.post('/api/pieces', authMiddleware, adminMiddleware, (req, res, next) => {
       status:         status         || 'En cours',
       // FIX: gère boolean depuis JSON et string depuis FormData
       matiere:        typeof matiere === 'boolean' ? matiere : matiere !== 'false',
+      dimension:      dimension || '',
+      matiereType:    matiereType || '',
+      matiereReference: matiereReference || '',
       solidworksPath: solidworksPath || null,
       fichier:        req.file ? req.file.filename : null,
       taches:         [],
@@ -1188,7 +1429,7 @@ app.post('/api/pieces', authMiddleware, adminMiddleware, (req, res, next) => {
 // PATCH modifier une pièce
 app.patch('/api/pieces/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const allowed = ['nom', 'machine', 'machineChain', 'employe', 'quantite', 'prix', 'status', 'matiere', 'solidworksPath', 'ref', 'stock', 'maxStock', 'seuil', 'currentStep', 'currentMachine'];
+    const allowed = ['nom', 'machine', 'machineChain', 'employe', 'quantite', 'prix', 'status', 'matiere', 'dimension', 'matiereType', 'matiereReference', 'solidworksPath', 'ref', 'stock', 'maxStock', 'seuil', 'currentStep', 'currentMachine'];
     const updates = allowed.reduce((acc, key) => {
       if (req.body[key] !== undefined) acc[key] = req.body[key];
       return acc;
@@ -1203,6 +1444,10 @@ app.patch('/api/pieces/:id', authMiddleware, adminMiddleware, async (req, res) =
       updates.currentMachine = nextChain[safeStep] || null;
     }
     const piece = await Piece.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (piece) {
+      io.emit('piece-progressed', piece);
+      io.emit('dashboard-refresh', { pieceId: piece._id, action: 'updated' });
+    }
     if (!piece) return res.status(404).json({ message: 'Pièce introuvable' });
     res.json(piece);
   } catch (err) {

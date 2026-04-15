@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Package, Plus, X, AlertTriangle, CheckCircle, Clock, User, Wrench, TrendingUp, DollarSign } from 'lucide-react';
+import { Package, Plus, X, AlertTriangle, CheckCircle, Clock, User, Wrench, TrendingUp } from 'lucide-react';
 import DossierPage from './DossierPage';
 import { io } from 'socket.io-client';
 
@@ -35,6 +35,9 @@ interface Piece {
   prix: number;
   status: 'Terminé' | 'En cours' | 'Contrôle';
   matiere: boolean;
+  dimension?: string;
+  matiereType?: string;
+  matiereReference?: string;
   solidworksPath?: string;
   taches: Tache[];
 }
@@ -63,17 +66,14 @@ const statusConfig = {
   'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: '🔍 Contrôle' },
 };
 
-const tacheStatutConfig = {
-  'à faire': { color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' },
-  'en cours': { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
-  'terminée': { color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
+const materialOptions: Record<string, string[]> = {
+  Aluminium: ['2017', '5083', '7075'],
+  Bronze: ['B12'],
+  Acier: ['42CD4', '40CMD8', 'Z160', 'Z40', 'XC48', 'E24'],
+  Inox: ['304', '316L'],
+  Plastique: ['POM noir', 'POM blanc', 'PEEK', 'PA6', 'NYLON'],
 };
 
-const prioriteConfig = {
-  'haute': { color: '#ef4444' },
-  'moyenne': { color: '#f59e0b' },
-  'basse': { color: '#22c55e' },
-};
 
 const PieceIcon = ({ nom }: { nom: string }) => {
   const icons: Record<string, string> = {
@@ -100,13 +100,14 @@ const ProductionPage: React.FC = () => {
   const [filtre, setFiltre] = useState('Toutes');
   const [showForm, setShowForm] = useState(false);
   const [selectedPiece, setSelectedPiece] = useState<Piece | null>(null);
-  const [activeTab, setActiveTab] = useState<'details' | 'taches'>('details');
   const [newPiece, setNewPiece] = useState<Partial<Piece>>({ matiere: true, status: 'En cours' });
   const [dossiers, setDossiers] = useState<DossierDocument[]>([]);
   const [selectedDossierClient, setSelectedDossierClient] = useState('');
   const [selectedDossierProject, setSelectedDossierProject] = useState('');
+  const [chainSteps, setChainSteps] = useState<string[]>([]);
+  const [chainNext, setChainNext] = useState('');
   const [selectedDossierPiece, setSelectedDossierPiece] = useState('');
-  const [newTache, setNewTache] = useState({ titre: '', employe: '', priorite: 'moyenne' as Tache['priorite'] });
+  const [previewDoc, setPreviewDoc] = useState<DossierDocument | null>(null);
 
   const token = localStorage.getItem('token') || '';
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
@@ -121,7 +122,6 @@ const ProductionPage: React.FC = () => {
           .filter((u: UserAPI) => u.role === 'employe')
           .map((u: UserAPI) => u.username);
         setEmployes(noms);
-        if (noms.length > 0) setNewTache(p => ({ ...p, employe: noms[0] }));
       }
     } catch (err) {
       console.error('Erreur fetch employés:', err);
@@ -194,7 +194,6 @@ const ProductionPage: React.FC = () => {
   const enCours = pieces.filter(p => p.status === 'En cours').length;
   const terminees = pieces.filter(p => p.status === 'Terminé').length;
   const alertes = pieces.filter(p => !p.matiere);
-  const piecesNoquete = pieces.filter(p => (p.quantiteProduite || 0) < p.quantite && p.status !== 'Terminé' && p.quantite > 0);
 
   const filtrees = filtre === 'Toutes' ? pieces : pieces.filter(p => p.status === filtre);
 
@@ -241,11 +240,16 @@ const ProductionPage: React.FC = () => {
     dossierPieceGroups.find((group) => group.label === selectedDossierPiece)?.docs || []
   ), [dossierPieceGroups, selectedDossierPiece]);
 
+  const selectedMaterialReferences = useMemo(() => (
+    newPiece.matiereType ? materialOptions[newPiece.matiereType] || [] : []
+  ), [newPiece.matiereType]);
+
+
   // ── Ajouter pièce ──
   const ajouterPiece = async () => {
     if (!newPiece.nom || !newPiece.machine || !newPiece.employe) return;
     try {
-      const effectiveChain = [newPiece.machine].filter(Boolean);
+      const effectiveChain = [newPiece.machine, ...chainSteps.filter((m) => m !== newPiece.machine)].filter(Boolean);
 
       const res = await fetch(`${API}/pieces`, {
         method: 'POST', headers,
@@ -258,7 +262,10 @@ const ProductionPage: React.FC = () => {
           prix: 0,
           status: 'En cours',
           matiere: newPiece.matiere !== false,
+          dimension: newPiece.dimension || '',
           solidworksPath: newPiece.solidworksPath || null,
+          matiereType: newPiece.matiereType || '',
+          matiereReference: newPiece.matiereReference || '',
         }),
       });
       const data = await res.json();
@@ -266,43 +273,13 @@ const ProductionPage: React.FC = () => {
         setPieces(prev => [data, ...prev]);
         setShowForm(false);
         setNewPiece({ matiere: true, status: 'En cours' });
+        setChainSteps([]);
+        setChainNext('');
         setSelectedDossierClient('');
         setSelectedDossierProject('');
         setSelectedDossierPiece('');
       }
     } catch (err) { console.error('Erreur ajout pièce:', err); }
-  };
-
-  // ── Ajouter tâche ──
-  const ajouterTache = async () => {
-    if (!newTache.titre || !newTache.employe || !selectedPiece) return;
-    try {
-      const res = await fetch(`${API}/pieces/${selectedPiece._id}/taches`, {
-        method: 'POST', headers,
-        body: JSON.stringify(newTache),
-      });
-      const updated = await res.json();
-      if (res.ok) {
-        setPieces(prev => prev.map(p => p._id === updated._id ? updated : p));
-        setSelectedPiece(updated);
-        setNewTache({ titre: '', employe: employes[0] || '', priorite: 'moyenne' });
-      }
-    } catch (err) { console.error('Erreur ajout tâche:', err); }
-  };
-
-  // ── Update statut tâche ──
-  const updateTache = async (pieceId: string, tacheId: string, statut: Tache['statut']) => {
-    try {
-      const res = await fetch(`${API}/pieces/${pieceId}/taches/${tacheId}`, {
-        method: 'PATCH', headers,
-        body: JSON.stringify({ statut }),
-      });
-      const updated = await res.json();
-      if (res.ok) {
-        setPieces(prev => prev.map(p => p._id === updated._id ? updated : p));
-        setSelectedPiece(updated);
-      }
-    } catch (err) { console.error('Erreur update tâche:', err); }
   };
 
   const progresserPiece = async (pieceId: string) => {
@@ -318,6 +295,23 @@ const ProductionPage: React.FC = () => {
         if (selectedPiece?._id === updated._id) setSelectedPiece(updated);
       }
     } catch (err) { console.error('Erreur progression piece:', err); }
+  };
+
+  const markMaterialAvailable = async (pieceId: string) => {
+    try {
+      const res = await fetch(`${API}/pieces/${pieceId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ matiere: true }),
+      });
+      const updated = await res.json();
+      if (res.ok) {
+        setPieces(prev => prev.map(p => p._id === updated._id ? updated : p));
+        if (selectedPiece?._id === updated._id) setSelectedPiece(updated);
+      }
+    } catch (err) {
+      console.error('Erreur mise a jour matiere:', err);
+    }
   };
 
   useEffect(() => {
@@ -364,6 +358,11 @@ const ProductionPage: React.FC = () => {
     window.open(`${APP_BASE}${doc.publicPath}`, '_blank', 'noopener,noreferrer');
   };
 
+  const openDocumentPreview = (doc: DossierDocument | null) => {
+    if (!doc?.publicPath) return;
+    setPreviewDoc(doc);
+  };
+
   const card: React.CSSProperties = { background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 };
   const inputStyle: React.CSSProperties = { width: '100%', background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' };
   const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
@@ -395,7 +394,7 @@ const ProductionPage: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>🏭 Production</h2>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces et tâches de l'usine</p>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces de l'usine</p>
           </div>
           <button onClick={() => {
             setSelectedDossierClient('');
@@ -431,27 +430,6 @@ const ProductionPage: React.FC = () => {
           ))}
         </div>
 
-        {/* ── Noquète (quantité manquante) ── */}
-        {piecesNoquete.length > 0 && (
-          <div style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderLeft: '4px solid #f97316', borderRadius: 12, padding: '14px 18px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <AlertTriangle size={16} color="#f97316" />
-              <span style={{ color: '#f97316', fontWeight: 700, fontSize: 13 }}>⚠️ Quantité insuffisante — {piecesNoquete.length} pièce(s)</span>
-            </div>
-            {piecesNoquete.map(p => {
-              const produit = p.quantiteProduite || 0;
-              const manque = p.quantite - produit;
-              return (
-                <div key={p._id} style={{ color: '#fdba74', fontSize: 12, marginBottom: 3, display: 'flex', gap: 8 }}>
-                  <span>• <strong>{p.nom}</strong></span>
-                  <span style={{ color: '#94a3b8' }}>({produit}/{p.quantite} pcs — manque {manque})</span>
-                  <span style={{ color: '#64748b' }}>{p.machine} · {p.employe}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
         {/* ── Alertes matière ── */}
         {alertes.length > 0 && (
           <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderLeft: '4px solid #ef4444', borderRadius: 12, padding: '14px 18px', marginBottom: 20 }}>
@@ -460,8 +438,17 @@ const ProductionPage: React.FC = () => {
               <span style={{ color: '#ef4444', fontWeight: 700, fontSize: 13 }}>Matière manquante — {alertes.length} pièce(s)</span>
             </div>
             {alertes.map(p => (
-              <div key={p._id} style={{ color: '#fca5a5', fontSize: 12, marginBottom: 2 }}>
-                • {p.nom} — {p.machine} (Responsable: {p.employe})
+              <div key={p._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, color: '#fca5a5', fontSize: 12, marginBottom: 8, padding: '8px 0' }}>
+                <div>
+                  • {p.nom} — {p.machine} (Responsable: {p.employe})
+                </div>
+                <button
+                  type="button"
+                  onClick={() => markMaterialAvailable(p._id)}
+                  style={{ padding: '7px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', background: 'rgba(34,197,94,0.18)', color: '#bbf7d0', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}
+                >
+                  Matière reçue
+                </button>
               </div>
             ))}
           </div>
@@ -497,11 +484,21 @@ const ProductionPage: React.FC = () => {
             const pieceDocs = getPieceDocuments(piece.nom);
             const previewDoc = getPrimaryPreviewDoc(piece.nom);
             return (
-              <div key={piece._id} onClick={() => { setSelectedPiece(piece); setActiveTab('details'); }}
+              <div key={piece._id} onClick={() => { setSelectedPiece(piece); }}
                 style={{ ...card, cursor: 'pointer', overflow: 'hidden', transition: 'all 0.2s' }}
                 onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(0,212,255,0.4)')}
                 onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}>
-                <div style={{ height: 130, background: 'rgba(15,23,42,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    openDocumentPreview(previewDoc);
+                  }}
+                  style={{ height: 130, background: 'rgba(15,23,42,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                  title={previewDoc?.publicPath ? 'Double clic pour ouvrir dans la page' : undefined}
+                >
                   {previewDoc && isImageDoc(previewDoc) && previewDoc.publicPath ? (
                     <img
                       src={`${APP_BASE}${previewDoc.publicPath}`}
@@ -529,6 +526,21 @@ const ProductionPage: React.FC = () => {
                   <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
                     Machine actuelle: <span style={{ color: '#22d3ee' }}>{piece.currentMachine || piece.machine}</span>
                   </div>
+                  <div style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#cbd5e1' }}>
+                      Qté requise: <span style={{ color: '#ffffff', fontWeight: 700 }}>{piece.quantite} pcs</span>
+                    </div>
+                    {piece.dimension && (
+                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                        Dimension: <span style={{ color: '#e2e8f0' }}>{piece.dimension}</span>
+                      </div>
+                    )}
+                    {(piece.matiereType || piece.matiereReference) && (
+                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                        Matière: <span style={{ color: '#e2e8f0' }}>{[piece.matiereType, piece.matiereReference].filter(Boolean).join(' · ')}</span>
+                      </div>
+                    )}
+                  </div>
                   {piece.machineChain && piece.machineChain.length > 1 && (
                     <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8 }}>
                       {piece.machineChain.join(' -> ')}
@@ -555,8 +567,22 @@ const ProductionPage: React.FC = () => {
                     </button>
                   )}
                   {!piece.matiere && (
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <AlertTriangle size={11} /> Matière manquante
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                        <AlertTriangle size={11} /> Matière manquante
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); markMaterialAvailable(piece._id); }}
+                        style={{ width: '100%', border: 'none', borderRadius: 7, background: 'rgba(34,197,94,0.18)', color: '#bbf7d0', padding: '6px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
+                      >
+                        Confirmer réception matière
+                      </button>
+                    </div>
+                  )}
+                  {piece.matiere && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <CheckCircle size={11} /> Matière disponible
                     </div>
                   )}
                   <div style={{ marginTop: 8, fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -564,9 +590,6 @@ const ProductionPage: React.FC = () => {
                   </div>
                   <div style={{ marginTop: 4, fontSize: 11, color: pieceDocs.length > 0 ? '#7dd3fc' : '#64748b' }}>
                     {pieceDocs.length > 0 ? `${pieceDocs.length} document(s) liés` : 'Aucun document lié'}
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 11, color: '#475569' }}>
-                    💰 {(piece.quantite * piece.prix).toLocaleString()} DT
                   </div>
                 </div>
               </div>
@@ -595,23 +618,8 @@ const ProductionPage: React.FC = () => {
                 </button>
               </div>
 
-              <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                {(['details', 'taches'] as const).map(tab => (
-                  <button key={tab} onClick={() => setActiveTab(tab)} style={{
-                    flex: 1, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-                    background: activeTab === tab ? 'rgba(0,212,255,0.08)' : 'transparent',
-                    color: activeTab === tab ? '#00d4ff' : '#475569',
-                    borderBottom: activeTab === tab ? '2px solid #00d4ff' : '2px solid transparent',
-                  }}>
-                    {tab === 'details' ? '📋 Détails' : `✅ Tâches (${selectedPiece.taches.length})`}
-                  </button>
-                ))}
-              </div>
-
               <div style={{ padding: '18px 22px' }}>
-
-                {activeTab === 'details' && (
-                  <>
+                <>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                       {[
                         { label: 'Machine', value: selectedPiece.machine, icon: <Wrench size={13} /> },
@@ -619,8 +627,10 @@ const ProductionPage: React.FC = () => {
                         { label: 'Employé', value: selectedPiece.employe, icon: <User size={13} /> },
                         { label: 'Qté requise', value: `${selectedPiece.quantite} pcs`, icon: <Package size={13} /> },
                         { label: 'Qté produite', value: `${selectedPiece.quantiteProduite || 0} pcs`, icon: <CheckCircle size={13} /> },
-                        { label: 'Prix unitaire', value: `${selectedPiece.prix} DT`, icon: <DollarSign size={13} /> },
-                        { label: 'Revenu total', value: `${(selectedPiece.quantite * selectedPiece.prix).toLocaleString()} DT`, icon: <TrendingUp size={13} /> },
+                        { label: 'Dimension', value: selectedPiece.dimension || 'Non renseignée', icon: <Package size={13} /> },
+                        { label: 'Type matière', value: selectedPiece.matiereType || 'Non renseigné', icon: <Package size={13} /> },
+                        { label: 'Référence matière', value: selectedPiece.matiereReference || 'Non renseignée', icon: <Package size={13} /> },
+                        { label: 'Matière disponible', value: selectedPiece.matiere ? 'Oui' : 'Non', icon: <CheckCircle size={13} /> },
                         { label: 'Status', value: statusConfig[selectedPiece.status].label, icon: <CheckCircle size={13} /> },
                         ...((selectedPiece.machineChain && selectedPiece.machineChain.length > 1)
                           ? [{ label: 'Enchainement', value: selectedPiece.machineChain.join(' -> '), icon: <Clock size={13} /> }]
@@ -639,6 +649,13 @@ const ProductionPage: React.FC = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ef4444', fontSize: 13, fontWeight: 600 }}>
                           <AlertTriangle size={15} /> Matière insuffisante — commande nécessaire
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => markMaterialAvailable(selectedPiece._id)}
+                          style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(34,197,94,0.18)', color: '#bbf7d0', fontSize: 12, fontWeight: 700 }}
+                        >
+                          Matière reçue
+                        </button>
                       </div>
                     )}
                     {((selectedPiece.machineChain || []).length > 1) && selectedPiece.status !== 'Terminé' && (
@@ -668,7 +685,24 @@ const ProductionPage: React.FC = () => {
                       ) : (
                         <div style={{ display: 'grid', gap: 8 }}>
                           {getPieceDocuments(selectedPiece.nom).map((doc) => (
-                            <div key={doc._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            <div
+                              key={doc._id}
+                              onDoubleClick={() => {
+                                if (isImageDoc(doc) || isPdfDoc(doc)) openDocumentPreview(doc);
+                              }}
+                              title={doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'Double clic pour ouvrir dans la page' : undefined}
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: 10,
+                                padding: '10px 12px',
+                                borderRadius: 10,
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px solid rgba(255,255,255,0.05)',
+                                cursor: doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'zoom-in' : 'default',
+                              }}
+                            >
                               <div style={{ minWidth: 0 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.originalName}</div>
                                 <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
@@ -678,10 +712,10 @@ const ProductionPage: React.FC = () => {
                               <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                                 {doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) && (
                                   <button
-                                    onClick={() => openDocumentInBrowser(doc)}
+                                    onClick={() => openDocumentPreview(doc)}
                                     style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}
                                   >
-                                    Ouvrir
+                                    Ouvrir ici
                                   </button>
                                 )}
                                 {doc.publicPath && (
@@ -699,98 +733,46 @@ const ProductionPage: React.FC = () => {
                       )}
                     </div>
                   </>
-                )}
+              </div>
+            </div>
+          </div>
+        )}
 
-                {activeTab === 'taches' && (
-                  <>
-                    <div style={{ background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14, marginBottom: 16 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 10 }}>+ Nouvelle tâche</div>
-                      <input
-                        placeholder="Titre de la tâche..."
-                        value={newTache.titre}
-                        onChange={e => setNewTache(p => ({ ...p, titre: e.target.value }))}
-                        style={{ ...inputStyle, marginBottom: 10, background: 'rgba(15,23,42,0.8)' }}
-                      />
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-                        <div>
-                          <label style={{ fontSize: 11, color: '#64748b', marginBottom: 4, display: 'block' }}>Employé</label>
-                          <select
-                            title="Employé responsable" aria-label="Employé responsable"
-                            value={newTache.employe}
-                            onChange={e => setNewTache(p => ({ ...p, employe: e.target.value }))}
-                            style={{ ...selectStyle, background: 'rgba(15,23,42,0.8)', fontSize: 12 }}
-                          >
-                            {employes.length === 0
-                              ? <option value="">Aucun employé trouvé</option>
-                              : employes.map(e => <option key={e} value={e}>{e}</option>)
-                            }
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{ fontSize: 11, color: '#64748b', marginBottom: 4, display: 'block' }}>Priorité</label>
-                          <select
-                            title="Priorité de la tâche" aria-label="Priorité de la tâche"
-                            value={newTache.priorite}
-                            onChange={e => setNewTache(p => ({ ...p, priorite: e.target.value as Tache['priorite'] }))}
-                            style={{ ...selectStyle, background: 'rgba(15,23,42,0.8)', fontSize: 12 }}
-                          >
-                            <option value="haute">🔴 Haute</option>
-                            <option value="moyenne">🟡 Moyenne</option>
-                            <option value="basse">🟢 Basse</option>
-                          </select>
-                        </div>
-                      </div>
-                      <button onClick={ajouterTache}
-                        style={{ width: '100%', padding: '9px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(0,212,255,0.15)', color: '#00d4ff', fontSize: 13, fontWeight: 600 }}>
-                        + Ajouter la tâche
-                      </button>
-                    </div>
-
-                    {selectedPiece.taches.length === 0 ? (
-                      <div style={{ textAlign: 'center', color: '#334155', padding: '30px 0', fontSize: 13 }}>
-                        Aucune tâche — ajoutez-en une ci-dessus
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {selectedPiece.taches.map(tache => {
-                          const ts = tacheStatutConfig[tache.statut];
-                          const tp = prioriteConfig[tache.priorite];
-                          return (
-                            <div key={tache._id} style={{ background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', borderLeft: `3px solid ${ts.color}`, borderRadius: 10, padding: '12px 14px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                                <div>
-                                  <div style={{ fontSize: 13, fontWeight: 600, color: 'white', marginBottom: 3 }}>{tache.titre}</div>
-                                  <div style={{ fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                    <User size={11} /> {tache.employe}
-                                  </div>
-                                </div>
-                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: tp.color + '22', color: tp.color, fontWeight: 700 }}>{tache.priorite}</span>
-                                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: ts.bg, color: ts.color, fontWeight: 700 }}>{tache.statut}</span>
-                                </div>
-                              </div>
-                              {tache.statut !== 'terminée' && (
-                                <div style={{ display: 'flex', gap: 8 }}>
-                                  {tache.statut === 'à faire' && (
-                                    <button onClick={() => updateTache(selectedPiece._id, tache._id, 'en cours')}
-                                      style={{ padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: 'rgba(59,130,246,0.2)', color: '#3b82f6', fontSize: 12, fontWeight: 600 }}>
-                                      ▶ Commencer
-                                    </button>
-                                  )}
-                                  {tache.statut === 'en cours' && (
-                                    <button onClick={() => updateTache(selectedPiece._id, tache._id, 'terminée')}
-                                      style={{ padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: 'rgba(34,197,94,0.2)', color: '#22c55e', fontSize: 12, fontWeight: 600 }}>
-                                      ✅ Terminer
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
+        {previewDoc?.publicPath && (
+          <div
+            onClick={() => setPreviewDoc(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.88)', zIndex: 260, padding: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 'min(1100px, 100%)', height: 'min(88vh, 900px)', background: '#020617', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: 'white', fontSize: 14, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{previewDoc.originalName}</div>
+                  <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>Aperçu dans la même page</div>
+                </div>
+                <button
+                  onClick={() => setPreviewDoc(null)}
+                  style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: 8, width: 34, height: 34, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  title="Fermer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div style={{ flex: 1, background: 'rgba(15,23,42,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {isImageDoc(previewDoc) ? (
+                  <img
+                    src={`${APP_BASE}${previewDoc.publicPath}`}
+                    alt={previewDoc.originalName}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                  />
+                ) : (
+                  <iframe
+                    title={previewDoc.originalName}
+                    src={`${APP_BASE}${previewDoc.publicPath}`}
+                    style={{ width: '100%', height: '100%', border: 'none' }}
+                  />
                 )}
               </div>
             </div>
@@ -847,7 +829,23 @@ const ProductionPage: React.FC = () => {
                   {selectedDossierDocs.length > 0 && (
                     <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
                       {selectedDossierDocs.map((doc) => (
-                        <div key={doc._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)' }}>
+                        <div
+                          key={doc._id}
+                          onDoubleClick={() => {
+                            if (isImageDoc(doc) || isPdfDoc(doc)) openDocumentPreview(doc);
+                          }}
+                          title={doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'Double clic pour ouvrir dans la page' : undefined}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '10px 12px',
+                            borderRadius: 10,
+                            background: 'rgba(255,255,255,0.03)',
+                            cursor: doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'zoom-in' : 'default',
+                          }}
+                        >
                           <div>
                             <div style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>{doc.originalName}</div>
                             <div style={{ color: '#64748b', fontSize: 11 }}>
@@ -855,8 +853,8 @@ const ProductionPage: React.FC = () => {
                             </div>
                           </div>
                           {doc.publicPath && (
-                            <button type="button" onClick={() => openDocumentInBrowser(doc)} style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}>
-                              Ouvrir
+                            <button type="button" onClick={() => (isImageDoc(doc) || isPdfDoc(doc) ? openDocumentPreview(doc) : openDocumentInBrowser(doc))} style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}>
+                              {isImageDoc(doc) || isPdfDoc(doc) ? 'Ouvrir ici' : 'Ouvrir'}
                             </button>
                           )}
                         </div>
@@ -888,34 +886,144 @@ const ProductionPage: React.FC = () => {
                       onChange={e => setNewPiece(p => ({ ...p, quantite: Number(e.target.value) }))}
                       style={inputStyle} />
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>
+                  <div>
+                    <label htmlFor="select-machine" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Machine principale *</label>
+                    <select
+                      id="select-machine"
+                      title="Machine principale"
+                      value={newPiece.machine || ''}
+                      onChange={e => {
+                        const value = e.target.value;
+                        setNewPiece(p => ({ ...p, machine: value }));
+                        setChainSteps(prev => prev.filter((name) => name !== value));
+                      }}
+                      style={selectStyle}
+                    >
+                      <option value="">Choisir une machine</option>
+                      {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                    </select>
+                  </div>
 
-                <div>
-                  <label htmlFor="select-machine" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Machine *</label>
-                  <select id="select-machine" title="Machine"
-                    value={newPiece.machine || ''}
-                    onChange={e => {
-                      const value = e.target.value;
-                      setNewPiece(p => ({ ...p, machine: value }));
-                    }}
-                    style={selectStyle}>
-                    <option value="">Choisir une machine</option>
-                    {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                  </select>
+                  <div>
+                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Ajouter une autre machine</label>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <select
+                        value={chainNext}
+                        onChange={(e) => setChainNext(e.target.value)}
+                        style={selectStyle}
+                        title="Ajouter une machine"
+                      >
+                        <option value="">Choisir une machine</option>
+                        {machines
+                          .map((m) => m.name)
+                          .filter(Boolean)
+                          .filter((name) => name !== 'Compresseur ABAC')
+                          .filter((name) => name !== newPiece.machine)
+                          .filter((name) => !chainSteps.includes(name))
+                          .map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!chainNext) return;
+                          setChainSteps((prev) => [...prev, chainNext]);
+                          setChainNext('');
+                        }}
+                        style={{ padding: '10px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontWeight: 700, whiteSpace: 'nowrap' }}
+                      >
+                        + Ajouter
+                      </button>
+                    </div>
+                  </div>
                 </div>
+
+                {(newPiece.machine || chainSteps.length > 0) && (
+                  <div style={{ background: 'rgba(15,23,42,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: '12px 14px' }}>
+                    <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Ordre des machines</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {newPiece.machine && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 999, background: 'rgba(34,197,94,0.16)', color: '#bbf7d0', fontSize: 12, fontWeight: 700 }}>
+                          1. {newPiece.machine}
+                        </span>
+                      )}
+                      {chainSteps.map((machineName, index) => (
+                        <span key={machineName} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 999, background: 'rgba(59,130,246,0.16)', color: '#bfdbfe', fontSize: 12, fontWeight: 700 }}>
+                          {index + 2}. {machineName}
+                          <button
+                            type="button"
+                            onClick={() => setChainSteps(prev => prev.filter((name) => name !== machineName))}
+                            style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.16)', color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                            title={`Retirer ${machineName}`}
+                          >
+                            <X size={11} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <label htmlFor="select-employe" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>
-                    Employé responsable *
+                    Employe responsable *
                   </label>
-                  <select id="select-employe" title="Employé responsable"
+                  <select
+                    id="select-employe"
+                    title="Employe responsable"
                     value={newPiece.employe || ''}
                     onChange={e => setNewPiece(p => ({ ...p, employe: e.target.value }))}
-                    style={selectStyle}>
+                    style={selectStyle}
+                  >
                     <option value="">
-                      {employes.length === 0 ? 'Aucun employé trouvé' : 'Choisir un employé'}
+                      {employes.length === 0 ? 'Aucun employe trouve' : 'Choisir un employe'}
                     </option>
                     {employes.map(e => <option key={e} value={e}>{e}</option>)}
                   </select>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Dimension</label>
+                    <input
+                      type="text"
+                      placeholder="ex: 120 x 40 x 12 mm"
+                      value={newPiece.dimension || ''}
+                      onChange={e => setNewPiece(p => ({ ...p, dimension: e.target.value }))}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Type de matiere</label>
+                    <select
+                      value={newPiece.matiereType || ''}
+                      onChange={e => setNewPiece(p => ({ ...p, matiereType: e.target.value, matiereReference: '' }))}
+                      style={selectStyle}
+                      title="Type de matiere"
+                    >
+                      <option value="">Choisir une matiere</option>
+                      {Object.keys(materialOptions).map((materialType) => (
+                        <option key={materialType} value={materialType}>{materialType}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Reference matiere</label>
+                    <select
+                      value={newPiece.matiereReference || ''}
+                      onChange={e => setNewPiece(p => ({ ...p, matiereReference: e.target.value }))}
+                      style={selectStyle}
+                      title="Reference matiere"
+                      disabled={!newPiece.matiereType}
+                    >
+                      <option value="">Choisir une reference</option>
+                      {selectedMaterialReferences.map((ref) => (
+                        <option key={ref} value={ref}>{ref}</option>
+                      ))}
+                    </select>
+                </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -939,4 +1047,6 @@ const ProductionPage: React.FC = () => {
 };
 
 export default ProductionPage;
+
+
 
