@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { io } from 'socket.io-client';
-import { ArrowLeft, Activity, Zap, Bell, CheckCircle, Eye, Clock, Plus, X } from 'lucide-react';
+import { ArrowLeft, Activity, Zap, Bell, CheckCircle, Eye, Clock, Plus, X, Package, History } from 'lucide-react';
+import { getMachineVisual } from '../utils/machineVisuals';
 
 interface Alert {
   _id: string;
@@ -58,8 +59,12 @@ const getTabs = (machineId: string): string[] => {
   return ['Fonctions', 'Pièces', 'Historique'];
 };
 
-const tabIcon: Record<string, string> = {
-  Capteurs: '🔌', Fonctions: '⚡', Pièces: '⚙️', Alertes: '🔔', Historique: '📋',
+const getTabIcon = (tab: string) => {
+  if (tab.toLowerCase().startsWith('cap')) return Activity;
+  if (tab.toLowerCase().startsWith('fon')) return Zap;
+  if (tab.toLowerCase().startsWith('pi')) return Package;
+  if (tab.toLowerCase().startsWith('ale')) return Bell;
+  return History;
 };
 
 const getMachineStatusStyle = (s: Machine['status']) => {
@@ -72,9 +77,9 @@ const getMachineStatusStyle = (s: Machine['status']) => {
 const santeColor = (v: number) => v >= 70 ? '#22c55e' : v >= 40 ? '#f97316' : '#ef4444';
 
 const statusPieceConfig = {
-  'Terminé':  { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  label: '✅ Terminé' },
-  'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', label: '🔄 En cours' },
-  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', label: '🔍 Contrôle' },
+  'Terminé':  { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  label: 'Termine' },
+  'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', label: 'En cours' },
+  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', label: 'Controle' },
 };
 
 interface LiveData { vibration: number; courant: number; rpm: number; pression: number; isLive: boolean; }
@@ -96,6 +101,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
   const hasPieces = tabs.includes('Pièces');
   const st = getMachineStatusStyle(machine.status);
+  const visual = getMachineVisual({ id: machine.id, name: machine.name, icon: machine.icon });
 
   const piecesMachineName = (() => {
     if (machine.id === 'rectifieuse') return 'Rectifieuse';
@@ -244,32 +250,48 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       </button>
 
       {/* Header card */}
-      <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-5 flex items-center gap-4 mb-5 flex-wrap">
-        <div className="w-14 h-14 min-w-[56px] rounded-xl bg-slate-700/60 border border-white/[0.08] flex items-center justify-center text-4xl flex-shrink-0">
-          {machine.icon === 'gear' ? '⚙️' : machine.icon === 'bolt' ? '⚡' : machine.icon === 'drill' ? '🔩' : '🔧'}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[17px] font-bold text-white mb-0.5">{machine.name}</div>
-          <div className="text-xs text-slate-500 mb-2">{machine.model}</div>
-          <div className="flex flex-wrap gap-1.5">
-            <span className="text-[10px] px-2 py-0.5 rounded-md font-medium bg-slate-700/60 border border-white/[0.08] text-slate-400">{machine.machId}</span>
-            {LIVE_MACHINES.includes(machine.id) && (
-              <span className="text-[10px] px-2 py-0.5 rounded-md font-bold"
-                style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e' }}>
-                ● Capteurs actifs
-              </span>
-            )}
+      <div className="relative mb-5 overflow-hidden rounded-xl border border-white/[0.08] bg-slate-800/50">
+        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-blue-500/5" />
+        <div className="relative flex items-start gap-4 p-5 flex-wrap lg:flex-nowrap">
+          <div className="relative h-36 w-full max-w-[260px] overflow-hidden rounded-xl border border-white/10 bg-slate-900/60">
+            <img
+              src={visual.image}
+              alt={visual.alt}
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/10 via-slate-950/20 to-slate-950/75" />
+            <div className="absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-cyan-300/35 bg-slate-950/75 px-2.5 py-1.5">
+              <visual.Icon size={14} className="text-cyan-300" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-cyan-100">Machine</span>
+            </div>
           </div>
-        </div>
-        <div className="flex flex-col items-end gap-2 flex-shrink-0">
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold"
-            style={{ background: st.bg, border: `1px solid ${st.border}`, color: st.color }}>
-            <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />
-            {machine.status}
-          </span>
-          <span className="text-[20px] font-bold" style={{ color: santeColor(machine.sante) }}>
-            {machine.sante}% santé
-          </span>
+
+          <div className="flex-1 min-w-[220px]">
+            <div className="text-[17px] font-bold text-white mb-0.5">{machine.name}</div>
+            <div className="text-xs text-slate-500 mb-2">{machine.model}</div>
+            <div className="flex flex-wrap gap-1.5">
+              <span className="text-[10px] px-2 py-0.5 rounded-md font-medium bg-slate-700/60 border border-white/[0.08] text-slate-400">{machine.machId}</span>
+              {LIVE_MACHINES.includes(machine.id) && (
+                <span className="text-[10px] px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1.5"
+                  style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e' }}>
+                  <Activity size={11} />
+                  Capteurs actifs
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex min-w-[180px] flex-col items-end gap-2">
+            <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold"
+              style={{ background: st.bg, border: `1px solid ${st.border}`, color: st.color }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />
+              {machine.status}
+            </span>
+            <span className="text-[20px] font-bold" style={{ color: santeColor(machine.sante) }}>
+              {machine.sante}% sante
+            </span>
+          </div>
         </div>
       </div>
 
@@ -282,7 +304,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                 ? 'text-[#00d4ff] border-[rgba(0,212,255,0.3)]'
                 : 'text-slate-400 border-white/[0.08] bg-slate-800/50 hover:text-[#00d4ff] hover:border-[rgba(0,212,255,0.2)]'}`}
             style={activeTab === tab ? { background: 'linear-gradient(135deg,rgba(0,102,255,0.15),rgba(0,212,255,0.15))' } : {}}>
-            {tabIcon[tab]} {tab}
+            {React.createElement(getTabIcon(tab), { size: 14 })} {tab}
           </button>
         ))}
       </div>
@@ -293,10 +315,10 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
           <div className="flex items-center gap-2.5 mb-5">
             <Activity size={16} color="#3b82f6" />
             <span className="text-sm font-semibold text-white">Mesures en Temps Réel</span>
-            <span className={`ml-auto px-2.5 py-0.5 rounded-full text-[10px] font-bold ${live.isLive
+            <span className={`ml-auto px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${live.isLive
               ? 'bg-green-500/10 border border-green-500/30 text-green-400'
               : 'bg-blue-500/10 border border-blue-500/30 text-blue-400'}`}>
-              {live.isLive ? '● LIVE' : '◎ SIMULATION'}
+              {live.isLive ? <><Activity size={10} /> LIVE</> : <><Clock size={10} /> SIMULATION</>}
             </span>
           </div>
 
@@ -324,19 +346,19 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
             {live.courant > 15 && (
               <span className="text-[11px] px-3 py-1 rounded-full font-bold"
                 style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444' }}>
-                ⚠️ Courant élevé
+                Courant eleve
               </span>
             )}
             {live.vibration > 2 && (
               <span className="text-[11px] px-3 py-1 rounded-full font-bold"
                 style={{ background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.3)', color: '#f97316' }}>
-                ⚠️ Vibration élevée
+                Vibration elevee
               </span>
             )}
             {isComp && live.pression > 10 && (
               <span className="text-[11px] px-3 py-1 rounded-full font-bold"
                 style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444' }}>
-                ⚠️ Pression critique
+                Pression critique
               </span>
             )}
           </div>
@@ -369,7 +391,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       {hasPieces && activeTab === 'Pièces' && (
         <div>
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-base">⚙️</span>
+            <Package size={16} className="text-[#00d4ff]" />
             <span className="text-[15px] font-bold text-white">Pièces — {machine.name}</span>
             <span className="text-xs text-slate-500">{pieces.length} pièce(s)</span>
             {role === 'admin' && (
@@ -421,9 +443,9 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                     <select aria-label="Statut de la pièce" value={newPiece.status}
                       onChange={e => setNewPiece(p => ({ ...p, status: e.target.value as Piece['status'] }))}
                       className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors">
-                      <option value="En cours">🔄 En cours</option>
-                      <option value="Contrôle">🔍 Contrôle</option>
-                      <option value="Terminé">✅ Terminé</option>
+                      <option value="En cours">En cours</option>
+                      <option value="Contrôle">Controle</option>
+                      <option value="Terminé">Termine</option>
                     </select>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
@@ -451,7 +473,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
           {pieces.length === 0 ? (
             <div className="text-center text-slate-500 py-16">
-              <div className="text-4xl mb-3">⚙️</div>
+              <Package size={40} className="mb-3 text-slate-400" />
               <div>Aucune pièce enregistrée pour cette machine</div>
             </div>
           ) : (
@@ -479,7 +501,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                       </div>
                     </div>
                     {!piece.matiere && (
-                      <div className="mt-2 text-[10px] text-red-400 flex items-center gap-1">⚠️ Matière manquante</div>
+                      <div className="mt-2 text-[10px] text-red-400 flex items-center gap-1">Matiere manquante</div>
                     )}
                   </div>
                 );
@@ -492,9 +514,9 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       {/* ── ALERTES ── */}
       {activeTab === 'Alertes' && LIVE_MACHINES.includes(machine.id) && (() => {
         const sevColor = (s: Alert['severity']) =>
-          s === 'critical' ? { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)', label: '🔴 Critique' }
-          : s === 'warning' ? { color: '#f97316', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.3)', label: '🟠 Avertissement' }
-          : { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: '🔵 Info' };
+          s === 'critical' ? { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)', label: 'Critique' }
+          : s === 'warning' ? { color: '#f97316', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.3)', label: 'Avertissement' }
+          : { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: 'Info' };
 
         const statusLabel = (s: Alert['status']) =>
           s === 'new'        ? { text: 'Nouveau',  color: '#ef4444' }
@@ -516,7 +538,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                   border: `1px solid ${active.length > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,
                   color: active.length > 0 ? '#ef4444' : '#22c55e'
                 }}>
-                {active.length > 0 ? `${active.length} active(s)` : '✓ Aucune alerte active'}
+                {active.length > 0 ? `${active.length} active(s)` : 'Aucune alerte active'}
               </span>
               <button onClick={fetchAlerts}
                 className="text-xs px-3 py-1 rounded-lg border border-white/[0.08] text-slate-400 hover:text-[#00d4ff] hover:border-[rgba(0,212,255,0.3)] transition-all cursor-pointer">
@@ -600,7 +622,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                               style={{ background: sev.bg, border: `1px solid ${sev.border}`, color: sev.color }}>
                               {sev.label}
                             </span>
-                            <span className="text-[11px] font-semibold text-[#22c55e]">✓ Résolu</span>
+                            <span className="text-[11px] font-semibold text-[#22c55e]">Resolu</span>
                             <span className="text-[10px] text-slate-500 ml-auto">
                               {new Date(alert.createdAt).toLocaleString('fr-FR')}
                             </span>
@@ -620,7 +642,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       {/* ── HISTORIQUE ── */}
       {activeTab === 'Historique' && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <div className="text-4xl">📋</div>
+          <History size={38} className="text-slate-400" />
           <div className="text-base font-semibold text-white">Historique</div>
           <div className="text-sm text-slate-500">Bientôt disponible</div>
         </div>
@@ -631,3 +653,5 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 };
 
 export default MachineDetail;
+
+

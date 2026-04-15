@@ -2,14 +2,16 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {
   LayoutDashboard, Settings, Activity,
-  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut,
+  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut, PhoneCall,
   BarChart2, Package, Heart
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import MessagingPage from './MessagingPage';
+import MessagingPage from './Messagingpage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import ProductionPage from './ProductionPage';
+import GsmContactsPage from './GsmContactsPage';
+import MaintenancePage from './MaintenancePage';
 import './Dashboard.css';
 
 interface SensorData {
@@ -102,7 +104,7 @@ const Dashboard: React.FC = () => {
 
 
 const [activePage, setActivePage] = useState<
-  'dashboard' | 'production' | 'machines' | 'rapports' | 'employes' | 'demandes'
+  'dashboard' | 'production' | 'gsm' | 'maintenance' | 'machines' | 'rapports' | 'employes' | 'demandes'
 >('dashboard');
   // ── Stats Production depuis MongoDB ──
   const [prodStats, setProdStats] = useState({ totalPcs: 0, totalRevenu: 0, enCours: 0 });
@@ -189,7 +191,7 @@ const [activePage, setActivePage] = useState<
         display: flex; flex-direction: column; gap: 6px; cursor: pointer;
       `;
       alertDiv.innerHTML = `
-        <div style="font-size:16px;">${data.severity === 'critical' ? '🚨 ALERTE CRITIQUE' : '⚠️ ATTENTION'}</div>
+        <div style="font-size:16px;">${data.severity === 'critical' ? 'ALERTE CRITIQUE' : 'ATTENTION'}</div>
         <div style="font-size:13px; font-weight:400; opacity:0.9;">${data.message}</div>
         <div style="font-size:11px; opacity:0.7;">Machine: ${data.node || 'Inconnue'} — Cliquez pour fermer</div>
       `;
@@ -310,6 +312,8 @@ const [activePage, setActivePage] = useState<
 const navItems = [
   { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de Bord' },
   { key: 'production' as const, icon: <Package size={18} />, label: 'Production' },
+  { key: 'gsm' as const, icon: <PhoneCall size={18} />, label: 'GSM Alertes' },
+  { key: 'maintenance' as const, icon: <Heart size={18} />, label: 'Maintenance AI' },
   { key: 'machines' as const, icon: <Settings size={18} />, label: 'Machines' },
   { key: 'rapports' as const, icon: <BarChart2 size={18} />, label: 'Rapports' },
   ...(role === 'admin' ? [
@@ -392,7 +396,7 @@ const navItems = [
               CNC Concept
             </span>
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full text-[11px] text-green-400 whitespace-nowrap">
-              <span>{hasLiveData ? '🟢 Live Wokwi' : '🔵 Simulation'}</span>
+              <span>{hasLiveData ? 'Live Wokwi' : 'Simulation'}</span>
             </div>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
@@ -425,6 +429,8 @@ const navItems = [
         {/* ── Content ── */}
         {activePage === 'machines'     ? <div className="flex-1 overflow-y-auto"><MachinesPage /></div>
         : activePage === 'demandes'    ? <div className="flex-1 overflow-y-auto"><DemandesPage /></div>
+        : activePage === 'gsm'         ? <div className="flex-1 overflow-y-auto"><GsmContactsPage /></div>
+        : activePage === 'maintenance' ? <div className="flex-1 overflow-y-auto"><MaintenancePage /></div>
         : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
         : activePage === 'employes'    ? (
           <div className="flex-1 p-6 overflow-y-auto">
@@ -436,17 +442,17 @@ const navItems = [
               </div>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold animate-pulse"
                 style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e' }}>
-                ● Live
+                <Activity size={12} /> Live
               </div>
             </div>
 
             {/* Stats globales */}
             <div className="grid grid-cols-4 gap-3 mb-5">
               {[
-                { label: 'En production', value: employeesOverview.filter(e => e.machineStatus === 'started').length, color: '#22c55e', icon: '▶' },
-                { label: 'En pause',      value: employeesOverview.filter(e => e.machineStatus === 'paused').length,  color: '#f59e0b', icon: '⏸' },
-                { label: 'En ligne',      value: employeesOverview.filter(e => e.isOnline).length, color: '#00d4ff', icon: '🟢' },
-                { label: 'Total',         value: employeesOverview.length, color: '#a855f7', icon: '👥' },
+                { label: 'En production', value: employeesOverview.filter(e => e.machineStatus === 'started').length, color: '#22c55e', icon: <Activity size={16} /> },
+                { label: 'En pause',      value: employeesOverview.filter(e => e.machineStatus === 'paused').length,  color: '#f59e0b', icon: <Pause size={16} /> },
+                { label: 'En ligne',      value: employeesOverview.filter(e => e.isOnline).length, color: '#00d4ff', icon: <PhoneCall size={16} /> },
+                { label: 'Total',         value: employeesOverview.length, color: '#a855f7', icon: <UserPlus size={16} /> },
               ].map(s => (
                 <div key={s.label} className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-3 flex items-center gap-3">
                   <div className="w-9 h-9 rounded-lg flex items-center justify-center text-base flex-shrink-0"
@@ -467,7 +473,7 @@ const navItems = [
                 ) : employeesOverview.map(emp => {
                   const st = emp.machineStatus || 'stopped';
                   const stColor = st === 'started' ? '#22c55e' : st === 'paused' ? '#f59e0b' : '#64748b';
-                  const stLabel = st === 'started' ? '▶ En production' : st === 'paused' ? '⏸ En pause' : '⏹ Arrêté';
+                  const stLabel = st === 'started' ? 'En production' : st === 'paused' ? 'En pause' : 'Arret';
                   const isSelected = selectedEmploye === emp.username;
                   const connectedAt = emp.connectedAt;
                   const currentPieceName = emp.currentPieceName;
@@ -509,11 +515,11 @@ const navItems = [
                       {/* Info row */}
                       <div className="grid grid-cols-2 gap-2 mb-2">
                         <div className="rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                          <div className="text-[9px] text-slate-500 mb-0.5">🏭 MACHINE</div>
+                          <div className="text-[9px] text-slate-500 mb-0.5">MACHINE</div>
                           <div className="text-[12px] font-bold text-white truncate">{emp.assignedMachine || '—'}</div>
                         </div>
                         <div className="rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                          <div className="text-[9px] text-slate-500 mb-0.5">⚙️ PIÈCE</div>
+                          <div className="text-[9px] text-slate-500 mb-0.5">PIECE</div>
                           <div className="text-[12px] font-bold text-white truncate">{currentPieceName || '—'}</div>
                         </div>
                       </div>
@@ -526,7 +532,7 @@ const navItems = [
                         </div>
                       )}
 
-                      <div className="mt-2 text-[10px] text-slate-600 text-right">{isSelected ? '▲ Fermer' : '▼ Voir historique'}</div>
+                      <div className="mt-2 text-[10px] text-slate-600 text-right">{isSelected ? 'Fermer' : 'Voir historique'}</div>
                     </div>
                   );
                 })}
@@ -536,7 +542,7 @@ const navItems = [
               <div>
                 {!selectedEmploye ? (
                   <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-10 text-center">
-                    <div className="text-3xl mb-3">👆</div>
+                    <UserPlus size={30} className="mx-auto mb-3 text-slate-500" />
                     <div className="text-slate-500 text-sm">Cliquez sur un employé pour voir le détail</div>
                   </div>
                 ) : loadingHisto ? (
@@ -584,7 +590,7 @@ const navItems = [
                             <div className="p-6 text-center text-slate-500 text-sm">Aucun événement</div>
                           ) : historique.events.map(ev => {
                             const evColor = ev.action === 'started' ? '#22c55e' : ev.action === 'paused' ? '#f59e0b' : '#ef4444';
-                            const evIcon  = ev.action === 'started' ? '▶' : ev.action === 'paused' ? '⏸' : '⏹';
+                            const evIcon = ev.action === 'started' ? <Activity size={12} /> : ev.action === 'paused' ? <Pause size={12} /> : <X size={12} />;
                             const evLabel = ev.action === 'started' ? 'Démarré' : ev.action === 'paused' ? 'Pause' : 'Arrêté';
                             return (
                               <div key={ev._id} className="flex items-start gap-3 px-4 py-2.5 border-b border-white/[0.03] last:border-0">
@@ -599,7 +605,7 @@ const navItems = [
                                   </div>
                                   {ev.pieceName && (
                                     <div className="text-[11px] text-slate-400">
-                                      ⚙️ {ev.pieceName}
+                                      Piece: {ev.pieceName}
                                       {ev.pieceCount ? <span className="ml-1 text-[#22c55e] font-bold">→ {ev.pieceCount} pcs</span> : null}
                                     </div>
                                   )}
@@ -646,19 +652,19 @@ const navItems = [
             <div className="grid grid-cols-3 gap-4 mb-5">
               {[
                 {
-                  icon: '⚙️', title: 'Total Produites',
+                  icon: <Package size={20} />, title: 'Total Produites',
                   main: (dashStats?.kpi.totalPcs ?? prodStats.totalPcs).toLocaleString(),
                   sub: `${prodStats.enCours} en cours`,
                   color: '#3b82f6', bg: 'rgba(59,130,246,0.08)',
                 },
                 {
-                  icon: '🏭', title: 'Actifs Machines',
-                  main: `${dashStats?.employes.actifs ?? 0} ON`,
+                  icon: <Settings size={20} />, title: 'Actifs Machines',
+                  main: (dashStats?.employes.actifs ?? 0) + ' actifs',
                   sub: `${dashStats?.employes.enPause ?? 0} pause · ${(dashStats?.employes.total ?? 0) - (dashStats?.employes.actifs ?? 0) - (dashStats?.employes.enPause ?? 0)} arrêt`,
                   color: '#22c55e', bg: 'rgba(34,197,94,0.08)',
                 },
                 {
-                  icon: '👥', title: 'Employés Connectés',
+                  icon: <UserPlus size={20} />, title: 'Employes Connectes',
                   main: `${dashStats?.employes.enligne ?? employeesOverview.filter(e => e.isOnline).length}`,
                   sub: `${dashStats?.employes.actifs ?? 0} en production`,
                   color: '#00d4ff', bg: 'rgba(0,212,255,0.08)',
@@ -666,7 +672,7 @@ const navItems = [
               ].map(k => (
                 <div key={k.title} className={`${bgCard} border ${border} rounded-xl p-4`} style={{ background: k.bg }}>
                   <div className="flex items-center justify-between mb-3">
-                    <span style={{ fontSize: 24 }}>{k.icon}</span>
+                    <span className='inline-flex items-center justify-center w-8 h-8 rounded-lg' style={{ background: k.color + '18', color: k.color }}>{k.icon}</span>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: k.color + '20', color: k.color }}>LIVE</span>
                   </div>
                   <div className="text-[24px] font-bold mb-0.5" style={{ color: k.color }}>{k.main}</div>
@@ -682,8 +688,8 @@ const navItems = [
               {/* Production en Cours */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
                 <div className="flex items-center justify-between mb-4">
-                  <span className={`text-sm font-bold ${txt1}`}>👷 Production en Cours</span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>● EN LIVE</span>
+                  <span className={`text-sm font-bold ${txt1}`}>Production en Cours</span>
+                  <span className='text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse inline-flex items-center gap-1' style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}><Activity size={10} /> EN LIVE</span>
                 </div>
                 {dashStats?.machinesActives && dashStats.machinesActives.length > 0 ? (
                   <div className="flex flex-col gap-3">
@@ -727,7 +733,7 @@ const navItems = [
 
               {/* Chart Production Journalière */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
-                <div className={`text-sm font-bold ${txt1} mb-4`}>📈 Production Journalière</div>
+                <div className={`text-sm font-bold ${txt1} mb-4`}>Production Journaliere</div>
                 <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={dashStats?.prodParJour ?? []} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                     <defs>
@@ -747,7 +753,7 @@ const navItems = [
 
               {/* Répartition par Machine */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
-                <div className={`text-sm font-bold ${txt1} mb-4`}>🥧 Répartition par Machine</div>
+                <div className={`text-sm font-bold ${txt1} mb-4`}>Repartition par Machine</div>
                 {dashStats?.repartition && dashStats.repartition.length > 0 ? (
                   <>
                     <ResponsiveContainer width="100%" height={130}>
@@ -781,7 +787,7 @@ const navItems = [
 
               {/* Temps des Machines */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
-                <div className={`text-sm font-bold ${txt1} mb-4`}>⏱ Temps des Machines</div>
+                <div className={`text-sm font-bold ${txt1} mb-4`}>Temps des Machines</div>
                 {(() => {
                   const fonctionSec = dashStats?.totalFonctionSeconds ?? 0;
                   const pauseSec    = dashStats?.totalPauseSeconds ?? 0;
@@ -792,15 +798,15 @@ const navItems = [
                     return `${h}h ${String(m).padStart(2,'0')}m`;
                   };
                   const items = [
-                    { label: 'En Fonction', seconds: fonctionSec, color: '#22c55e', icon: '🟢' },
-                    { label: 'En Pause',    seconds: pauseSec,    color: '#f59e0b', icon: '🟡' },
-                    { label: 'Arrêt',       seconds: Math.max(0, 7*24*3600 - fonctionSec - pauseSec), color: '#ef4444', icon: '🔴' },
+                    { label: 'En Fonction', seconds: fonctionSec, color: '#22c55e', icon: <Activity size={16} /> },
+                    { label: 'En Pause',    seconds: pauseSec,    color: '#f59e0b', icon: <Pause size={16} /> },
+                    { label: 'Arret',       seconds: Math.max(0, 7*24*3600 - fonctionSec - pauseSec), color: '#ef4444', icon: <X size={16} /> },
                   ];
                   return (
                     <div className="flex flex-col gap-3">
                       {items.map(it => (
                         <div key={it.label} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: it.color + '10', border: `1px solid ${it.color}25` }}>
-                          <span className="text-lg">{it.icon}</span>
+                          <span className='inline-flex items-center justify-center w-8 h-8 rounded-lg' style={{ background: it.color + '18', color: it.color }}>{it.icon}</span>
                           <div className="flex-1">
                             <div className={`text-[10px] ${txtMut} mb-1`}>{it.label}</div>
                             <div className="h-1.5 rounded-full bg-black/20">
@@ -829,7 +835,7 @@ const navItems = [
                     <div key={i} className={`${darkMode ? 'bg-slate-900/40' : 'bg-slate-50'} rounded-xl p-3 border ${border}`}>
                       <div className="flex items-center justify-between mb-2">
                         <div>
-                          <div className={`text-[12px] font-bold ${txt1}`}>{i === 0 ? '⚙️' : '🔧'} {m.name}</div>
+                          <div className={'text-[12px] font-bold ' + txt1}>{m.name}</div>
                           <div className="text-[10px] text-slate-500">{m.node}</div>
                         </div>
                         <span className="text-[18px] font-bold" style={{ color: m.color }}>{m.value.toFixed(0)}%</span>
@@ -861,14 +867,14 @@ const navItems = [
               {/* Alertes */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
                 <div className="flex items-center justify-between mb-3">
-                  <span className={`text-sm font-bold ${txt1}`}>🚨 Alertes</span>
+                  <span className={`text-sm font-bold ${txt1}`}>Alertes</span>
                   <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ background: alertCount > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)', color: alertCount > 0 ? '#ef4444' : '#22c55e', border: `1px solid ${alertCount > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.25)'}` }}>
-                    {alertCount > 0 ? `${alertCount} active(s)` : '✓ Aucune'}
+                    {alertCount > 0 ? `${alertCount} active(s)` : 'Aucune'}
                   </span>
                 </div>
                 {alertCount === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 gap-2">
-                    <div className="text-3xl">✅</div>
+                    <Activity size={32} className="text-emerald-400" />
                     <div className="text-slate-500 text-xs text-center">Aucune alerte active<br/>Toutes les machines fonctionnent normalement</div>
                   </div>
                 ) : (
@@ -878,7 +884,7 @@ const navItems = [
                       { label: 'Courant anormal',  machine: 'Compresseur', color: '#ef4444' },
                     ].slice(0, alertCount).map((a, i) => (
                       <div key={i} className="flex items-center gap-2 p-2 rounded-lg" style={{ background: a.color + '10', border: `1px solid ${a.color}25` }}>
-                        <span style={{ color: a.color }}>⚠️</span>
+                        <Activity size={14} style={{ color: a.color }} />
                         <div>
                           <div className="text-[11px] font-bold" style={{ color: a.color }}>{a.label}</div>
                           <div className="text-[10px] text-slate-500">{a.machine}</div>

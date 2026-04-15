@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Zap, Thermometer, Activity, Search, Plus, X, Trash2 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import MachineDetail from './MachineDetail';
+import { getMachineVisual } from '../utils/machineVisuals';
 
 const socket = io('http://localhost:5000', { transports: ['websocket'] });
 
@@ -254,7 +255,7 @@ const MachinesPage: React.FC = () => {
       <div className="flex gap-3 mb-6 flex-wrap">
         {([
           { key: 'Toutes',         label: 'Toutes',             count: machines.length },
-          { key: 'En marche',      label: '✅ Opérationnelles',  count: machines.filter(m => m.status === 'En marche').length },
+          { key: 'En marche',      label: 'Operationnelles',  count: machines.filter(m => m.status === 'En marche').length },
         ] as const).map(f => (
           <button key={f.key} onClick={() => setFiltre(f.key as typeof filtre)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer border transition-all"
@@ -277,9 +278,10 @@ const MachinesPage: React.FC = () => {
         {filtrees.map(machine => {
           const st  = statusConfig[machine.status];
           const pct = machine.objectif > 0 ? Math.min(100, (machine.production / machine.objectif) * 100) : 0;
+          const visual = getMachineVisual({ id: machine.id, name: machine.name, icon: machine.icon });
           return (
             <div key={machine.id} onClick={() => setSelected(machine)}
-              className="rounded-xl cursor-pointer transition-all duration-300"
+              className="group rounded-xl cursor-pointer transition-all duration-300"
               style={{ background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.08)' }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(0,212,255,0.3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
@@ -301,10 +303,20 @@ const MachinesPage: React.FC = () => {
                 <p className="text-xs text-slate-500 ml-4">{machine.type}</p>
               </div>
 
-              <div className="mx-5 my-4 h-32 rounded-xl flex items-center justify-center"
-                style={{ background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <div style={{ fontSize: 48, opacity: 0.6 }}>
-                  {machine.icon === 'gear' ? '⚙️' : machine.icon === 'bolt' ? '⚡' : machine.icon === 'drill' ? '🔩' : '🔧'}
+              <div className="relative mx-5 my-4 h-36 overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
+                <img
+                  src={visual.image}
+                  alt={visual.alt}
+                  loading="lazy"
+                  className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                />
+                <div className="absolute inset-0 bg-gradient-to-b from-slate-950/20 via-slate-950/10 to-slate-950/75" />
+                <div className="absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-cyan-300/40 bg-slate-950/70 px-2.5 py-1.5">
+                  <visual.Icon size={14} className="text-cyan-300" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-cyan-100">Machine</span>
+                </div>
+                <div className="absolute right-3 bottom-3 rounded-lg border border-white/15 bg-slate-950/70 px-2 py-1">
+                  <span className="text-[10px] font-semibold text-slate-200">{machine.model}</span>
                 </div>
               </div>
 
@@ -347,7 +359,7 @@ const MachinesPage: React.FC = () => {
                   <>
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
                       style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: '#22c55e' }}>
-                      ● LIVE
+                      <Activity size={10} /> LIVE
                     </span>
                     <span className="flex items-center gap-1 text-[11px] text-slate-400">
                       <Thermometer size={11} color="#f97316" /> {machine.temperature.toFixed(1)}°C
@@ -371,7 +383,7 @@ const MachinesPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
           <div className="bg-slate-800 border border-white/[0.1] rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
             <div className="flex items-center justify-between mb-5">
-              <span className="text-base font-bold text-white">➕ Nouvelle Machine</span>
+              <span className="text-base font-bold text-white">Nouvelle Machine</span>
               <button onClick={() => setShowAddModal(false)} title="Fermer"
                 className="text-slate-400 hover:text-white transition-colors cursor-pointer bg-transparent border-none">
                 <X size={18} />
@@ -395,20 +407,20 @@ const MachinesPage: React.FC = () => {
                   <label className="text-xs text-slate-400 mb-1 block">Icône</label>
                   <select aria-label="Icône de la machine" value={newMachine.icon} onChange={e => setNewMachine(p => ({ ...p, icon: e.target.value as Machine['icon'] }))}
                     className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors">
-                    <option value="gear">⚙️ Engrenage</option>
-                    <option value="bolt">⚡ Éclair</option>
-                    <option value="drill">🔩 Foret</option>
-                    <option value="wrench">🔧 Clé</option>
+                    <option value="gear">Engrenage</option>
+                    <option value="bolt">Eclair</option>
+                    <option value="drill">Foret</option>
+                    <option value="wrench">Cle</option>
                   </select>
                 </div>
                 <div>
                   <label className="text-xs text-slate-400 mb-1 block">Statut initial</label>
                   <select aria-label="Statut initial de la machine" value={newMachine.status} onChange={e => setNewMachine(p => ({ ...p, status: e.target.value as Machine['status'] }))}
                     className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors">
-                    <option value="En marche">✅ En marche</option>
-                    <option value="Arrêt">🔴 Arrêt</option>
-                    <option value="En maintenance">🔧 En maintenance</option>
-                    <option value="Avertissement">⚠️ Avertissement</option>
+                    <option value="En marche">En marche</option>
+                    <option value="Arrêt">Arret</option>
+                    <option value="En maintenance">En maintenance</option>
+                    <option value="Avertissement">Avertissement</option>
                   </select>
                 </div>
               </div>

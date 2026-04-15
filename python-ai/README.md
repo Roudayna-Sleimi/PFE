@@ -1,70 +1,99 @@
-# Python AI Module (LSTM + GSM Supervisor)
+# Python AI Module - Predictive Maintenance
 
-This folder contains the AI workflow for:
-- LSTM-based anomaly inference from sensor stream
-- Escalation logic: unseen alert for 5 minutes -> GSM call request
-- Optional local TTS generation (WAV) for GSM playback payload
+This module trains the maintenance AI from the sensor data already collected by
+the Node backend in MongoDB.
 
-## 1) Install
+## Data Flow
+
+1. ESP32/Wokwi publishes sensor readings to `cncpulse/sensors`.
+2. The backend stores every reading in MongoDB collection `sensordatas`.
+3. `build_lstm_dataset.py` exports those Mongo readings to `data/lstm_dataset.csv`.
+4. `train_lstm.py` trains the sequence classifier from that CSV.
+5. `lstm_inference_service.py` listens to the same MQTT sensor topic and creates:
+   - AI alerts in `alerts`
+   - maintenance reports in `maintenancereports`
+   - maintenance requests in `maintenancerequests`
+
+## Install
 
 ```bash
 pip install -r python-ai/requirements.txt
 ```
 
-Copy env template:
+Copy the env template:
 
 ```bash
-cp python-ai/.env.example python-ai/.env
+copy python-ai\.env.example python-ai\.env
 ```
 
-TTS-related env options:
+Important values:
 
 ```env
-ENABLE_TTS=1
-AUDIO_OUTPUT_DIR=python-ai/audio
-TTS_RATE=165
-TTS_VOLUME=1.0
-EMBED_AUDIO_BASE64=1
-MAX_AUDIO_INLINE_BYTES=500000
+MONGO_URI=mongodb://localhost:27017/cncpulse
+MONGO_DB_NAME=cncpulse
+MQTT_SENSOR_TOPIC=cncpulse/sensors
+DATASET_PATH=data/lstm_dataset.csv
+OUTPUT_DATASET_PATH=data/lstm_dataset.csv
 ```
 
-## 2) Build dataset from Mongo sensor history
+## Build Dataset From Sensor Data
+
+Run this after the backend has collected sensor readings:
 
 ```bash
 python python-ai/build_lstm_dataset.py
 ```
 
-## 3) Train LSTM model
+The script reads MongoDB collection `sensordatas` and writes:
+
+```text
+python-ai/data/lstm_dataset.csv
+python-ai/data/lstm_dataset.metadata.json
+```
+
+The dataset labels are:
+
+- `normal`
+- `warning`
+- `critical`
+
+If a sensor document already has `label`, `aiLabel`, or `maintenanceLabel`, the
+script keeps that manual label. Otherwise, it creates labels from current and
+vibration thresholds plus a rolling baseline per machine. That means the model
+learns from the collected sensor behavior of each machine, not from a static
+fake dataset.
+
+## Train Model
 
 ```bash
 python python-ai/train_lstm.py
 ```
 
-## 4) Run inference service
+Outputs:
+
+```text
+python-ai/models/lstm_alert_model.pkl
+python-ai/models/lstm_scaler.pkl
+python-ai/models/lstm_label_encoder.pkl
+```
+
+The current model implementation is a `RandomForestClassifier` over flattened
+sensor sequences. The filenames still say `lstm_*` for compatibility with the
+existing project.
+
+## Run Inference
 
 ```bash
 python python-ai/lstm_inference_service.py
 ```
 
-## 5) Run 5-minute GSM supervisor
+When the model predicts `warning` or `critical`, it creates an AI maintenance
+alert, a maintenance report, and an open maintenance request.
+
+## GSM Supervisor
 
 ```bash
 python python-ai/supervisor.py
 ```
 
-When `ENABLE_TTS=1`, supervisor tries to generate a local `.wav` file per call
-attempt and includes `audioFilePath` + `audioFormat` in the MQTT payload.
-When `EMBED_AUDIO_BASE64=1`, it also embeds `audioBase64` (size-limited by
-`MAX_AUDIO_INLINE_BYTES`) so GSM consumers can play audio without shared disk.
-If TTS fails, the system still sends `textToRead` and continues escalation.
-
-## Expected backend support
-
-Backend should expose:
-- `alerts` collection
-- `contacts` collection
-- `calllogs` collection
-- MQTT topics:
-  - input: `cncpulse/sensors`
-  - output: `cncpulse/gsm/call`
-  - result: `cncpulse/gsm/result`
+The supervisor watches unseen alerts and publishes GSM call requests.

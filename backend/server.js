@@ -175,8 +175,10 @@ const directMessageSchema = new mongoose.Schema({
 const DirectMessage = mongoose.model('DirectMessage', directMessageSchema);
 
 const sensorSchema = new mongoose.Schema({
+  machineId: String,
   node: String, courant: Number,
   vibX: Number, vibY: Number, vibZ: Number, rpm: Number,
+  pression: Number,
   createdAt: { type: Date, default: Date.now }
 });
 const SensorData = mongoose.model('SensorData', sensorSchema);
@@ -244,6 +246,59 @@ const callLogSchema = new mongoose.Schema({
   errorMessage: { type: String, default: null },
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
+
+const maintenanceReportSchema = new mongoose.Schema({
+  machineId:    { type: String, required: true, index: true },
+  machineName:  { type: String, default: '' },
+  node:         { type: String, default: 'UNKNOWN', index: true },
+  alertId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Alert', default: null },
+  requestId:    { type: mongoose.Schema.Types.ObjectId, ref: 'MaintenanceRequest', default: null },
+  source:       { type: String, default: 'predictive-maintenance' },
+  severity:     { type: String, enum: ['normal', 'warning', 'critical'], default: 'warning' },
+  anomalyScore: { type: Number, default: 0 },
+  prediction: {
+    label:      { type: String, default: '' },
+    eta:        { type: String, default: '' },
+    confidence: { type: Number, default: 0 },
+  },
+  recommendedAction: { type: String, default: '' },
+  contributors: [{
+    metric:   { type: String, default: '' },
+    label:    { type: String, default: '' },
+    value:    { type: Number, default: null },
+    expected: { type: String, default: '' },
+    level:    { type: String, enum: ['warning', 'critical'], default: 'warning' },
+  }],
+  sensorSnapshot: {
+    vibX:     { type: Number, default: null },
+    vibY:     { type: Number, default: null },
+    vibZ:     { type: Number, default: null },
+    courant:  { type: Number, default: null },
+    rpm:      { type: Number, default: null },
+    pression: { type: Number, default: null },
+  },
+  status:     { type: String, enum: ['open', 'reviewed', 'resolved'], default: 'open' },
+  reviewedAt: { type: Date, default: null },
+  reviewedBy: { type: String, default: null },
+}, { timestamps: true });
+const MaintenanceReport = mongoose.model('MaintenanceReport', maintenanceReportSchema);
+
+const maintenanceRequestSchema = new mongoose.Schema({
+  machineId:    { type: String, required: true, index: true },
+  machineName:  { type: String, default: '' },
+  node:         { type: String, default: 'UNKNOWN', index: true },
+  alertId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Alert', default: null },
+  reportId:     { type: mongoose.Schema.Types.ObjectId, ref: 'MaintenanceReport', default: null },
+  lastReportId: { type: mongoose.Schema.Types.ObjectId, ref: 'MaintenanceReport', default: null },
+  title:        { type: String, required: true },
+  description:  { type: String, default: '' },
+  priority:     { type: String, enum: ['medium', 'high', 'critical'], default: 'medium' },
+  status:       { type: String, enum: ['open', 'in_progress', 'done', 'cancelled'], default: 'open' },
+  requestedBy:  { type: String, default: 'ai-maintenance' },
+  resolvedAt:   { type: Date, default: null },
+  resolvedBy:   { type: String, default: null },
+}, { timestamps: true });
+const MaintenanceRequest = mongoose.model('MaintenanceRequest', maintenanceRequestSchema);
 
 // ── Schema Tâche (sous-document) ──
 const tacheSchema = new mongoose.Schema({
@@ -390,6 +445,185 @@ const computeWorkByMachine = (events = []) => {
     machine,
     seconds: Math.round(durationMs / 1000),
   }));
+};
+
+const MAINTENANCE_FEATURES = ['vibX', 'vibY', 'vibZ', 'courant', 'rpm'];
+const MAINTENANCE_REPORT_COOLDOWN_MIN = Number(process.env.MAINTENANCE_REPORT_COOLDOWN_MIN || 15);
+
+const resolveMachineIdentity = (data = {}) => {
+  const node = String(data.node || data.machineId || 'UNKNOWN');
+  const rawMachine = String(data.machineId || data.machine || '');
+  if (/compresseur|compress/i.test(rawMachine) || /compresseur|compress/i.test(node)) {
+    return { machineId: 'compresseur', machineName: 'Compresseur ABAC', node };
+  }
+  if (/rectifi/i.test(rawMachine) || /ESP32-NODE-03/i.test(node) || /ESP32-NODE-01/i.test(node)) {
+    return { machineId: 'rectifieuse', machineName: 'Rectifieuse', node };
+  }
+  const machineId = rawMachine ? slugify(rawMachine) : node;
+  return { machineId: machineId || 'UNKNOWN', machineName: rawMachine || node, node };
+};
+
+const sensorNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const sensorSnapshot = (data = {}) => ({
+  vibX: sensorNumber(data.vibX),
+  vibY: sensorNumber(data.vibY),
+  vibZ: sensorNumber(data.vibZ),
+  courant: sensorNumber(data.courant),
+  rpm: sensorNumber(data.rpm),
+  pression: data.pression === undefined ? null : sensorNumber(data.pression),
+});
+
+const strongestMaintenanceSeverity = (...levels) => {
+  const rank = { normal: 0, warning: 1, critical: 2 };
+  return levels.reduce((best, level) => rank[level] > rank[best] ? level : best, 'normal');
+};
+
+const buildMaintenanceAssessment = (data = {}, history = []) => {
+  const identity = resolveMachineIdentity(data);
+  const snapshot = sensorSnapshot(data);
+  const maxAxisVibration = Math.max(Math.abs(snapshot.vibX), Math.abs(snapshot.vibY), Math.abs(snapshot.vibZ));
+  const vibration = Math.sqrt(snapshot.vibX ** 2 + snapshot.vibY ** 2 + snapshot.vibZ ** 2);
+  const contributors = [];
+
+  const addContributor = (metric, label, value, expected, level) => {
+    contributors.push({ metric, label, value, expected, level });
+  };
+
+  if (snapshot.courant > 20) {
+    addContributor('courant', 'Courant critique', snapshot.courant, '<= 20 A', 'critical');
+  } else if (snapshot.courant > 15) {
+    addContributor('courant', 'Courant eleve', snapshot.courant, '<= 15 A', 'warning');
+  }
+
+  if (maxAxisVibration > 3) {
+    addContributor('vibration', 'Vibration critique', Number(vibration.toFixed(2)), '<= 3 g par axe', 'critical');
+  } else if (maxAxisVibration > 2) {
+    addContributor('vibration', 'Vibration elevee', Number(vibration.toFixed(2)), '<= 2 g par axe', 'warning');
+  }
+
+  if (snapshot.pression !== null) {
+    if (snapshot.pression > 11 || snapshot.pression < 3.5) {
+      addContributor('pression', 'Pression critique', snapshot.pression, '4.5 - 10 bar', 'critical');
+    } else if (snapshot.pression > 10 || snapshot.pression < 4.5) {
+      addContributor('pression', 'Pression hors zone', snapshot.pression, '4.5 - 10 bar', 'warning');
+    }
+  }
+
+  const usableHistory = history
+    .map(sensorSnapshot)
+    .filter(row => MAINTENANCE_FEATURES.every(feature => Number.isFinite(row[feature])));
+
+  if (usableHistory.length >= 20) {
+    for (const feature of MAINTENANCE_FEATURES) {
+      const samples = usableHistory.map(row => row[feature]);
+      const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+      const variance = samples.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / samples.length;
+      const std = Math.sqrt(variance);
+      if (std < 0.0001) continue;
+      const zscore = Math.abs((snapshot[feature] - mean) / std);
+      if (zscore >= 4) {
+        addContributor(feature, `${feature} tres loin du comportement habituel`, Number(snapshot[feature].toFixed(2)), `${mean.toFixed(2)} +/- ${std.toFixed(2)}`, 'critical');
+      } else if (zscore >= 3) {
+        addContributor(feature, `${feature} anormal vs baseline`, Number(snapshot[feature].toFixed(2)), `${mean.toFixed(2)} +/- ${std.toFixed(2)}`, 'warning');
+      }
+    }
+  }
+
+  const severity = strongestMaintenanceSeverity(...contributors.map(item => item.level));
+  const scoreFromContributors = contributors.reduce((score, item) => score + (item.level === 'critical' ? 38 : 22), 0);
+  const anomalyScore = severity === 'normal' ? 0 : Math.min(100, Math.max(severity === 'critical' ? 76 : 48, scoreFromContributors));
+  const prediction = severity === 'critical'
+    ? { label: 'Panne probable', eta: 'moins de 24h', confidence: anomalyScore }
+    : severity === 'warning'
+      ? { label: 'Risque de panne', eta: '24-72h', confidence: anomalyScore }
+      : { label: 'Comportement normal', eta: 'aucune panne prevue', confidence: 100 - anomalyScore };
+
+  const recommendedAction = severity === 'critical'
+    ? 'Arreter la machine, verifier les roulements, le courant et les fixations avant reprise.'
+    : severity === 'warning'
+      ? 'Planifier une inspection maintenance et surveiller les prochaines mesures.'
+      : 'Continuer la surveillance automatique.';
+
+  return {
+    ...identity,
+    severity,
+    anomalyScore,
+    prediction,
+    contributors,
+    sensorSnapshot: snapshot,
+    recommendedAction,
+    message: severity === 'normal'
+      ? `Maintenance AI: comportement normal sur ${identity.machineName}`
+      : `Maintenance AI: ${prediction.label} sur ${identity.machineName} (${anomalyScore}%).`,
+  };
+};
+
+const assessMaintenanceRisk = async (data = {}) => {
+  const identity = resolveMachineIdentity(data);
+  const history = await SensorData.find({ node: identity.node }).sort({ createdAt: -1 }).limit(120).lean();
+  return buildMaintenanceAssessment(data, history);
+};
+
+const createMaintenanceCase = async (data = {}, alert = null, assessment = null, source = 'predictive-maintenance') => {
+  const result = assessment || await assessMaintenanceRisk(data);
+  if (!result || result.severity === 'normal') return null;
+
+  const cooldownDate = new Date(Date.now() - MAINTENANCE_REPORT_COOLDOWN_MIN * 60 * 1000);
+  const recentReport = await MaintenanceReport.findOne({
+    machineId: result.machineId,
+    status: { $ne: 'resolved' },
+    createdAt: { $gte: cooldownDate },
+  }).sort({ createdAt: -1 });
+  if (recentReport) return { report: recentReport, request: null, reused: true };
+
+  const report = await MaintenanceReport.create({
+    machineId: result.machineId,
+    machineName: result.machineName,
+    node: result.node,
+    alertId: alert?._id || null,
+    source,
+    severity: result.severity,
+    anomalyScore: result.anomalyScore,
+    prediction: result.prediction,
+    recommendedAction: result.recommendedAction,
+    contributors: result.contributors,
+    sensorSnapshot: result.sensorSnapshot,
+    status: 'open',
+  });
+
+  let request = await MaintenanceRequest.findOne({
+    machineId: result.machineId,
+    status: { $in: ['open', 'in_progress'] },
+  }).sort({ createdAt: -1 });
+
+  if (request) {
+    request.lastReportId = report._id;
+    await request.save();
+  } else {
+    request = await MaintenanceRequest.create({
+      machineId: result.machineId,
+      machineName: result.machineName,
+      node: result.node,
+      alertId: alert?._id || null,
+      reportId: report._id,
+      lastReportId: report._id,
+      title: `Maintenance predictive - ${result.machineName}`,
+      description: result.recommendedAction,
+      priority: result.severity === 'critical' ? 'critical' : result.anomalyScore >= 65 ? 'high' : 'medium',
+      status: 'open',
+      requestedBy: 'ai-maintenance',
+    });
+  }
+
+  report.requestId = request._id;
+  await report.save();
+  io.emit('maintenance-report', report);
+  io.emit('maintenance-request', request);
+  return { report, request, reused: false };
 };
 
 // ═══ Auth Routes ═══
@@ -1079,6 +1313,122 @@ app.get('/api/call-logs/:alertId', authMiddleware, async (req, res) => {
 // ═══════════════════════════════════════
 
 // GET toutes les pièces
+// Maintenance AI
+app.get('/api/maintenance/reports', authMiddleware, async (req, res) => {
+  try {
+    const { machineId, status, limit = 100 } = req.query;
+    const filter = {};
+    if (machineId) filter.machineId = String(machineId);
+    if (status) filter.status = String(status);
+    const reports = await MaintenanceReport.find(filter).sort({ createdAt: -1 }).limit(Number(limit));
+    res.json(reports);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/maintenance/requests', authMiddleware, async (req, res) => {
+  try {
+    const { status, limit = 100 } = req.query;
+    const filter = {};
+    if (status) filter.status = String(status);
+    const requests = await MaintenanceRequest.find(filter).sort({ createdAt: -1 }).limit(Number(limit));
+    res.json(requests);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.get('/api/maintenance/overview', authMiddleware, async (req, res) => {
+  try {
+    const [reports, requests, latestSensors] = await Promise.all([
+      MaintenanceReport.find({}).sort({ createdAt: -1 }).limit(100).lean(),
+      MaintenanceRequest.find({}).sort({ createdAt: -1 }).limit(100).lean(),
+      SensorData.aggregate([
+        { $sort: { createdAt: -1 } },
+        { $group: { _id: '$node', doc: { $first: '$$ROOT' } } },
+        { $replaceRoot: { newRoot: '$doc' } },
+      ]),
+    ]);
+
+    const sensorCards = latestSensors.map((sensor) => {
+      const identity = resolveMachineIdentity(sensor);
+      const report = reports.find(r => r.machineId === identity.machineId || r.node === identity.node);
+      const request = requests.find(r => (r.machineId === identity.machineId || r.node === identity.node) && ['open', 'in_progress'].includes(r.status));
+      const assessment = buildMaintenanceAssessment(sensor, []);
+      return {
+        ...identity,
+        latestSensor: sensor,
+        severity: report?.severity || assessment.severity,
+        anomalyScore: report?.anomalyScore ?? assessment.anomalyScore,
+        prediction: report?.prediction || assessment.prediction,
+        recommendedAction: report?.recommendedAction || assessment.recommendedAction,
+        lastReport: report || null,
+        openRequest: request || null,
+      };
+    });
+
+    res.json({
+      machines: sensorCards,
+      reports: reports.slice(0, 20),
+      requests: requests.slice(0, 20),
+      counts: {
+        openRequests: requests.filter(r => ['open', 'in_progress'].includes(r.status)).length,
+        criticalReports: reports.filter(r => r.severity === 'critical' && r.status !== 'resolved').length,
+        warningReports: reports.filter(r => r.severity === 'warning' && r.status !== 'resolved').length,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/api/maintenance/analyze', authMiddleware, async (req, res) => {
+  try {
+    const { machineId, node } = req.body || {};
+    const filter = {};
+    if (node) filter.node = node;
+    else if (machineId) filter.$or = [{ machineId }, { node: machineId }];
+    const latest = await SensorData.findOne(filter).sort({ createdAt: -1 }).lean();
+    if (!latest) return res.status(404).json({ message: 'Aucune donnee capteur trouvee pour cette machine' });
+
+    const assessment = await assessMaintenanceRisk({ ...latest, machineId: machineId || latest.machineId });
+    if (assessment.severity === 'normal') return res.json({ assessment, maintenance: null });
+
+    const alert = await Alert.create({
+      machineId: assessment.machineId,
+      node: assessment.node,
+      type: 'maintenance-ai',
+      severity: sanitizeSeverity(assessment.severity),
+      message: assessment.message,
+      ai: { source: 'backend-predictive-maintenance', label: assessment.severity, model: 'SensorBaselineRules', version: 'v1' },
+      sensorSnapshot: assessment.sensorSnapshot,
+    });
+    io.emit('alert', alert);
+    const maintenance = await createMaintenanceCase(latest, alert, assessment, 'manual-ai-analysis');
+    res.status(201).json({ assessment, alert, maintenance });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.patch('/api/maintenance/requests/:id', authMiddleware, async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.status) updates.status = req.body.status;
+    if (updates.status === 'done' || updates.status === 'cancelled') {
+      updates.resolvedAt = new Date();
+      updates.resolvedBy = req.user.username;
+    }
+    const request = await MaintenanceRequest.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!request) return res.status(404).json({ message: 'Demande maintenance introuvable' });
+    io.emit('maintenance-request', request);
+    res.json(request);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
 app.get('/api/pieces', authMiddleware, async (req, res) => {
   try {
     const { machine, status } = req.query;
@@ -1659,22 +2009,43 @@ mqttClient.on('message', async (topic, message) => {
       io.emit('gsm-result', { alertId, status: status || 'unknown' });
       return;
     }
-    await SensorData.create(data);
+    const savedSensor = await SensorData.create(data);
+    const sensorPayload = savedSensor.toObject ? savedSensor.toObject() : data;
     io.emit('sensor-data', data);
     const alerts = [];
     if (data.courant > 20)       alerts.push({ severity: 'critical', message: 'Current critical: ' + data.courant + 'A', node: data.node, type: 'sensor' });
     else if (data.courant > 15)  alerts.push({ severity: 'warning',  message: 'Current elevated: ' + data.courant + 'A', node: data.node, type: 'sensor' });
     if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)        alerts.push({ severity: 'critical', message: 'Vibration critique detectee', node: data.node, type: 'sensor' });
     else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)   alerts.push({ severity: 'warning',  message: 'Vibration elevee',            node: data.node, type: 'sensor' });
+    const savedAlerts = [];
     for (const alert of alerts) {
+      const identity = resolveMachineIdentity(data);
       const savedAlert = await Alert.create({
-        machineId: data.machineId || data.node || 'UNKNOWN',
+        machineId: identity.machineId,
         node: data.node || 'UNKNOWN', type: alert.type || 'sensor',
         severity: sanitizeSeverity(alert.severity), message: alert.message,
         ai: { source: 'rules', label: alert.severity || 'warning' },
-        sensorSnapshot: { vibX: data.vibX, vibY: data.vibY, vibZ: data.vibZ, courant: data.courant, rpm: data.rpm }
+        sensorSnapshot: sensorSnapshot(data)
       });
+      savedAlerts.push(savedAlert);
       io.emit('alert', savedAlert);
+    }
+    const assessment = await assessMaintenanceRisk(sensorPayload);
+    if (assessment.severity !== 'normal') {
+      let maintenanceAlert = savedAlerts[0] || null;
+      if (!maintenanceAlert) {
+        maintenanceAlert = await Alert.create({
+          machineId: assessment.machineId,
+          node: assessment.node,
+          type: 'maintenance-ai',
+          severity: sanitizeSeverity(assessment.severity),
+          message: assessment.message,
+          ai: { source: 'backend-predictive-maintenance', label: assessment.severity, model: 'SensorBaselineRules', version: 'v1' },
+          sensorSnapshot: assessment.sensorSnapshot,
+        });
+        io.emit('alert', maintenanceAlert);
+      }
+      await createMaintenanceCase(sensorPayload, maintenanceAlert, assessment, 'backend-predictive-maintenance');
     }
   } catch (err) {
     console.error('❌ Erreur MQTT:', err.message);

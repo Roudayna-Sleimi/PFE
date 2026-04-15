@@ -58,9 +58,9 @@ interface DossierDocument {
 }
 
 const statusConfig = {
-  'Terminé': { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: '✅ Terminé' },
-  'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: '🔄 En cours' },
-  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: '🔍 Contrôle' },
+  'Terminé': { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: 'Termine' },
+  'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: 'En cours' },
+  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: 'Controle' },
 };
 
 const tacheStatutConfig = {
@@ -77,11 +77,11 @@ const prioriteConfig = {
 
 const PieceIcon = ({ nom }: { nom: string }) => {
   const icons: Record<string, string> = {
-    'engrenage': '⚙️', 'support': '🔩', 'plaque': '🔲',
-    'connecteur': '🔌', 'axe': '🔧',
+    'engrenage': 'GEAR', 'support': 'SUP', 'plaque': 'PLQ',
+    'connecteur': 'CON', 'axe': 'AXE',
   };
   const key = Object.keys(icons).find(k => nom.toLowerCase().includes(k));
-  return <span style={{ fontSize: 40 }}>{key ? icons[key] : '⚙️'}</span>;
+  return <span style={{ fontSize: 24, letterSpacing: 0 }}>{key ? icons[key] : 'PCE'}</span>;
 };
 
 const normalizeKey = (value: string) => String(value || '').trim().toLowerCase();
@@ -380,7 +380,7 @@ const ProductionPage: React.FC = () => {
             background: mainTab === tab ? 'linear-gradient(135deg,rgba(0,102,255,0.15),rgba(0,212,255,0.15))' : 'rgba(30,41,59,0.6)',
             color: mainTab === tab ? '#00d4ff' : '#64748b',
           }}>
-            {tab === 'production' ? '🏭 Production' : '📁 Clients'}
+            {tab === 'production' ? 'Production' : 'Clients'}
           </button>
         ))}
       </div>
@@ -394,7 +394,7 @@ const ProductionPage: React.FC = () => {
         {/* ── Header ── */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>🏭 Production</h2>
+            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>Production</h2>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces et tâches de l'usine</p>
           </div>
           <button onClick={() => {
@@ -436,7 +436,7 @@ const ProductionPage: React.FC = () => {
           <div style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderLeft: '4px solid #f97316', borderRadius: 12, padding: '14px 18px', marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <AlertTriangle size={16} color="#f97316" />
-              <span style={{ color: '#f97316', fontWeight: 700, fontSize: 13 }}>⚠️ Quantité insuffisante — {piecesNoquete.length} pièce(s)</span>
+              <span style={{ color: '#f97316', fontWeight: 700, fontSize: 13 }}>Quantite insuffisante - {piecesNoquete.length} piece(s)</span>
             </div>
             {piecesNoquete.map(p => {
               const produit = p.quantiteProduite || 0;
@@ -603,7 +603,7 @@ const ProductionPage: React.FC = () => {
                     color: activeTab === tab ? '#00d4ff' : '#475569',
                     borderBottom: activeTab === tab ? '2px solid #00d4ff' : '2px solid transparent',
                   }}>
-                    {tab === 'details' ? '📋 Détails' : `✅ Tâches (${selectedPiece.taches.length})`}
+                    {tab === 'details' ? 'Details' : `Taches (${selectedPiece.taches.length})`}
                   </button>
                 ))}
               </div>
@@ -734,9 +734,9 @@ const ProductionPage: React.FC = () => {
                             onChange={e => setNewTache(p => ({ ...p, priorite: e.target.value as Tache['priorite'] }))}
                             style={{ ...selectStyle, background: 'rgba(15,23,42,0.8)', fontSize: 12 }}
                           >
-                            <option value="haute">🔴 Haute</option>
-                            <option value="moyenne">🟡 Moyenne</option>
-                            <option value="basse">🟢 Basse</option>
+                            <option value="haute">Haute</option>
+                            <option value="moyenne">Moyenne</option>
+                            <option value="basse">Basse</option>
                           </select>
                         </div>
                       </div>
@@ -774,13 +774,13 @@ const ProductionPage: React.FC = () => {
                                   {tache.statut === 'à faire' && (
                                     <button onClick={() => updateTache(selectedPiece._id, tache._id, 'en cours')}
                                       style={{ padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: 'rgba(59,130,246,0.2)', color: '#3b82f6', fontSize: 12, fontWeight: 600 }}>
-                                      ▶ Commencer
+                                      Commencer
                                     </button>
                                   )}
                                   {tache.statut === 'en cours' && (
                                     <button onClick={() => updateTache(selectedPiece._id, tache._id, 'terminée')}
                                       style={{ padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: 'rgba(34,197,94,0.2)', color: '#22c55e', fontSize: 12, fontWeight: 600 }}>
-                                      ✅ Terminer
+                                      Terminer
                                     </button>
                                   )}
                                 </div>
@@ -927,7 +927,7 @@ const ProductionPage: React.FC = () => {
 
                 <button onClick={ajouterPiece}
                   style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
-                  ✅ Ajouter la pièce
+                  Ajouter la piece
                 </button>
               </div>
             </div>
