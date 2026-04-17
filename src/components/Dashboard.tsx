@@ -6,7 +6,7 @@ import {
   BarChart2, Package, Heart
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import MessagingPage from './MessagingPage';
+import MessagingPage from './Messagingpage';
 import MachinesPage from './MachinesPage';
 import DemandesPage from './Demandespage';
 import ProductionPage from './ProductionPage';

@@ -91,7 +91,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
           return;
         }
         setData(normalizeReportsOverview(json));
-      } catch (err) {
+      } catch {
         setError('Impossible de charger les rapports.');
       } finally {
         setLoading(false);

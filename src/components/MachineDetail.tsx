@@ -33,7 +33,7 @@ interface Machine {
   sensors: string[];
   icon: 'gear' | 'wrench' | 'bolt' | 'drill';
   sante: number;
-  status: 'En marche' | 'Avertissement' | 'Arrêt' | 'En maintenance';
+  status: 'En marche' | 'Avertissement' | 'Arr\u00eat' | 'En maintenance';
   protocol: string; broker: string; latence: string; uptime: string;
   chipModel: string; machId: string; vibration: number; courant: number; rpm: number;
   fonctions?: { title: string; desc: string }[];

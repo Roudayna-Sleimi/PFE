@@ -1,7 +1,6 @@
 ﻿const express    = require('express');
 const mongoose   = require('mongoose');
 const bcrypt     = require('bcryptjs');
-const jwt        = require('jsonwebtoken');
 const cors       = require('cors');
 const mqtt       = require('mqtt');
 const http       = require('http');
@@ -12,6 +11,24 @@ const fs         = require('fs');
 const helmet     = require('helmet');
 const rateLimit  = require('express-rate-limit');
 const { startDossierWatcher } = require('./dossierWatcher');
+const { buildDerivedMachine, ensureBaseMachines } = require('./services/machineCatalog');
+const {
+  User,
+  MachineEvent,
+  MachineModel,
+  Demande,
+  Task,
+  DirectMessage,
+  SensorData,
+  Message,
+  Alert,
+  Contact,
+  CallLog,
+  Piece,
+  Dossier,
+} = require('./models');
+const { authMiddleware, adminMiddleware, serviceKeyMiddleware } = require('./middleware/auth');
+const authRoutes = require('./routes/authRoutes');
 require('dotenv').config();
 
 const app    = express();
@@ -84,255 +101,14 @@ mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
     console.log('✅ MongoDB connecté');
     mongoConnected = true;
+    await ensureBaseMachines({ MachineModel, logger: console });
     await maybeStartWatcher();
   })
   .catch(err => console.error('❌ MongoDB:', err));
 
-// ═══ Schemas ═══
-const userSchema = new mongoose.Schema({
-  username:  { type: String, required: true, unique: true },
-  password:  { type: String, required: true },
-  role:      { type: String, default: 'user' },
-  assignedMachine: { type: String, default: null },
-  currentPieceName: { type: String, default: null },
-  currentPieceId:   { type: String, default: null },
-  machineStatus: { type: String, enum: ['stopped', 'started', 'paused'], default: 'stopped' },
-  currentActivity: { type: String, default: '' },
-  machineStatusUpdatedAt: { type: Date, default: null },
-  connectedAt: { type: Date, default: null },
-  isOnline:  { type: Boolean, default: false },
-  lastSeen:  { type: Date, default: null },
-  socketId:  { type: String, default: null },
-  createdAt: { type: Date, default: Date.now }
-});
-const User = mongoose.model('User', userSchema);
-
-const machineEventSchema = new mongoose.Schema({
-  username: { type: String, required: true },
-  machine: { type: String, required: true },
-  action: { type: String, enum: ['started', 'paused', 'stopped'], required: true },
-  activity: { type: String, default: '' },
-  pieceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Piece', default: null },
-  pieceName: { type: String, default: null },
-  pieceCount: { type: Number, default: null },
-  createdAt: { type: Date, default: Date.now }
-});
-const MachineEvent = mongoose.model('MachineEvent', machineEventSchema);
-
-// ── Machine Model ──
-const machineSchema = new mongoose.Schema({
-  id:         { type: String, required: true, unique: true },
-  name:       { type: String, required: true },
-  model:      { type: String, default: '' },
-  hasSensors: { type: Boolean, default: false },
-  node:       { type: String, default: null },
-  icon:       { type: String, default: 'gear', enum: ['gear', 'wrench', 'bolt', 'drill'] },
-  status:     { type: String, default: 'Arrêt', enum: ['En marche', 'Avertissement', 'Arrêt', 'En maintenance'] },
-  protocol:   { type: String, default: 'MQTT' },
-  broker:     { type: String, default: 'localhost' },
-  latence:    { type: String, default: '—' },
-  uptime:     { type: String, default: '—' },
-  chipModel:  { type: String, default: '—' },
-  sante:      { type: Number, default: 100 },
-  production: { type: Number, default: 0 },
-  objectif:   { type: Number, default: 0 },
-  isBase:     { type: Boolean, default: false },
-  createdAt:  { type: Date, default: Date.now },
-});
-const MachineModel = mongoose.model('Machine', machineSchema);
-
-const demandeSchema = new mongoose.Schema({
-  nom:        { type: String, required: true },
-  email:      { type: String, required: true },
-  poste:      { type: String, required: true },
-  telephone:  { type: String, required: true },
-  statut:     { type: String, default: 'en attente' },
-  username:   { type: String, default: null },
-  createdAt:  { type: Date, default: Date.now }
-});
-const Demande = mongoose.model('Demande', demandeSchema);
-
-const taskSchema = new mongoose.Schema({
-  titre:       { type: String, required: true },
-  description: { type: String, default: '' },
-  priorite:    { type: String, default: 'moyenne' },
-  deadline:    { type: Date,   default: null },
-  assigneA:    { type: String, default: null },
-  statut:      { type: String, default: 'à faire' },
-  creePar:     { type: String, required: true },
-  createdAt:   { type: Date,   default: Date.now }
-});
-const Task = mongoose.model('Task', taskSchema);
-
-const directMessageSchema = new mongoose.Schema({
-  from:      { type: String, required: true },
-  fromRole:  { type: String, required: true },
-  to:        { type: String, required: true },
-  text:      { type: String, required: true },
-  read:      { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now, expires: 60 * 60 * 24 * 30 }
-});
-const DirectMessage = mongoose.model('DirectMessage', directMessageSchema);
-
-const sensorSchema = new mongoose.Schema({
-  node: String, courant: Number,
-  vibX: Number, vibY: Number, vibZ: Number, rpm: Number,
-  createdAt: { type: Date, default: Date.now }
-});
-const SensorData = mongoose.model('SensorData', sensorSchema);
-
-const messageSchema = new mongoose.Schema({
-  username:  { type: String, required: true },
-  role:      { type: String, default: 'user' },
-  text:      { type: String, required: true },
-  createdAt: { type: Date, default: Date.now, expires: 86400 }
-});
-const Message = mongoose.model('Message', messageSchema);
-
-const alertSchema = new mongoose.Schema({
-  machineId:    { type: String, default: 'UNKNOWN' },
-  node:         { type: String, default: 'UNKNOWN' },
-  type:         { type: String, default: 'system' },
-  severity:     { type: String, enum: ['warning', 'critical'], default: 'warning' },
-  message:      { type: String, required: true },
-  status:       { type: String, enum: ['new', 'seen', 'notified', 'resolved'], default: 'new' },
-  createdAt:    { type: Date, default: Date.now },
-  seenAt:       { type: Date, default: null },
-  seenBy:       { type: String, default: null },
-  notifiedAt:   { type: Date, default: null },
-  notifiedBy:   { type: String, default: null },
-  callAttempts: { type: Number, default: 0 },
-  ai: {
-    source:  { type: String, default: 'rules' },
-    label:   { type: String, default: null },
-    proba:   { type: mongoose.Schema.Types.Mixed, default: null },
-    model:   { type: String, default: null },
-    version: { type: String, default: null },
-  },
-  sensorSnapshot: {
-    vibX:    { type: Number, default: null },
-    vibY:    { type: Number, default: null },
-    vibZ:    { type: Number, default: null },
-    courant: { type: Number, default: null },
-    rpm:     { type: Number, default: null },
-  },
-});
-const Alert = mongoose.model('Alert', alertSchema);
-
-const contactSchema = new mongoose.Schema({
-  role:         { type: String, default: 'responsable' },
-  name:         { type: String, required: true },
-  phonePrimary: { type: String, required: true },
-  phoneBackup:  { type: String, default: null },
-  isActive:     { type: Boolean, default: true },
-  createdAt:    { type: Date, default: Date.now }
-});
-const Contact = mongoose.model('Contact', contactSchema);
-
-const callLogSchema = new mongoose.Schema({
-  alertId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Alert', required: true },
-  phoneNumber:  { type: String, required: true },
-  attemptNo:    { type: Number, required: true },
-  callStatus:   { type: String, default: 'queued' },
-  providerRef:  { type: String, default: null },
-  audioFilePath:{ type: String, default: null },
-  audioFormat:  { type: String, default: null },
-  audioBase64:  { type: String, default: null },
-  calledAt:     { type: Date, default: Date.now },
-  endedAt:      { type: Date, default: null },
-  durationSec:  { type: Number, default: null },
-  errorMessage: { type: String, default: null },
-});
-const CallLog = mongoose.model('CallLog', callLogSchema);
-
-// ── Schema Tâche (sous-document) ──
-const tacheSchema = new mongoose.Schema({
-  titre:    { type: String, required: true },
-  employe:  { type: String, required: true },
-  statut:   { type: String, enum: ['à faire', 'en cours', 'terminée'], default: 'à faire' },
-  priorite: { type: String, enum: ['haute', 'moyenne', 'basse'], default: 'moyenne' },
-}, { _id: true });
-
-// ── Schema Pièce ──
-const pieceSchema = new mongoose.Schema({
-  ref:            { type: String, default: '' },
-  fichier:        { type: String, default: null },
-  nom:            { type: String, required: true },
-  machine:        { type: String, default: 'Rectifieuse' },
-  machineChain:   { type: [String], default: [] },
-  currentStep:    { type: Number, default: 0 },
-  currentMachine: { type: String, default: null },
-  history:        { type: [new mongoose.Schema({
-    machine: { type: String, required: true },
-    action: { type: String, enum: ['entered', 'completed'], required: true },
-    at: { type: Date, default: Date.now },
-    by: { type: String, default: null }
-  }, { _id: false })], default: [] },
-  employe:        { type: String, default: '' },
-  quantite:       { type: Number, default: 0 },
-  quantiteProduite: { type: Number, default: 0 },
-  prix:           { type: Number, default: 0 },
-  status:         { type: String, enum: ['Terminé', 'En cours', 'Contrôle'], default: 'En cours' },
-  matiere:        { type: Boolean, default: true },
-  dimension:      { type: String, default: '' },
-  matiereType:    { type: String, default: '' },
-  matiereReference:{ type: String, default: '' },
-  solidworksPath: { type: String, default: null },
-  taches:         { type: [tacheSchema], default: [] },
-  stock:          { type: Number, default: 0 },
-  maxStock:       { type: Number, default: 1 },
-  seuil:          { type: Number, default: 1 },
-  createdAt:      { type: Date, default: Date.now }
-});
-const Piece = mongoose.model('Piece', pieceSchema);
-
-const dossierSchema = new mongoose.Schema({
-  originalName:   { type: String, required: true },
-  storedFilename: { type: String, required: true },
-  filePath:       { type: String, required: true },
-  publicPath:     { type: String, required: true },
-  mimeType:       { type: String, default: 'application/pdf' },
-  size:           { type: Number, default: 0 },
-  clientLastName: { type: String, default: '' },
-  clientFirstName:{ type: String, default: '' },
-  projectName:    { type: String, default: '' },
-  pieceName:      { type: String, default: '' },
-  batchId:        { type: String, default: '' },
-  storageDate:    { type: Date, required: true },
-  searchableText: { type: String, default: '' },
-  uploadedBy:     { type: String, default: null },
-  createdAt:      { type: Date, default: Date.now }
-});
-const Dossier = mongoose.model('Dossier', dossierSchema);
-
 // Mark model as ready and attempt starting the watcher (if Mongo is already connected).
 dossierModelRef = Dossier;
 maybeStartWatcher();
-
-// ═══ Middlewares ═══
-const authMiddleware = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ message: 'Token manquant' });
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
-  } catch {
-    res.status(401).json({ message: 'Token invalide' });
-  }
-};
-
-const adminMiddleware = (req, res, next) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ message: 'Acces refuse' });
-  next();
-};
-
-const serviceKeyMiddleware = (req, res, next) => {
-  const expected = process.env.AI_SERVICE_KEY;
-  if (!expected) return res.status(500).json({ message: 'AI_SERVICE_KEY non configuree' });
-  const received = req.headers['x-service-key'];
-  if (received !== expected) return res.status(403).json({ message: 'Service key invalide' });
-  next();
-};
 
 const sanitizeSeverity = (value) => value === 'critical' ? 'critical' : 'warning';
 
@@ -517,36 +293,7 @@ const computeRuntimeByEmployeeMachine = (events = [], activeUserState = new Map(
 };
 
 // ═══ Auth Routes ═══
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ message: 'Champs requis manquants' });
-    const exists = await User.findOne({ username });
-    if (exists) return res.status(409).json({ message: 'Utilisateur déjà existant' });
-    const hashed = await bcrypt.hash(password, 12);
-    const user = await User.create({ username, password: hashed });
-    res.status(201).json({ message: '✅ Utilisateur créé', userId: user._id });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const user = await User.findOne({ username });
-    if (!user || !(await bcrypt.compare(password, user.password)))
-      return res.status(401).json({ message: 'Identifiants incorrects' });
-    const token = jwt.sign(
-      { id: user._id, username: user.username, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '8h' }
-    );
-    res.json({ token, username: user.username, role: user.role });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
+app.use('/api/auth', authRoutes);
 
 // ═══ Demandes ═══
 app.post('/api/demandes', async (req, res) => {
@@ -1526,17 +1273,7 @@ app.delete('/api/pieces/:id/taches/:tacheId', authMiddleware, adminMiddleware, a
 // ═══ MQTT ═══
 app.get('/api/machines', authMiddleware, async (req, res) => {
   try {
-    const BASE_MACHINES = [
-      { id: 'rectifieuse',  name: 'Rectifieuse',       hasSensors: true,  node: 'ESP32-NODE-03', isBase: true },
-      { id: 'agie-cut',     name: 'Agie Cut',           hasSensors: false, node: null, isBase: true },
-      { id: 'agie-drill',   name: 'Agie Drill',         hasSensors: false, node: null, isBase: true },
-      { id: 'haas-cnc',     name: 'HAAS CNC',           hasSensors: false, node: null, isBase: true },
-      { id: 'tour-cnc',     name: 'Tour CNC',           hasSensors: false, node: null, isBase: true },
-      { id: 'compresseur',  name: 'Compresseur ABAC',   hasSensors: true,  node: 'compresseur', isBase: true },
-    ];
-
-    // Get custom machines from DB
-    const dbMachines = await MachineModel.find({ isBase: false }).lean();
+    const dbMachines = await MachineModel.find({}).lean();
 
     const [pieceMachines, assignedMachines] = await Promise.all([
       Piece.distinct('machine', { machine: { $ne: '' } }),
@@ -1548,7 +1285,6 @@ app.get('/api/machines', authMiddleware, async (req, res) => {
       .filter(Boolean);
 
     const allKnownNames = [
-      ...BASE_MACHINES.map(m => m.name.toLowerCase()),
       ...dbMachines.map(m => m.name.toLowerCase()),
     ];
 
@@ -1556,10 +1292,10 @@ app.get('/api/machines', authMiddleware, async (req, res) => {
       .filter((name) => !allKnownNames.includes(name.toLowerCase()))
       .map((name) => {
         const meta = machineMeta(name);
-        return { id: meta.id, name, hasSensors: meta.hasSensors, node: meta.node, isBase: false };
+        return buildDerivedMachine({ id: meta.id, name, hasSensors: meta.hasSensors, node: meta.node });
       });
 
-    const machines = [...BASE_MACHINES, ...dbMachines, ...extra].sort((a, b) => a.name.localeCompare(b.name));
+    const machines = [...dbMachines, ...extra].sort((a, b) => a.name.localeCompare(b.name));
     res.json(machines);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
@@ -1576,7 +1312,7 @@ app.post('/api/machines', authMiddleware, async (req, res) => {
     const machine = await MachineModel.create({
       id, name, model: model || '', icon: icon || 'gear',
       status: status || 'Arrêt', hasSensors: hasSensors || false,
-      node: node || null, objectif: objectif || 0, isBase: false,
+      node: node || null, objectif: objectif || 0, machId: `MACH-${id.toUpperCase()}`, isBase: false,
     });
     res.status(201).json(machine);
   } catch (err) {
