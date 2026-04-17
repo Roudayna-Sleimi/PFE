@@ -1,120 +1,196 @@
+import csv
+import json
 import os
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
-import numpy as np
-import pandas as pd
 from dotenv import load_dotenv
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 
+# --- Environment ---
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-SEQ_LEN = int(os.getenv("SEQ_LEN", "10"))
 DATASET_PATH = os.getenv("DATASET_PATH", "data/lstm_dataset.csv")
-MODEL_PATH = os.getenv("MODEL_PATH", "models/lstm_alert_model.pkl")
-SCALER_PATH = os.getenv("SCALER_PATH", "models/lstm_scaler.pkl")
-ENCODER_PATH = os.getenv("ENCODER_PATH", "models/lstm_label_encoder.pkl")
+RULES_PATH = os.getenv("RULES_PATH", "models/maintenance_rules.json")
+
+THRESHOLD_CURRENT_WARNING = float(os.getenv("THRESHOLD_CURRENT_WARNING", "15"))
+THRESHOLD_CURRENT_CRITICAL = float(os.getenv("THRESHOLD_CURRENT_CRITICAL", "20"))
+THRESHOLD_VIB_WARNING = float(os.getenv("THRESHOLD_VIB_WARNING", "2"))
+THRESHOLD_VIB_CRITICAL = float(os.getenv("THRESHOLD_VIB_CRITICAL", "3"))
+THRESHOLD_PRESSURE_WARNING_LOW = float(os.getenv("THRESHOLD_PRESSURE_WARNING_LOW", "4.5"))
+THRESHOLD_PRESSURE_WARNING_HIGH = float(os.getenv("THRESHOLD_PRESSURE_WARNING_HIGH", "10"))
+THRESHOLD_PRESSURE_CRITICAL_LOW = float(os.getenv("THRESHOLD_PRESSURE_CRITICAL_LOW", "3.5"))
+THRESHOLD_PRESSURE_CRITICAL_HIGH = float(os.getenv("THRESHOLD_PRESSURE_CRITICAL_HIGH", "11"))
+BASELINE_MIN_POINTS = int(os.getenv("BASELINE_MIN_POINTS", "20"))
+WARNING_ZSCORE = float(os.getenv("WARNING_ZSCORE", "3.0"))
+CRITICAL_ZSCORE = float(os.getenv("CRITICAL_ZSCORE", "4.0"))
 
 FEATURES = ["vibX", "vibY", "vibZ", "courant", "rpm"]
+LABEL_ORDER = {"normal": 0, "warning": 1, "critical": 2}
 
 
+# --- Helpers ---
 def resolve_path(value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else BASE_DIR / path
 
 
-def build_sequences(df: pd.DataFrame):
-    x_seq = []
-    y_seq = []
-    for machine_id in df["machine_id"].unique():
-        sub = df[df["machine_id"] == machine_id].copy()
-        x_values = sub[FEATURES].values
-        y_values = sub["label_encoded"].values
-        for i in range(SEQ_LEN, len(sub)):
-            x_seq.append(x_values[i - SEQ_LEN:i].flatten())
-            y_seq.append(y_values[i])
-    return np.array(x_seq), np.array(y_seq)
+def to_float(value, default=0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
-def main():
+def normalize_label(value: str) -> str | None:
+    label = str(value or "").strip().lower()
+    return label if label in LABEL_ORDER else None
+
+
+def strongest(*labels: str) -> str:
+    return max(labels, key=lambda label: LABEL_ORDER[label])
+
+
+# --- Labeling ---
+def threshold_label(row: dict) -> str:
+    vib_x = to_float(row.get("vibX"))
+    vib_y = to_float(row.get("vibY"))
+    vib_z = to_float(row.get("vibZ"))
+    courant = to_float(row.get("courant"))
+    pression_raw = row.get("pression")
+    pression = to_float(pression_raw, None) if pression_raw not in (None, "") else None
+
+    max_vib = max(abs(vib_x), abs(vib_y), abs(vib_z))
+    label = "normal"
+
+    if courant >= THRESHOLD_CURRENT_CRITICAL or max_vib >= THRESHOLD_VIB_CRITICAL:
+        label = "critical"
+    elif courant >= THRESHOLD_CURRENT_WARNING or max_vib >= THRESHOLD_VIB_WARNING:
+        label = "warning"
+
+    if pression is not None:
+        if pression <= THRESHOLD_PRESSURE_CRITICAL_LOW or pression >= THRESHOLD_PRESSURE_CRITICAL_HIGH:
+            label = strongest(label, "critical")
+        elif pression <= THRESHOLD_PRESSURE_WARNING_LOW or pression >= THRESHOLD_PRESSURE_WARNING_HIGH:
+            label = strongest(label, "warning")
+
+    return label
+
+
+def row_machine_id(row: dict) -> str:
+    return str(row.get("machine_id") or row.get("machineId") or row.get("node") or "UNKNOWN")
+
+
+def pick_label(row: dict) -> str:
+    manual = (
+        normalize_label(row.get("label"))
+        or normalize_label(row.get("aiLabel"))
+        or normalize_label(row.get("maintenanceLabel"))
+    )
+    return manual or threshold_label(row)
+
+
+# --- Dataset loading ---
+def read_dataset(path: Path) -> list[dict]:
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found: {path}")
+
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+
+    if not rows:
+        raise RuntimeError("Dataset is empty. Build dataset first.")
+    return rows
+
+
+# --- Baseline stats ---
+def compute_baselines(rows: list[dict]) -> dict:
+    values_by_machine: dict[str, dict[str, list[float]]] = defaultdict(
+        lambda: {feature: [] for feature in FEATURES}
+    )
+
+    label_counts = {"normal": 0, "warning": 0, "critical": 0}
+    for row in rows:
+        label = pick_label(row)
+        label_counts[label] += 1
+
+        if label != "normal":
+            continue
+
+        machine_id = row_machine_id(row)
+        for feature in FEATURES:
+            values_by_machine[machine_id][feature].append(to_float(row.get(feature)))
+
+    baselines = {}
+    for machine_id, feature_map in values_by_machine.items():
+        machine_stats = {}
+        for feature, samples in feature_map.items():
+            count = len(samples)
+            if count == 0:
+                continue
+            mean = sum(samples) / count
+            variance = sum((value - mean) ** 2 for value in samples) / count
+            std = variance ** 0.5
+            machine_stats[feature] = {
+                "count": count,
+                "mean": round(mean, 6),
+                "std": round(std, 6),
+                "min": round(min(samples), 6),
+                "max": round(max(samples), 6),
+            }
+        if machine_stats:
+            baselines[machine_id] = machine_stats
+
+    return {"baselines": baselines, "label_counts": label_counts}
+
+
+# --- Output file ---
+def build_rules_payload(stats: dict, dataset_path: Path) -> dict:
+    return {
+        "version": "simple-rules-v1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "dataset_path": str(dataset_path),
+        "features": FEATURES,
+        "thresholds": {
+            "current_warning": THRESHOLD_CURRENT_WARNING,
+            "current_critical": THRESHOLD_CURRENT_CRITICAL,
+            "vibration_warning": THRESHOLD_VIB_WARNING,
+            "vibration_critical": THRESHOLD_VIB_CRITICAL,
+            "pressure_warning_low": THRESHOLD_PRESSURE_WARNING_LOW,
+            "pressure_warning_high": THRESHOLD_PRESSURE_WARNING_HIGH,
+            "pressure_critical_low": THRESHOLD_PRESSURE_CRITICAL_LOW,
+            "pressure_critical_high": THRESHOLD_PRESSURE_CRITICAL_HIGH,
+            "baseline_min_points": BASELINE_MIN_POINTS,
+            "warning_zscore": WARNING_ZSCORE,
+            "critical_zscore": CRITICAL_ZSCORE,
+        },
+        "label_counts": stats["label_counts"],
+        "machine_baselines": stats["baselines"],
+    }
+
+
+# --- Main ---
+def main() -> None:
     dataset_path = resolve_path(DATASET_PATH)
-    model_path = resolve_path(MODEL_PATH)
-    scaler_path = resolve_path(SCALER_PATH)
-    encoder_path = resolve_path(ENCODER_PATH)
+    rules_path = resolve_path(RULES_PATH)
+    rules_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not dataset_path.exists():
-        raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+    rows = read_dataset(dataset_path)
+    stats = compute_baselines(rows)
+    payload = build_rules_payload(stats, dataset_path)
 
-    model_path.parent.mkdir(parents=True, exist_ok=True)
-    df = pd.read_csv(dataset_path)
+    rules_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    required_cols = ["timestamp", "machine_id", *FEATURES, "label"]
-    missing = [col for col in required_cols if col not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"]).sort_values(
-        ["machine_id", "timestamp"]
-    ).reset_index(drop=True)
-
-    encoder = LabelEncoder()
-    df["label_encoded"] = encoder.fit_transform(df["label"].astype(str))
-    if len(encoder.classes_) < 2:
-        raise ValueError(
-            "Dataset contains only one label. Collect more abnormal sensor data "
-            "or add manual labels: normal, warning, critical."
-        )
-
-    scaler = StandardScaler()
-    df[FEATURES] = scaler.fit_transform(df[FEATURES].astype(float))
-
-    x_data, y_data = build_sequences(df)
-    if len(x_data) < 50:
-        raise ValueError("Not enough sequence data. Collect more sensor readings.")
-
-    label_counts = pd.Series(y_data).value_counts()
-    stratify = y_data if label_counts.min() >= 2 else None
-    x_train, x_val, y_train, y_val = train_test_split(
-        x_data,
-        y_data,
-        test_size=0.2,
-        random_state=42,
-        stratify=stratify,
-    )
-
-    model = RandomForestClassifier(
-        n_estimators=100,
-        random_state=42,
-        class_weight="balanced",
-        n_jobs=-1,
-    )
-    model.fit(x_train, y_train)
-
-    y_pred = model.predict(x_val)
-    labels = np.arange(len(encoder.classes_))
-    print("\n=== Classification Report ===")
-    print(classification_report(
-        y_val,
-        y_pred,
-        labels=labels,
-        target_names=encoder.classes_,
-        zero_division=0,
-    ))
-
-    joblib.dump(model, model_path)
-    joblib.dump(scaler, scaler_path)
-    joblib.dump(encoder, encoder_path)
-
-    print("\nTraining complete!")
-    print(f"Dataset: {dataset_path}")
-    print(f"Model: {model_path}")
-    print(f"Scaler: {scaler_path}")
-    print(f"Encoder: {encoder_path}")
+    machine_count = len(payload["machine_baselines"])
+    print("[rules] Build complete.")
+    print(f"[rules] Dataset: {dataset_path} ({len(rows)} rows)")
+    print(f"[rules] Baselines: {machine_count} machine(s)")
+    print(f"[rules] Output: {rules_path}")
+    print(f"[rules] Label counts: {payload['label_counts']}")
 
 
 if __name__ == "__main__":

@@ -1,99 +1,93 @@
-# Python AI Module - Predictive Maintenance
+# Python Maintenance Module (Simple Version)
 
-This module trains the maintenance AI from the sensor data already collected by
-the Node backend in MongoDB.
+This folder now uses a simple and clear rule engine.
+No TensorFlow, no sklearn model files, no heavy training pipeline.
 
-## Data Flow
+## Flow
 
-1. ESP32/Wokwi publishes sensor readings to `cncpulse/sensors`.
-2. The backend stores every reading in MongoDB collection `sensordatas`.
-3. `build_lstm_dataset.py` exports those Mongo readings to `data/lstm_dataset.csv`.
-4. `train_lstm.py` trains the sequence classifier from that CSV.
-5. `lstm_inference_service.py` listens to the same MQTT sensor topic and creates:
-   - AI alerts in `alerts`
-   - maintenance reports in `maintenancereports`
-   - maintenance requests in `maintenancerequests`
+1. `build_lstm_dataset.py`
+   - Reads sensor data from MongoDB (`sensordatas`)
+   - Creates CSV dataset with labels (`normal`, `warning`, `critical`)
+
+2. `train_lstm.py`
+   - Builds simple baseline rules from normal behavior in the CSV
+   - Saves one JSON rules file: `models/maintenance_rules.json`
+
+3. `lstm_inference_service.py`
+   - Listens to MQTT sensor messages
+   - Applies threshold + baseline rules
+   - Creates alerts, maintenance reports, and maintenance requests
 
 ## Install
 
 ```bash
-pip install -r python-ai/requirements.txt
-```
-
-Copy the env template:
-
-```bash
+python -m pip install -r python-ai/requirements.txt
 copy python-ai\.env.example python-ai\.env
 ```
 
-Important values:
+## Main Config
 
 ```env
-MONGO_URI=mongodb://localhost:27017/cncpulse
-MONGO_DB_NAME=cncpulse
-MQTT_SENSOR_TOPIC=cncpulse/sensors
 DATASET_PATH=data/lstm_dataset.csv
-OUTPUT_DATASET_PATH=data/lstm_dataset.csv
+RULES_PATH=models/maintenance_rules.json
+RULES_RELOAD_SEC=15
+
+THRESHOLD_CURRENT_WARNING=15
+THRESHOLD_CURRENT_CRITICAL=20
+THRESHOLD_VIB_WARNING=2
+THRESHOLD_VIB_CRITICAL=3
+THRESHOLD_PRESSURE_WARNING_LOW=4.5
+THRESHOLD_PRESSURE_WARNING_HIGH=10
+THRESHOLD_PRESSURE_CRITICAL_LOW=3.5
+THRESHOLD_PRESSURE_CRITICAL_HIGH=11
 ```
 
-## Build Dataset From Sensor Data
+## Commands
 
-Run this after the backend has collected sensor readings:
+Build dataset:
 
 ```bash
 python python-ai/build_lstm_dataset.py
 ```
 
-The script reads MongoDB collection `sensordatas` and writes:
-
-```text
-python-ai/data/lstm_dataset.csv
-python-ai/data/lstm_dataset.metadata.json
-```
-
-The dataset labels are:
-
-- `normal`
-- `warning`
-- `critical`
-
-If a sensor document already has `label`, `aiLabel`, or `maintenanceLabel`, the
-script keeps that manual label. Otherwise, it creates labels from current and
-vibration thresholds plus a rolling baseline per machine. That means the model
-learns from the collected sensor behavior of each machine, not from a static
-fake dataset.
-
-## Train Model
+Build rules:
 
 ```bash
 python python-ai/train_lstm.py
 ```
 
-Outputs:
-
-```text
-python-ai/models/lstm_alert_model.pkl
-python-ai/models/lstm_scaler.pkl
-python-ai/models/lstm_label_encoder.pkl
-```
-
-The current model implementation is a `RandomForestClassifier` over flattened
-sensor sequences. The filenames still say `lstm_*` for compatibility with the
-existing project.
-
-## Run Inference
+Run inference:
 
 ```bash
 python python-ai/lstm_inference_service.py
 ```
 
-When the model predicts `warning` or `critical`, it creates an AI maintenance
-alert, a maintenance report, and an open maintenance request.
+Run automatic rules refresh (scheduler):
 
-## GSM Supervisor
+```bash
+python python-ai/auto_rules_scheduler.py
+```
+
+Run GSM supervisor:
 
 ```bash
 python python-ai/supervisor.py
 ```
 
-The supervisor watches unseen alerts and publishes GSM call requests.
+Install Windows auto-start tasks (one time):
+
+```bash
+powershell -ExecutionPolicy Bypass -File python-ai/install_windows_tasks.ps1 -RunNow
+```
+
+This creates 4 scheduled tasks:
+- Backend service
+- AI inference service
+- AI rules scheduler
+- AI supervisor service
+
+Names:
+- `PFE_BackendService`
+- `PFE_AIInferenceService`
+- `PFE_AIRulesScheduler`
+- `PFE_AISupervisorService`

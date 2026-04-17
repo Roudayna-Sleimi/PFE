@@ -1,0 +1,25 @@
+{
+  "rows": 12050,
+  "machines": 2,
+  "labels": {
+    "normal": 12010,
+    "warning": 2,
+    "critical": 38
+  },
+  "label_sources": {
+    "manual": 0,
+    "threshold": 12050
+  },
+  "source_collection": "sensordatas",
+  "generated_at": "2026-04-17T22:07:18.113363+00:00",
+  "thresholds": {
+    "current_warning": 15.0,
+    "current_critical": 20.0,
+    "vibration_warning": 2.0,
+    "vibration_critical": 3.0,
+    "pressure_warning_low": 4.5,
+    "pressure_warning_high": 10.0,
+    "pressure_critical_low": 3.5,
+    "pressure_critical_high": 11.0
+  }
+}

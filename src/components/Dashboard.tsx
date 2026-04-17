@@ -225,7 +225,6 @@ const [activePage, setActivePage] = useState<
     socket.on('dashboard-refresh', () => {
       fetchDashStats();
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -235,7 +234,7 @@ const [activePage, setActivePage] = useState<
       socket.off('user-status');
       socket.off('dashboard-refresh');
     };
-  }, []);
+  }, [fetchDashStats]);
 
   useEffect(() => {
     socket.on('sensor-data', (data: SensorData) => {
