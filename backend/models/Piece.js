@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const tacheSchema = new mongoose.Schema({
   titre: { type: String, required: true },
   employe: { type: String, required: true },
-  statut: { type: String, enum: ['à faire', 'en cours', 'terminée'], default: 'à faire' },
+  statut: { type: String, enum: ['à faire', 'a faire', 'en cours', 'terminée', 'terminee'], default: 'à faire' },
   priorite: { type: String, enum: ['haute', 'moyenne', 'basse'], default: 'moyenne' },
 }, { _id: true });
 
@@ -27,7 +27,7 @@ const pieceSchema = new mongoose.Schema({
   quantite: { type: Number, default: 0 },
   quantiteProduite: { type: Number, default: 0 },
   prix: { type: Number, default: 0 },
-  status: { type: String, enum: ['Terminé', 'En cours', 'Contrôle'], default: 'En cours' },
+  status: { type: String, enum: ['Terminé', 'Termine', 'En cours', 'Contrôle', 'Controle', 'TerminÃ©', 'ContrÃ´le'], default: 'En cours' },
   matiere: { type: Boolean, default: true },
   dimension: { type: String, default: '' },
   matiereType: { type: String, default: '' },

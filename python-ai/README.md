@@ -1,70 +1,93 @@
-# Python AI Module (LSTM + GSM Supervisor)
+# Python Maintenance Module (Simple Version)
 
-This folder contains the AI workflow for:
-- LSTM-based anomaly inference from sensor stream
-- Escalation logic: unseen alert for 5 minutes -> GSM call request
-- Optional local TTS generation (WAV) for GSM playback payload
+This folder now uses a simple and clear rule engine.
+No TensorFlow, no sklearn model files, no heavy training pipeline.
 
-## 1) Install
+## Flow
+
+1. `build_lstm_dataset.py`
+   - Reads sensor data from MongoDB (`sensordatas`)
+   - Creates CSV dataset with labels (`normal`, `warning`, `critical`)
+
+2. `train_lstm.py`
+   - Builds simple baseline rules from normal behavior in the CSV
+   - Saves one JSON rules file: `models/maintenance_rules.json`
+
+3. `lstm_inference_service.py`
+   - Listens to MQTT sensor messages
+   - Applies threshold + baseline rules
+   - Creates alerts, maintenance reports, and maintenance requests
+
+## Install
 
 ```bash
-pip install -r python-ai/requirements.txt
+python -m pip install -r python-ai/requirements.txt
+copy python-ai\.env.example python-ai\.env
 ```
 
-Copy env template:
-
-```bash
-cp python-ai/.env.example python-ai/.env
-```
-
-TTS-related env options:
+## Main Config
 
 ```env
-ENABLE_TTS=1
-AUDIO_OUTPUT_DIR=python-ai/audio
-TTS_RATE=165
-TTS_VOLUME=1.0
-EMBED_AUDIO_BASE64=1
-MAX_AUDIO_INLINE_BYTES=500000
+DATASET_PATH=data/lstm_dataset.csv
+RULES_PATH=models/maintenance_rules.json
+RULES_RELOAD_SEC=15
+
+THRESHOLD_CURRENT_WARNING=15
+THRESHOLD_CURRENT_CRITICAL=20
+THRESHOLD_VIB_WARNING=2
+THRESHOLD_VIB_CRITICAL=3
+THRESHOLD_PRESSURE_WARNING_LOW=4.5
+THRESHOLD_PRESSURE_WARNING_HIGH=10
+THRESHOLD_PRESSURE_CRITICAL_LOW=3.5
+THRESHOLD_PRESSURE_CRITICAL_HIGH=11
 ```
 
-## 2) Build dataset from Mongo sensor history
+## Commands
+
+Build dataset:
 
 ```bash
 python python-ai/build_lstm_dataset.py
 ```
 
-## 3) Train LSTM model
+Build rules:
 
 ```bash
 python python-ai/train_lstm.py
 ```
 
-## 4) Run inference service
+Run inference:
 
 ```bash
 python python-ai/lstm_inference_service.py
 ```
 
-## 5) Run 5-minute GSM supervisor
+Run automatic rules refresh (scheduler):
+
+```bash
+python python-ai/auto_rules_scheduler.py
+```
+
+Run GSM supervisor:
 
 ```bash
 python python-ai/supervisor.py
 ```
 
-When `ENABLE_TTS=1`, supervisor tries to generate a local `.wav` file per call
-attempt and includes `audioFilePath` + `audioFormat` in the MQTT payload.
-When `EMBED_AUDIO_BASE64=1`, it also embeds `audioBase64` (size-limited by
-`MAX_AUDIO_INLINE_BYTES`) so GSM consumers can play audio without shared disk.
-If TTS fails, the system still sends `textToRead` and continues escalation.
+Install Windows auto-start tasks (one time):
 
-## Expected backend support
+```bash
+powershell -ExecutionPolicy Bypass -File python-ai/install_windows_tasks.ps1 -RunNow
+```
 
-Backend should expose:
-- `alerts` collection
-- `contacts` collection
-- `calllogs` collection
-- MQTT topics:
-  - input: `cncpulse/sensors`
-  - output: `cncpulse/gsm/call`
-  - result: `cncpulse/gsm/result`
+This creates 4 scheduled tasks:
+- Backend service
+- AI inference service
+- AI rules scheduler
+- AI supervisor service
+
+Names:
+- `PFE_BackendService`
+- `PFE_AIInferenceService`
+- `PFE_AIRulesScheduler`
+- `PFE_AISupervisorService`

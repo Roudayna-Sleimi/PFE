@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 
 interface Alert {
@@ -34,7 +34,7 @@ const AlertesPage: React.FC = () => {
   const [audioMessage, setAudioMessage] = useState('');
   const token = localStorage.getItem('token') || '';
 
-  const fetchAlerts = async () => {
+  const fetchAlerts = useCallback(async () => {
     try {
       const res = await fetch('http://localhost:5000/api/alerts?limit=50', {
         headers: { Authorization: `Bearer ${token}` },
@@ -46,7 +46,7 @@ const AlertesPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     fetchAlerts();
@@ -56,7 +56,7 @@ const AlertesPage: React.FC = () => {
     return () => {
       socket.off('alert');
     };
-  }, []);
+  }, [fetchAlerts]);
 
   const markResolved = async (id: string) => {
     await fetch(`http://localhost:5000/api/alerts/${id}/resolve`, {

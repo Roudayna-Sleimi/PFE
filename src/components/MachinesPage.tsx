@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Zap, Thermometer, Activity, Search, Plus, X, Trash2 } from 'lucide-react';
+import { RefreshCw, Zap, Thermometer, Activity, Search, Plus, X, Trash2, PencilLine } from 'lucide-react';
 import { io } from 'socket.io-client';
 import MachineDetail from './MachineDetail';
+import { getMachineVisual } from '../utils/machineVisuals';
+import { getMachineFunctions, type MachineFunction } from '../utils/machineFunctions';
 
 const socket = io('http://localhost:5000', { transports: ['websocket'] });
 
@@ -14,19 +16,27 @@ interface Probleme {
 
 type MachineStatus = 'En marche' | 'Avertissement' | 'Arr\u00eat' | 'En maintenance';
 type MachineIcon = 'gear' | 'wrench' | 'bolt' | 'drill';
+type MachineProcessType = 'Fraisage' | 'Tournage' | 'Perçage' | 'Taraudage';
 
-interface MachineFunction {
-  title: string;
-  desc: string;
+interface MachineFormState {
+  name: string;
+  marque: string;
+  model: string;
+  ip: string;
+  type: MachineProcessType;
+  imageUrl: string;
+  imageFile: File | null;
 }
 
 interface Machine {
   id: string;
   name: string;
   model: string;
+  marque: string;
   type: string;
   node: string;
   ip: string;
+  imageUrl?: string;
   icon: MachineIcon;
   sensors: string[];
   status: MachineStatus;
@@ -50,15 +60,20 @@ interface Machine {
   fonctions?: MachineFunction[];
   isBase?: boolean;
   isDerived?: boolean;
+  hasProductionData?: boolean;
+  hasEfficiencyData?: boolean;
+  hasWorkData?: boolean;
 }
 
 interface ApiMachine {
   id: string;
   name: string;
   model?: string;
+  marque?: string;
   type?: string;
   node?: string | null;
   ip?: string;
+  imageUrl?: string;
   icon?: string;
   sensors?: string[];
   status?: string;
@@ -82,13 +97,35 @@ interface ApiMachine {
   fonctions?: MachineFunction[];
   isBase?: boolean;
   isDerived?: boolean;
+  hasProductionData?: boolean;
+  hasEfficiencyData?: boolean;
+  hasWorkData?: boolean;
 }
 
-const statusConfig: Record<MachineStatus, { color: string; bg: string; border: string; dot: string }> = {
-  'En marche': { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', dot: '#22c55e' },
-  'Avertissement': { color: '#f97316', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.3)', dot: '#f97316' },
-  'Arr\u00eat': { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)', dot: '#ef4444' },
-  'En maintenance': { color: '#a855f7', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.3)', dot: '#a855f7' },
+const machineTypeOptions: Array<{ value: MachineProcessType; icon: MachineIcon }> = [
+  { value: 'Fraisage', icon: 'gear' },
+  { value: 'Tournage', icon: 'wrench' },
+  { value: 'Perçage', icon: 'drill' },
+  { value: 'Taraudage', icon: 'bolt' },
+];
+
+const emptyMachineForm: MachineFormState = {
+  name: '',
+  marque: '',
+  model: '',
+  ip: '',
+  type: 'Fraisage' as MachineProcessType,
+  imageUrl: '',
+  imageFile: null,
+};
+
+const iconForMachineType = (type: MachineProcessType): MachineIcon => (
+  machineTypeOptions.find((option) => option.value === type)?.icon || 'gear'
+);
+
+const normalizeMachineProcessType = (type?: string): MachineProcessType => {
+  const found = machineTypeOptions.find((option) => option.value.toLowerCase() === String(type || '').toLowerCase());
+  return found?.value || 'Fraisage';
 };
 
 const normalizeMachineIcon = (icon?: string): MachineIcon => {
@@ -103,20 +140,15 @@ const normalizeMachineStatus = (status?: string): MachineStatus => {
   return 'Arr\u00eat';
 };
 
-const getMachineGlyph = (icon: MachineIcon) => {
-  if (icon === 'bolt') return '\u26A1';
-  if (icon === 'drill') return '\uD83D\uDD29';
-  if (icon === 'wrench') return '\uD83D\uDD27';
-  return '\u2699\uFE0F';
-};
-
 const mapApiMachine = (machine: ApiMachine): Machine => ({
   id: machine.id,
   name: machine.name,
   model: machine.model || '-',
+  marque: machine.marque || '',
   type: machine.type || '-',
   node: machine.node || '-',
   ip: machine.ip || '-',
+  imageUrl: machine.imageUrl || '',
   icon: normalizeMachineIcon(machine.icon),
   sensors: Array.isArray(machine.sensors) ? machine.sensors : [],
   status: normalizeMachineStatus(machine.status),
@@ -137,28 +169,35 @@ const mapApiMachine = (machine: ApiMachine): Machine => ({
   chipModel: machine.chipModel || '-',
   machId: machine.machId || `MACH-${machine.id.toUpperCase()}`,
   problems: Array.isArray(machine.problems) ? machine.problems : [],
-  fonctions: Array.isArray(machine.fonctions) ? machine.fonctions : [],
+  fonctions: getMachineFunctions(machine),
   isBase: Boolean(machine.isBase),
   isDerived: Boolean(machine.isDerived),
+  hasProductionData: Boolean(machine.hasProductionData),
+  hasEfficiencyData: Boolean(machine.hasEfficiencyData),
+  hasWorkData: Boolean(machine.hasWorkData),
 });
 
 const isLiveMachine = (machine: Pick<Machine, 'id'>) => machine.id === 'rectifieuse' || machine.id === 'compresseur';
 
+const formatMachineNumber = (value: number, digits = 0) => (
+  Number.isFinite(value) ? value.toLocaleString('fr-FR', { maximumFractionDigits: digits }) : '0'
+);
+
+const formatMachineHours = (value: number) => (
+  Number.isFinite(value) ? `${value.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}h` : '0h'
+);
+
+const pendingMetric = '-';
+
 const MachinesPage: React.FC = () => {
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [filtre, setFiltre] = useState<'Toutes' | 'En marche'>('Toutes');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Machine | null>(null);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [showAddModal, setShowAddModal] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [newMachine, setNewMachine] = useState({
-    name: '',
-    model: '',
-    icon: 'gear' as MachineIcon,
-    status: 'Arr\u00eat' as MachineStatus,
-    objectif: '',
-  });
+  const [editingMachine, setEditingMachine] = useState<Machine | null>(null);
+  const [savingMachine, setSavingMachine] = useState(false);
+  const [machineForm, setMachineForm] = useState(emptyMachineForm);
   const role = localStorage.getItem('role');
 
   const fetchMachines = useCallback(async () => {
@@ -183,33 +222,83 @@ const MachinesPage: React.FC = () => {
     fetchMachines();
   }, [fetchMachines]);
 
-  const handleAddMachine = async () => {
-    if (!newMachine.name) return;
+  useEffect(() => {
+    const refreshMachines = () => {
+      fetchMachines();
+    };
+    const intervalId = window.setInterval(refreshMachines, 10000);
+
+    socket.on('dashboard-refresh', refreshMachines);
+    socket.on('employee-machine-updated', refreshMachines);
+    socket.on('piece-progressed', refreshMachines);
+
+    return () => {
+      window.clearInterval(intervalId);
+      socket.off('dashboard-refresh', refreshMachines);
+      socket.off('employee-machine-updated', refreshMachines);
+      socket.off('piece-progressed', refreshMachines);
+    };
+  }, [fetchMachines]);
+
+  const closeMachineModal = () => {
+    setShowAddModal(false);
+    setEditingMachine(null);
+    setMachineForm(emptyMachineForm);
+  };
+
+  const openAddMachineModal = () => {
+    setEditingMachine(null);
+    setMachineForm(emptyMachineForm);
+    setShowAddModal(true);
+  };
+
+  const openEditMachineModal = (machine: Machine, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setEditingMachine(machine);
+    setMachineForm({
+      name: machine.name || '',
+      marque: machine.marque || '',
+      model: machine.model === '-' ? '' : machine.model || '',
+      ip: machine.ip === '-' ? '' : machine.ip || '',
+      type: normalizeMachineProcessType(machine.type),
+      imageUrl: machine.imageUrl || '',
+      imageFile: null,
+    });
+    setShowAddModal(true);
+  };
+
+  const handleSaveMachine = async () => {
+    if (!machineForm.name.trim()) return;
 
     const token = localStorage.getItem('token') || '';
-    setAdding(true);
+    const isEditing = Boolean(editingMachine);
+    const formData = new FormData();
+    formData.append('name', machineForm.name.trim());
+    formData.append('marque', machineForm.marque.trim());
+    formData.append('model', machineForm.model.trim());
+    formData.append('ip', machineForm.ip.trim());
+    formData.append('type', machineForm.type);
+    formData.append('icon', iconForMachineType(machineForm.type));
+    if (machineForm.imageFile) formData.append('image', machineForm.imageFile);
+
+    setSavingMachine(true);
     try {
-      const res = await fetch('http://localhost:5000/api/machines', {
-        method: 'POST',
+      const res = await fetch(`http://localhost:5000/api/machines${isEditing ? `/${editingMachine?.id}` : ''}`, {
+        method: isEditing ? 'PATCH' : 'POST',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          ...newMachine,
-          objectif: Number(newMachine.objectif) || 0,
-        }),
+        body: formData,
       });
 
       if (res.ok) {
-        setShowAddModal(false);
-        setNewMachine({ name: '', model: '', icon: 'gear', status: 'Arr\u00eat', objectif: '' });
+        closeMachineModal();
         await fetchMachines();
       }
     } catch {
       // ignore
     } finally {
-      setAdding(false);
+      setSavingMachine(false);
     }
   };
 
@@ -258,13 +347,16 @@ const MachinesPage: React.FC = () => {
     };
   }, []);
 
+  const normalizedSearch = search.trim().toLowerCase();
   const filtrees = machines
-    .filter((machine) => filtre === 'Toutes' || machine.status === filtre)
     .filter(
       (machine) =>
-        !search ||
-        machine.name.toLowerCase().includes(search.toLowerCase()) ||
-        machine.model.toLowerCase().includes(search.toLowerCase())
+        !normalizedSearch ||
+        machine.name.toLowerCase().includes(normalizedSearch) ||
+        machine.marque.toLowerCase().includes(normalizedSearch) ||
+        machine.model.toLowerCase().includes(normalizedSearch) ||
+        machine.type.toLowerCase().includes(normalizedSearch) ||
+        machine.ip.toLowerCase().includes(normalizedSearch)
     );
 
   const refresh = useCallback(() => {
@@ -280,7 +372,7 @@ const MachinesPage: React.FC = () => {
       <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white mb-1">Gestion des Machines</h2>
-          <p className="text-sm text-slate-500">{machines.length} machines actives</p>
+          <p className="text-sm text-slate-500">{machines.length} machines</p>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -294,7 +386,7 @@ const MachinesPage: React.FC = () => {
             />
           </div>
 
-          <span className="text-xs text-slate-500">Mise a jour : {lastUpdate.toLocaleTimeString('fr-FR')}</span>
+          <span className="text-xs text-slate-500">Mise à jour : {lastUpdate.toLocaleTimeString('fr-FR')}</span>
 
           <button
             onClick={refresh}
@@ -306,58 +398,26 @@ const MachinesPage: React.FC = () => {
 
           {role === 'admin' && (
             <button
-              onClick={() => setShowAddModal(true)}
+              onClick={openAddMachineModal}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
               style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}
             >
-              <Plus size={14} /> Ajouter Machine
+              <Plus size={14} /> Ajouter une machine
             </button>
           )}
         </div>
       </div>
 
-      <div className="flex gap-3 mb-6 flex-wrap">
-        {([
-          { key: 'Toutes', label: 'Toutes', count: machines.length },
-          { key: 'En marche', label: 'Operationnelles', count: machines.filter((machine) => machine.status === 'En marche').length },
-        ] as const).map((filterItem) => (
-          <button
-            key={filterItem.key}
-            onClick={() => setFiltre(filterItem.key)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer border transition-all"
-            style={{
-              background:
-                filtre === filterItem.key
-                  ? 'linear-gradient(135deg,rgba(0,102,255,0.3),rgba(0,212,255,0.3))'
-                  : 'rgba(30,41,59,0.5)',
-              borderColor: filtre === filterItem.key ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)',
-              color: filtre === filterItem.key ? '#00d4ff' : '#94a3b8',
-            }}
-          >
-            {filterItem.label}
-            <span
-              className="px-1.5 py-0.5 rounded text-[10px] font-bold"
-              style={{
-                background: filtre === filterItem.key ? 'rgba(0,212,255,0.2)' : 'rgba(255,255,255,0.08)',
-                color: filtre === filterItem.key ? '#00d4ff' : '#64748b',
-              }}
-            >
-              {filterItem.count}
-            </span>
-          </button>
-        ))}
-      </div>
-
       <div className="grid grid-cols-2 gap-5">
         {filtrees.map((machine) => {
-          const st = statusConfig[machine.status];
-          const pct = machine.objectif > 0 ? Math.min(100, (machine.production / machine.objectif) * 100) : 0;
+          const visual = getMachineVisual({ id: machine.id, name: machine.name, icon: machine.icon, imageUrl: machine.imageUrl });
+          const canManageMachine = role === 'admin';
 
           return (
             <div
               key={machine.id}
               onClick={() => setSelected(machine)}
-              className="rounded-xl cursor-pointer transition-all duration-300"
+              className="group rounded-xl cursor-pointer transition-all duration-300"
               style={{ background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.08)' }}
               onMouseEnter={(event) => {
                 event.currentTarget.style.borderColor = 'rgba(0,212,255,0.3)';
@@ -371,30 +431,56 @@ const MachinesPage: React.FC = () => {
               <div className="p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
                 <div className="flex items-start justify-between mb-1">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: st.dot, boxShadow: `0 0 6px ${st.dot}` }} />
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: '#00d4ff', boxShadow: '0 0 6px #00d4ff' }} />
                     <span className="text-[15px] font-bold text-white">{machine.name}</span>
                   </div>
 
-                  {role === 'admin' && !machine.isBase && !machine.isDerived && (
-                    <button
-                      onClick={(event) => handleDeleteMachine(machine.id, event)}
-                      title="Supprimer"
-                      className="p-1.5 rounded-lg cursor-pointer transition-all hover:bg-red-500/20"
-                      style={{ border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', background: 'transparent' }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                  {canManageMachine && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(event) => openEditMachineModal(machine, event)}
+                        title="Modifier"
+                        aria-label={`Modifier ${machine.name}`}
+                        className="p-1.5 rounded-lg cursor-pointer transition-all hover:bg-cyan-500/20"
+                        style={{ border: '1px solid rgba(56,189,248,0.3)', color: '#38bdf8', background: 'transparent' }}
+                      >
+                        <PencilLine size={13} />
+                      </button>
+                      <button
+                        onClick={(event) => handleDeleteMachine(machine.id, event)}
+                        title="Supprimer"
+                        aria-label={`Supprimer ${machine.name}`}
+                        className="p-1.5 rounded-lg cursor-pointer transition-all hover:bg-red-500/20"
+                        style={{ border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', background: 'transparent' }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   )}
                 </div>
 
                 <p className="text-xs text-slate-500 ml-4">{machine.type}</p>
+                <p className="text-[11px] text-slate-600 ml-4 mt-1">
+                  {[machine.marque, machine.model !== '-' ? machine.model : ''].filter(Boolean).join(' - ') || 'Modèle non renseigné'}
+                </p>
+                <p className="text-[11px] text-slate-600 ml-4 mt-1">Adresse IP : {machine.ip || '-'}</p>
               </div>
 
-              <div
-                className="mx-5 my-4 h-32 rounded-xl flex items-center justify-center"
-                style={{ background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(255,255,255,0.05)' }}
-              >
-                <div style={{ fontSize: 48, opacity: 0.6 }}>{getMachineGlyph(machine.icon)}</div>
+              <div className="relative mx-5 my-4 h-36 overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
+                <img
+                  src={visual.image}
+                  alt={visual.alt}
+                  loading="lazy"
+                  className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                />
+                <div className="absolute inset-0 bg-gradient-to-b from-slate-950/20 via-slate-950/10 to-slate-950/75" />
+                <div className="absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-cyan-300/40 bg-slate-950/70 px-2.5 py-1.5">
+                  <visual.Icon size={14} className="text-cyan-300" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-cyan-100">Machine</span>
+                </div>
+                <div className="absolute right-3 bottom-3 rounded-lg border border-white/15 bg-slate-950/70 px-2 py-1">
+                  <span className="text-[10px] font-semibold text-slate-200">{machine.model !== '-' ? machine.model : machine.type}</span>
+                </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3 px-5 mb-4">
@@ -402,12 +488,12 @@ const MachinesPage: React.FC = () => {
                   ? [
                       { label: 'Pression', value: `${(machine.pression ?? 0).toFixed(1)} bar`, color: '#06b6d4' },
                       { label: 'Courant', value: `${machine.courant.toFixed(1)}A`, color: '#3b82f6' },
-                      { label: 'Heures', value: `${machine.heures}h`, color: '#a855f7' },
+                      { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#a855f7' },
                     ]
                   : [
-                      { label: 'Production', value: machine.objectif > 0 ? `${machine.production}` : '-', color: '#3b82f6' },
-                      { label: 'Efficacite', value: `${machine.efficacite}%`, color: '#00d4ff' },
-                      { label: 'Heures', value: `${machine.heures}h`, color: '#a855f7' },
+                      { label: 'Production', value: machine.hasProductionData ? `${formatMachineNumber(machine.production)} pièces` : pendingMetric, color: '#3b82f6' },
+                      { label: 'Efficacité', value: machine.hasEfficiencyData ? `${formatMachineNumber(machine.efficacite, 1)}%` : pendingMetric, color: '#00d4ff' },
+                      { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#a855f7' },
                     ]
                 ).map((stat) => (
                   <div
@@ -423,17 +509,19 @@ const MachinesPage: React.FC = () => {
                 ))}
               </div>
 
-              {machine.objectif > 0 && (
+              {machine.fonctions && machine.fonctions.length > 0 && (
                 <div className="px-5 mb-4">
-                  <div className="flex justify-between text-[11px] text-slate-500 mb-1.5">
-                    <span>Objectif: {machine.objectif} pcs</span>
-                    <span style={{ color: pct >= 100 ? '#22c55e' : '#00d4ff' }}>{pct.toFixed(0)}%</span>
-                  </div>
-                  <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${pct}%`, background: pct >= 100 ? '#22c55e' : 'linear-gradient(90deg,#0066ff,#00d4ff)' }}
-                    />
+                  <div className="text-[11px] font-semibold text-slate-500 mb-2">Fonctions</div>
+                  <div className="grid grid-cols-1 gap-2">
+                    {machine.fonctions.slice(0, 3).map((fonction) => (
+                      <div
+                        key={fonction.title}
+                        className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-2"
+                      >
+                        <div className="text-[10px] font-semibold text-cyan-100">{fonction.title}</div>
+                        <div className="mt-0.5 text-[10px] leading-snug text-slate-400">{fonction.desc}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -441,11 +529,9 @@ const MachinesPage: React.FC = () => {
               <div className="flex items-center gap-4 px-5 pb-4 flex-wrap">
                 {isLiveMachine(machine) ? (
                   <>
-                    <span
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: '#22c55e' }}
-                    >
-                      LIVE
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+                      style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: '#22c55e' }}>
+                      <Activity size={10} /> EN DIRECT
                     </span>
                     <span className="flex items-center gap-1 text-[11px] text-slate-400">
                       <Thermometer size={11} color="#f97316" /> {machine.temperature.toFixed(1)}C
@@ -466,11 +552,11 @@ const MachinesPage: React.FC = () => {
 
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
-          <div className="bg-slate-800 border border-white/[0.1] rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
+          <div className="bg-slate-800 border border-white/[0.1] rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
-              <span className="text-base font-bold text-white">Nouvelle Machine</span>
+              <span className="text-base font-bold text-white">{editingMachine ? 'Modifier machine' : 'Nouvelle machine'}</span>
               <button
-                onClick={() => setShowAddModal(false)}
+                onClick={closeMachineModal}
                 title="Fermer"
                 className="text-slate-400 hover:text-white transition-colors cursor-pointer bg-transparent border-none"
               >
@@ -482,82 +568,92 @@ const MachinesPage: React.FC = () => {
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Nom de la machine *</label>
                 <input
-                  value={newMachine.name}
-                  onChange={(event) => setNewMachine((prev) => ({ ...prev, name: event.target.value }))}
-                  placeholder="Ex: Fraiseuse DMG"
-                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Modele</label>
-                <input
-                  value={newMachine.model}
-                  onChange={(event) => setNewMachine((prev) => ({ ...prev, model: event.target.value }))}
-                  placeholder="Ex: DMG MORI CMX 600"
+                  value={machineForm.name}
+                  onChange={(event) => setMachineForm((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="Ex : Fraiseuse DMG"
                   className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Icone</label>
-                  <select
-                    aria-label="Icone de la machine"
-                    value={newMachine.icon}
-                    onChange={(event) => setNewMachine((prev) => ({ ...prev, icon: event.target.value as MachineIcon }))}
+                  <label className="text-xs text-slate-400 mb-1 block">Marque</label>
+                  <input
+                    value={machineForm.marque}
+                    onChange={(event) => setMachineForm((prev) => ({ ...prev, marque: event.target.value }))}
+                    placeholder="Ex : DMG MORI"
                     className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
-                  >
-                    <option value="gear">Engrenage</option>
-                    <option value="bolt">Eclair</option>
-                    <option value="drill">Foret</option>
-                    <option value="wrench">Cle</option>
-                  </select>
+                  />
                 </div>
 
                 <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Statut initial</label>
-                  <select
-                    aria-label="Statut initial de la machine"
-                    value={newMachine.status}
-                    onChange={(event) => setNewMachine((prev) => ({ ...prev, status: event.target.value as MachineStatus }))}
+                  <label className="text-xs text-slate-400 mb-1 block">Modèle</label>
+                  <input
+                    value={machineForm.model}
+                    onChange={(event) => setMachineForm((prev) => ({ ...prev, model: event.target.value }))}
+                    placeholder="Ex : CMX 600"
                     className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
-                  >
-                    <option value="En marche">En marche</option>
-                    <option value={'Arr\u00eat'}>Arret</option>
-                    <option value="En maintenance">En maintenance</option>
-                    <option value="Avertissement">Avertissement</option>
-                  </select>
+                  />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Objectif production (pcs)</label>
+                <label className="text-xs text-slate-400 mb-1 block">Adresse IP</label>
                 <input
-                  type="number"
-                  value={newMachine.objectif}
-                  onChange={(event) => setNewMachine((prev) => ({ ...prev, objectif: event.target.value }))}
-                  placeholder="0"
+                  value={machineForm.ip}
+                  onChange={(event) => setMachineForm((prev) => ({ ...prev, ip: event.target.value }))}
+                  placeholder="Ex : 192.168.1.50"
                   className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
                 />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Type / icône</label>
+                <select
+                  aria-label="Type et icône de la machine"
+                  value={machineForm.type}
+                  onChange={(event) => setMachineForm((prev) => ({ ...prev, type: event.target.value as MachineProcessType }))}
+                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
+                >
+                  {machineTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.value}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Image de la machine</label>
+                <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-[rgba(0,212,255,0.4)]">
+                  <span className="truncate">{machineForm.imageFile?.name || (machineForm.imageUrl ? 'Image actuelle conservée' : 'Choisir une image')}</span>
+                  <span className="rounded-md bg-cyan-500/15 px-2 py-1 text-xs font-semibold text-cyan-200">Parcourir</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+                      setMachineForm((prev) => ({ ...prev, imageFile: file }));
+                    }}
+                  />
+                </label>
               </div>
             </div>
 
             <div className="flex gap-3 mt-5">
               <button
-                onClick={() => setShowAddModal(false)}
+                onClick={closeMachineModal}
                 className="flex-1 py-2 rounded-lg text-sm font-medium text-slate-400 border border-white/10 hover:border-white/20 transition-all cursor-pointer bg-transparent"
               >
                 Annuler
               </button>
 
               <button
-                onClick={handleAddMachine}
-                disabled={adding || !newMachine.name}
+                onClick={handleSaveMachine}
+                disabled={savingMachine || !machineForm.name.trim()}
                 className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer disabled:opacity-50 border-none"
                 style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', color: 'white' }}
               >
-                {adding ? 'Ajout...' : 'Ajouter'}
+                {savingMachine ? 'Enregistrement...' : editingMachine ? 'Modifier' : 'Ajouter'}
               </button>
             </div>
           </div>

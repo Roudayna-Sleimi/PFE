@@ -144,7 +144,7 @@ const DemandesPage: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <div className="text-white font-semibold text-sm">{d.nom}</div>
                   <div className="text-slate-400 text-xs mt-0.5">{d.email} · {d.poste}</div>
-                  <div className="text-slate-500 text-xs mt-0.5">📞 {d.telephone}</div>
+                  <div className="text-slate-500 text-xs mt-0.5">Telephone: {d.telephone}</div>
                 </div>
                 <div className="text-slate-500 text-xs whitespace-nowrap">
                   {new Date(d.createdAt).toLocaleDateString('fr-FR')}
@@ -183,7 +183,7 @@ const DemandesPage: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <div className="text-slate-300 font-medium text-sm">{d.nom}</div>
                   <div className="text-slate-500 text-xs mt-0.5">{d.email} · {d.poste}</div>
-                  {d.username && <div className="text-slate-500 text-xs mt-0.5">👤 @{d.username}</div>}
+                  {d.username && <div className="text-slate-500 text-xs mt-0.5">Utilisateur: @{d.username}</div>}
                 </div>
                 {statutBadge(d.statut)}
               </div>
@@ -194,7 +194,7 @@ const DemandesPage: React.FC = () => {
 
       {!loading && demandes.length === 0 && (
         <div className="text-center py-16">
-          <div className="text-5xl mb-4">📭</div>
+          <div className="text-5xl mb-4 text-slate-500">-</div>
           <div className="text-slate-400 text-sm">Aucune demande pour le moment</div>
         </div>
       )}
@@ -218,7 +218,7 @@ const DemandesPage: React.FC = () => {
 
             <div className="flex flex-col gap-3 mb-4">
               <div>
-                <label className="text-xs text-slate-400 font-medium mb-1.5 block">👤 Username</label>
+                <label className="text-xs text-slate-400 font-medium mb-1.5 block">Username</label>
                 <input
                   type="text"
                   placeholder="ex: m.ben_salah"
@@ -228,7 +228,7 @@ const DemandesPage: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400 font-medium mb-1.5 block">🔒 Mot de passe</label>
+                <label className="text-xs text-slate-400 font-medium mb-1.5 block">Mot de passe</label>
                 <input
                   type="text"
                   placeholder="Choisir un mot de passe"
@@ -252,7 +252,7 @@ const DemandesPage: React.FC = () => {
               </button>
               <button onClick={handleApprouver} disabled={modalLoad}
                 className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white border-none cursor-pointer hover:-translate-y-0.5 transition-transform disabled:opacity-50 bg-gradient-to-br from-[#0066ff] to-[#00d4ff]">
-                {modalLoad ? 'Création...' : '✅ Créer le compte'}
+                {modalLoad ? 'Creation...' : 'Creer le compte'}
               </button>
             </div>
           </div>

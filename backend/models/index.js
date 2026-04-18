@@ -9,6 +9,8 @@ const Message = require('./Message');
 const Alert = require('./Alert');
 const Contact = require('./Contact');
 const CallLog = require('./CallLog');
+const MaintenanceReport = require('./MaintenanceReport');
+const MaintenanceRequest = require('./MaintenanceRequest');
 const Piece = require('./Piece');
 const Dossier = require('./Dossier');
 
@@ -24,6 +26,8 @@ module.exports = {
   Alert,
   Contact,
   CallLog,
+  MaintenanceReport,
+  MaintenanceRequest,
   Piece,
   Dossier,
 };

@@ -214,7 +214,7 @@ export default function MessagingPage({ currentUsername, currentRole, token, soc
         <div style={{ padding: '20px 16px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <h2 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#e2e8f0', letterSpacing: '-0.01em' }}>
-              💬 Messagerie
+              Messagerie
             </h2>
             {totalUnread > 0 && (
               <div style={{
@@ -230,7 +230,7 @@ export default function MessagingPage({ currentUsername, currentRole, token, soc
             background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: 8, padding: '8px 12px',
           }}>
-            <span style={{ color: '#475569', fontSize: 13 }}>🔍</span>
+            <span style={{ color: '#475569', fontSize: 13 }}>Rech.</span>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -434,7 +434,7 @@ export default function MessagingPage({ currentUsername, currentRole, token, soc
                   boxShadow: input.trim() ? '0 2px 12px rgba(59,130,246,0.3)' : 'none',
                 }}
               >
-                ➤
+                Envoyer
               </button>
             </div>
           </>
@@ -449,7 +449,7 @@ export default function MessagingPage({ currentUsername, currentRole, token, soc
               border: '1px solid rgba(59,130,246,0.15)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28,
-            }}>💬</div>
+            }}>MSG</div>
             <p style={{ color: '#475569', fontSize: 13, margin: 0 }}>
               Sélectionnez une conversation
             </p>

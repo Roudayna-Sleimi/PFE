@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+﻿import React, { useMemo, useState, useEffect } from 'react';
 import { Package, Plus, X, AlertTriangle, CheckCircle, Clock, User, Wrench, TrendingUp } from 'lucide-react';
 import DossierPage from './DossierPage';
 import { io } from 'socket.io-client';
@@ -11,14 +11,6 @@ interface UserAPI {
   _id: string;
   username: string;
   role: string;
-}
-
-interface Tache {
-  _id: string;
-  titre: string;
-  employe: string;
-  statut: 'à faire' | 'en cours' | 'terminée';
-  priorite: 'haute' | 'moyenne' | 'basse';
 }
 
 interface Piece {
@@ -39,7 +31,6 @@ interface Piece {
   matiereType?: string;
   matiereReference?: string;
   solidworksPath?: string;
-  taches: Tache[];
 }
 
 interface MachineApi {
@@ -61,9 +52,9 @@ interface DossierDocument {
 }
 
 const statusConfig = {
-  'Terminé': { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: '✅ Terminé' },
-  'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: '🔄 En cours' },
-  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: '🔍 Contrôle' },
+  'Terminé': { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: 'Termine' },
+  'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: 'En cours' },
+  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: 'Controle' },
 };
 
 const materialOptions: Record<string, string[]> = {
@@ -77,11 +68,11 @@ const materialOptions: Record<string, string[]> = {
 
 const PieceIcon = ({ nom }: { nom: string }) => {
   const icons: Record<string, string> = {
-    'engrenage': '⚙️', 'support': '🔩', 'plaque': '🔲',
-    'connecteur': '🔌', 'axe': '🔧',
+    'engrenage': 'GEAR', 'support': 'SUP', 'plaque': 'PLQ',
+    'connecteur': 'CON', 'axe': 'AXE',
   };
-  const key = Object.keys(icons).find(k => nom.toLowerCase().includes(k));
-  return <span style={{ fontSize: 40 }}>{key ? icons[key] : '⚙️'}</span>;
+  const key = Object.keys(icons).find(k => String(nom || '').toLowerCase().includes(k));
+  return <span style={{ fontSize: 24, letterSpacing: 0 }}>{key ? icons[key] : 'PCE'}</span>;
 };
 
 const normalizeKey = (value: string) => String(value || '').trim().toLowerCase();
@@ -90,9 +81,192 @@ const isImageDoc = (doc: DossierDocument) => String(doc.mimeType || '').startsWi
 const isPdfDoc = (doc: DossierDocument) => doc.mimeType === 'application/pdf' || /\.pdf$/i.test(doc.originalName || '');
 const isCadDoc = (doc: DossierDocument) => /\.(sldprt|sldasm|slddrw|step|stp|iges|igs|dxf|dwg)$/i.test(doc.originalName || '');
 
+const displayMimeByExt: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  ico: 'image/x-icon',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+};
+
+const cadExtensions = new Set(['stp', 'step', 'sldasm', 'sldprt', 'slddrw', 'igs', 'iges', 'dxf', 'dwg']);
+
+const getFileExtension = (filename = '') => {
+  const ext = filename.includes('.') ? filename.split('.').pop() || '' : '';
+  return ext.trim().toLowerCase();
+};
+
+const getDisplayMimeType = (doc: DossierDocument) => {
+  const ext = getFileExtension(doc.originalName);
+  if (displayMimeByExt[ext]) return displayMimeByExt[ext];
+  if (doc.mimeType && doc.mimeType !== 'application/octet-stream') return doc.mimeType;
+  return 'application/octet-stream';
+};
+
+const readJsonMaybe = async (res: Response) => {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) return await res.json();
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: String(text || '').replace(/\s+/g, ' ').trim() };
+  }
+};
+
+const canPreviewInBrowser = (doc: DossierDocument) => {
+  const mimeType = getDisplayMimeType(doc);
+  return mimeType === 'application/pdf' || mimeType.startsWith('image/');
+};
+
+const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string | null) => {
+  const mimeType = getDisplayMimeType(doc);
+  const ext = getFileExtension(doc.originalName).toUpperCase() || 'FILE';
+  const isPreviewable = canPreviewInBrowser(doc);
+  const docBody = popup.document.body;
+
+  popup.document.title = doc.originalName;
+  docBody.replaceChildren();
+  docBody.style.margin = '0';
+  docBody.style.minHeight = '100vh';
+  docBody.style.background = '#020617';
+  docBody.style.color = '#e2e8f0';
+  docBody.style.fontFamily = 'Arial, sans-serif';
+
+  const shell = popup.document.createElement('div');
+  shell.style.minHeight = '100vh';
+  shell.style.display = 'flex';
+  shell.style.flexDirection = 'column';
+
+  const header = popup.document.createElement('div');
+  header.style.padding = '12px 16px';
+  header.style.borderBottom = '1px solid rgba(255,255,255,0.10)';
+  header.style.background = '#0f172a';
+  header.style.fontSize = '13px';
+  header.style.fontWeight = '700';
+  header.style.overflow = 'hidden';
+  header.style.textOverflow = 'ellipsis';
+  header.style.whiteSpace = 'nowrap';
+  header.textContent = doc.originalName;
+
+  const content = popup.document.createElement('div');
+  content.style.flex = '1';
+  content.style.minHeight = '0';
+  content.style.display = 'flex';
+  content.style.alignItems = 'center';
+  content.style.justifyContent = 'center';
+
+  shell.appendChild(header);
+  shell.appendChild(content);
+  docBody.appendChild(shell);
+
+  if (isPreviewable && url && mimeType.startsWith('image/')) {
+    const image = popup.document.createElement('img');
+    image.src = url;
+    image.alt = doc.originalName;
+    image.style.maxWidth = '100%';
+    image.style.maxHeight = 'calc(100vh - 48px)';
+    image.style.objectFit = 'contain';
+    image.onerror = () => {
+      content.replaceChildren();
+      const message = popup.document.createElement('div');
+      message.style.padding = '24px';
+      message.style.textAlign = 'center';
+      message.textContent = 'Apercu image non supporte par ce navigateur.';
+      content.appendChild(message);
+    };
+    content.appendChild(image);
+    return;
+  }
+
+  if (isPreviewable && url && mimeType === 'application/pdf') {
+    const frame = popup.document.createElement('iframe');
+    frame.title = doc.originalName;
+    frame.src = url;
+    frame.style.width = '100%';
+    frame.style.height = 'calc(100vh - 48px)';
+    frame.style.border = 'none';
+    content.appendChild(frame);
+    return;
+  }
+
+  const panel = popup.document.createElement('div');
+  panel.style.maxWidth = '520px';
+  panel.style.padding = '28px';
+  panel.style.textAlign = 'center';
+  panel.style.border = '1px solid rgba(255,255,255,0.10)';
+  panel.style.background = '#0f172a';
+  panel.style.borderRadius = '8px';
+
+  const badge = popup.document.createElement('div');
+  badge.style.margin = '0 auto 14px';
+  badge.style.width = '72px';
+  badge.style.height = '72px';
+  badge.style.display = 'grid';
+  badge.style.placeItems = 'center';
+  badge.style.border = '1px solid rgba(125,211,252,0.28)';
+  badge.style.borderRadius = '8px';
+  badge.style.color = '#7dd3fc';
+  badge.style.fontWeight = '900';
+  badge.textContent = cadExtensions.has(ext.toLowerCase()) ? '3D' : ext;
+
+  const title = popup.document.createElement('div');
+  title.style.fontSize = '16px';
+  title.style.fontWeight = '800';
+  title.style.marginBottom = '8px';
+  title.textContent = doc.originalName;
+
+  const hint = popup.document.createElement('div');
+  hint.style.color = '#94a3b8';
+  hint.style.fontSize = '13px';
+  hint.style.lineHeight = '1.5';
+  hint.textContent = cadExtensions.has(ext.toLowerCase())
+    ? 'Apercu CAD non disponible dans le navigateur sans viewer/converter. Aucun telechargement lance.'
+    : 'Apercu non disponible pour ce type de fichier. Aucun telechargement lance.';
+
+  panel.appendChild(badge);
+  panel.appendChild(title);
+  panel.appendChild(hint);
+  content.appendChild(panel);
+};
+
+const getInitialProductionTab = (): 'production' | 'clients' => {
+  if (typeof window === 'undefined') return 'production';
+  try {
+    const savedTab = window.sessionStorage.getItem('production-main-tab');
+    return savedTab === 'clients' ? 'clients' : 'production';
+  } catch {
+    return 'production';
+  }
+};
+
+const toNumber = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizePieceStatus = (status: unknown): Piece['status'] => {
+  const raw = normalizeKey(String(status || ''));
+  if (raw.includes('termin')) return 'Terminé';
+  if (raw.includes('control') || raw.includes('contr')) return 'Contrôle';
+  return 'En cours';
+};
+
+const getPieceStatusConfig = (status: unknown) => statusConfig[normalizePieceStatus(status)];
+const getMachineChain = (piece: Partial<Piece> | null | undefined) => (
+  Array.isArray(piece?.machineChain) ? piece.machineChain.filter(Boolean) : []
+);
+
 const ProductionPage: React.FC = () => {
   const [pieces, setPieces] = useState<Piece[]>([]);
-  const [mainTab, setMainTab] = useState<'production' | 'clients'>('production');
+  const [mainTab, setMainTab] = useState<'production' | 'clients'>(getInitialProductionTab);
   const [dossierPieceNames, setDossierPieceNames] = useState<string[]>([]);
   const [employes, setEmployes] = useState<string[]>([]);
   const [machines, setMachines] = useState<MachineApi[]>([]);
@@ -111,6 +285,14 @@ const ProductionPage: React.FC = () => {
 
   const token = localStorage.getItem('token') || '';
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('production-main-tab', mainTab);
+    } catch {
+      // optional persistence
+    }
+  }, [mainTab]);
 
   // ── Fetch employés (role = 'employe' seulement) ──
   const fetchEmployes = async () => {
@@ -189,13 +371,17 @@ const ProductionPage: React.FC = () => {
   }, []);
 
   // Stats
-  const totalProduction = pieces.reduce((s, p) => s + p.quantite, 0);
-  const totalProduit = pieces.reduce((s, p) => s + (p.quantiteProduite || 0), 0);
-  const enCours = pieces.filter(p => p.status === 'En cours').length;
-  const terminees = pieces.filter(p => p.status === 'Terminé').length;
+  const totalProduction = pieces.reduce((s, p) => s + toNumber(p.quantite), 0);
+  const totalProduit = pieces.reduce((s, p) => s + toNumber(p.quantiteProduite), 0);
+  const enCours = pieces.filter(p => normalizePieceStatus(p.status) === 'En cours').length;
+  const terminees = pieces.filter(p => normalizePieceStatus(p.status) === 'Terminé').length;
   const alertes = pieces.filter(p => !p.matiere);
+  const piecesNoquete = pieces.filter((p) => {
+    const requiredQty = toNumber(p.quantite);
+    return requiredQty > 0 && toNumber(p.quantiteProduite) < requiredQty && normalizePieceStatus(p.status) !== 'Terminé';
+  });
 
-  const filtrees = filtre === 'Toutes' ? pieces : pieces.filter(p => p.status === filtre);
+  const filtrees = filtre === 'Toutes' ? pieces : pieces.filter(p => normalizePieceStatus(p.status) === filtre);
 
   const dossiersByPiece = useMemo(() => {
     return dossiers.reduce<Record<string, DossierDocument[]>>((acc, doc) => {
@@ -353,14 +539,57 @@ const ProductionPage: React.FC = () => {
     return docs.find((doc) => isImageDoc(doc)) || docs.find((doc) => isPdfDoc(doc)) || docs.find((doc) => isCadDoc(doc)) || null;
   };
 
-  const openDocumentInBrowser = (doc: DossierDocument) => {
-    if (!doc.publicPath) return;
-    window.open(`${APP_BASE}${doc.publicPath}`, '_blank', 'noopener,noreferrer');
+  const openDocumentInBrowser = async (doc: DossierDocument) => {
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) return;
+    popup.opener = null;
+    popup.document.title = doc.originalName;
+    popup.document.body.style.margin = '0';
+    popup.document.body.style.minHeight = '100vh';
+    popup.document.body.style.display = 'grid';
+    popup.document.body.style.placeItems = 'center';
+    popup.document.body.style.background = '#0f172a';
+    popup.document.body.style.color = '#e2e8f0';
+    popup.document.body.style.fontFamily = 'Arial, sans-serif';
+    popup.document.body.textContent = `Ouverture de ${doc.originalName}...`;
+
+    if (doc.publicPath) {
+      renderDocumentWindow(popup, doc, canPreviewInBrowser(doc) ? `${APP_BASE}${doc.publicPath}` : null);
+      return;
+    }
+
+    if (!canPreviewInBrowser(doc)) {
+      renderDocumentWindow(popup, doc, null);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API}/dossiers/${doc._id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await readJsonMaybe(res);
+        throw new Error(data.message || 'Ouverture impossible');
+      }
+
+      const rawBlob = await res.blob();
+      const mimeType = getDisplayMimeType(doc);
+      const blob = rawBlob.type === mimeType ? rawBlob : new Blob([rawBlob], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      renderDocumentWindow(popup, doc, url);
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+    } catch {
+      popup.close();
+    }
   };
 
   const openDocumentPreview = (doc: DossierDocument | null) => {
-    if (!doc?.publicPath) return;
-    setPreviewDoc(doc);
+    if (!doc) return;
+    if (doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc))) {
+      setPreviewDoc(doc);
+      return;
+    }
+    openDocumentInBrowser(doc);
   };
 
   const card: React.CSSProperties = { background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 };
@@ -379,7 +608,7 @@ const ProductionPage: React.FC = () => {
             background: mainTab === tab ? 'linear-gradient(135deg,rgba(0,102,255,0.15),rgba(0,212,255,0.15))' : 'rgba(30,41,59,0.6)',
             color: mainTab === tab ? '#00d4ff' : '#64748b',
           }}>
-            {tab === 'production' ? '🏭 Production' : '📁 Clients'}
+            {tab === 'production' ? 'Production' : 'Clients'}
           </button>
         ))}
       </div>
@@ -394,7 +623,7 @@ const ProductionPage: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>🏭 Production</h2>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces de l'usine</p>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces et tâches de l'usine</p>
           </div>
           <button onClick={() => {
             setSelectedDossierClient('');
@@ -429,6 +658,27 @@ const ProductionPage: React.FC = () => {
             </div>
           ))}
         </div>
+
+        {/* ── Noquète (quantité manquante) ── */}
+        {piecesNoquete.length > 0 && (
+          <div style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderLeft: '4px solid #f97316', borderRadius: 12, padding: '14px 18px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <AlertTriangle size={16} color="#f97316" />
+              <span style={{ color: '#f97316', fontWeight: 700, fontSize: 13 }}>⚠️ Quantité insuffisante — {piecesNoquete.length} pièce(s)</span>
+            </div>
+            {piecesNoquete.map(p => {
+              const produit = p.quantiteProduite || 0;
+              const manque = p.quantite - produit;
+              return (
+                <div key={p._id} style={{ color: '#fdba74', fontSize: 12, marginBottom: 3, display: 'flex', gap: 8 }}>
+                  <span>• <strong>{p.nom}</strong></span>
+                  <span style={{ color: '#94a3b8' }}>({produit}/{p.quantite} pcs — manque {manque})</span>
+                  <span style={{ color: '#64748b' }}>{p.machine} · {p.employe}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── Alertes matière ── */}
         {alertes.length > 0 && (
@@ -480,7 +730,11 @@ const ProductionPage: React.FC = () => {
               Aucune pièce — ajoutez-en une !
             </div>
           ) : filtrees.map(piece => {
-            const st = statusConfig[piece.status];
+            const st = getPieceStatusConfig(piece.status);
+            const pieceStatus = normalizePieceStatus(piece.status);
+            const requiredQty = toNumber(piece.quantite);
+            const producedQty = toNumber(piece.quantiteProduite);
+            const machineChain = getMachineChain(piece);
             const pieceDocs = getPieceDocuments(piece.nom);
             const previewDoc = getPrimaryPreviewDoc(piece.nom);
             return (
@@ -497,7 +751,7 @@ const ProductionPage: React.FC = () => {
                     openDocumentPreview(previewDoc);
                   }}
                   style={{ height: 130, background: 'rgba(15,23,42,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-                  title={previewDoc?.publicPath ? 'Double clic pour ouvrir dans la page' : undefined}
+                  title={previewDoc ? 'Double clic pour ouvrir' : undefined}
                 >
                   {previewDoc && isImageDoc(previewDoc) && previewDoc.publicPath ? (
                     <img
@@ -528,7 +782,7 @@ const ProductionPage: React.FC = () => {
                   </div>
                   <div style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
                     <div style={{ fontSize: 11, color: '#cbd5e1' }}>
-                      Qté requise: <span style={{ color: '#ffffff', fontWeight: 700 }}>{piece.quantite} pcs</span>
+                      Qté requise: <span style={{ color: '#ffffff', fontWeight: 700 }}>{requiredQty} pcs</span>
                     </div>
                     {piece.dimension && (
                       <div style={{ fontSize: 11, color: '#94a3b8' }}>
@@ -541,24 +795,24 @@ const ProductionPage: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  {piece.machineChain && piece.machineChain.length > 1 && (
+                  {machineChain.length > 1 && (
                     <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8 }}>
-                      {piece.machineChain.join(' -> ')}
+                      {machineChain.join(' -> ')}
                     </div>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: st.bg, border: `1px solid ${st.border}`, color: st.color, fontWeight: 600 }}>
                       {st.label}
                     </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#00d4ff' }}>{piece.quantiteProduite || 0}/{piece.quantite} pcs</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#00d4ff' }}>{producedQty}/{requiredQty} pcs</span>
                   </div>
                   {/* Progress bar */}
-                  {piece.quantite > 0 && (
+                  {requiredQty > 0 && (
                     <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', borderRadius: 2, background: piece.status === 'Terminé' ? '#22c55e' : '#3b82f6', width: `${Math.min(100, ((piece.quantiteProduite || 0) / piece.quantite) * 100)}%`, transition: 'width 0.5s' }} />
+                      <div style={{ height: '100%', borderRadius: 2, background: pieceStatus === 'Terminé' ? '#22c55e' : '#3b82f6', width: `${Math.min(100, (producedQty / requiredQty) * 100)}%`, transition: 'width 0.5s' }} />
                     </div>
                   )}
-                  {piece.machineChain && piece.machineChain.length > 1 && piece.status !== 'Terminé' && (
+                  {machineChain.length > 1 && pieceStatus !== 'Terminé' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); progresserPiece(piece._id); }}
                       style={{ marginTop: 8, width: '100%', border: 'none', borderRadius: 7, background: '#1e40af', color: 'white', padding: '6px 8px', fontSize: 11, cursor: 'pointer' }}
@@ -619,21 +873,20 @@ const ProductionPage: React.FC = () => {
               </div>
 
               <div style={{ padding: '18px 22px' }}>
-                <>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                       {[
                         { label: 'Machine', value: selectedPiece.machine, icon: <Wrench size={13} /> },
                         { label: 'Machine actuelle', value: selectedPiece.currentMachine || selectedPiece.machine, icon: <Wrench size={13} /> },
                         { label: 'Employé', value: selectedPiece.employe, icon: <User size={13} /> },
-                        { label: 'Qté requise', value: `${selectedPiece.quantite} pcs`, icon: <Package size={13} /> },
-                        { label: 'Qté produite', value: `${selectedPiece.quantiteProduite || 0} pcs`, icon: <CheckCircle size={13} /> },
+                        { label: 'Qté requise', value: `${toNumber(selectedPiece.quantite)} pcs`, icon: <Package size={13} /> },
+                        { label: 'Qté produite', value: `${toNumber(selectedPiece.quantiteProduite)} pcs`, icon: <CheckCircle size={13} /> },
                         { label: 'Dimension', value: selectedPiece.dimension || 'Non renseignée', icon: <Package size={13} /> },
                         { label: 'Type matière', value: selectedPiece.matiereType || 'Non renseigné', icon: <Package size={13} /> },
                         { label: 'Référence matière', value: selectedPiece.matiereReference || 'Non renseignée', icon: <Package size={13} /> },
                         { label: 'Matière disponible', value: selectedPiece.matiere ? 'Oui' : 'Non', icon: <CheckCircle size={13} /> },
-                        { label: 'Status', value: statusConfig[selectedPiece.status].label, icon: <CheckCircle size={13} /> },
-                        ...((selectedPiece.machineChain && selectedPiece.machineChain.length > 1)
-                          ? [{ label: 'Enchainement', value: selectedPiece.machineChain.join(' -> '), icon: <Clock size={13} /> }]
+                        { label: 'Status', value: getPieceStatusConfig(selectedPiece.status).label, icon: <CheckCircle size={13} /> },
+                        ...(getMachineChain(selectedPiece).length > 1
+                          ? [{ label: 'Enchainement', value: getMachineChain(selectedPiece).join(' -> '), icon: <Clock size={13} /> }]
                           : []),
                       ].map(row => (
                         <div key={row.label} style={{ background: 'rgba(30,41,59,0.6)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -658,7 +911,7 @@ const ProductionPage: React.FC = () => {
                         </button>
                       </div>
                     )}
-                    {((selectedPiece.machineChain || []).length > 1) && selectedPiece.status !== 'Terminé' && (
+                    {getMachineChain(selectedPiece).length > 1 && normalizePieceStatus(selectedPiece.status) !== 'Terminé' && (
                       <button
                         onClick={() => progresserPiece(selectedPiece._id)}
                         style={{ width: '100%', padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontSize: 13, fontWeight: 700, marginBottom: 10 }}
@@ -687,10 +940,8 @@ const ProductionPage: React.FC = () => {
                           {getPieceDocuments(selectedPiece.nom).map((doc) => (
                             <div
                               key={doc._id}
-                              onDoubleClick={() => {
-                                if (isImageDoc(doc) || isPdfDoc(doc)) openDocumentPreview(doc);
-                              }}
-                              title={doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'Double clic pour ouvrir dans la page' : undefined}
+                              onDoubleClick={() => openDocumentPreview(doc)}
+                              title="Double clic pour ouvrir"
                               style={{
                                 display: 'flex',
                                 justifyContent: 'space-between',
@@ -700,7 +951,7 @@ const ProductionPage: React.FC = () => {
                                 borderRadius: 10,
                                 background: 'rgba(255,255,255,0.03)',
                                 border: '1px solid rgba(255,255,255,0.05)',
-                                cursor: doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'zoom-in' : 'default',
+                                cursor: 'pointer',
                               }}
                             >
                               <div style={{ minWidth: 0 }}>
@@ -710,69 +961,53 @@ const ProductionPage: React.FC = () => {
                                 </div>
                               </div>
                               <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                                {doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) && (
-                                  <button
-                                    onClick={() => openDocumentPreview(doc)}
-                                    style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}
-                                  >
-                                    Ouvrir ici
-                                  </button>
-                                )}
-                                {doc.publicPath && (
-                                  <button
-                                    onClick={() => openDocumentInBrowser(doc)}
-                                    style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.08)', color: 'white', fontSize: 11, fontWeight: 700 }}
-                                  >
-                                    Navigateur
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openDocumentPreview(doc);
+                                  }}
+                                  style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}
+                                >
+                                  Ouvrir
+                                </button>
                               </div>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
-                  </>
               </div>
             </div>
           </div>
         )}
 
-        {previewDoc?.publicPath && (
+        {previewDoc && (
           <div
             onClick={() => setPreviewDoc(null)}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.88)', zIndex: 260, padding: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 260, padding: 20 }}
           >
             <div
-              onClick={(e) => e.stopPropagation()}
-              style={{ width: 'min(1100px, 100%)', height: 'min(88vh, 900px)', background: '#020617', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+              onClick={(event) => event.stopPropagation()}
+              style={{ width: 'min(960px, 100%)', height: 'min(720px, 90vh)', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ color: 'white', fontSize: 14, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{previewDoc.originalName}</div>
-                  <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>Aperçu dans la même page</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <div style={{ color: 'white', fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {previewDoc.originalName}
                 </div>
-                <button
-                  onClick={() => setPreviewDoc(null)}
-                  style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: 8, width: 34, height: 34, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  title="Fermer"
-                >
+                <button onClick={() => setPreviewDoc(null)} aria-label="Fermer" title="Fermer" style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <X size={16} />
                 </button>
               </div>
-              <div style={{ flex: 1, background: 'rgba(15,23,42,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {isImageDoc(previewDoc) ? (
-                  <img
-                    src={`${APP_BASE}${previewDoc.publicPath}`}
-                    alt={previewDoc.originalName}
-                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                  />
+              <div style={{ flex: 1, minHeight: 0, background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {isImageDoc(previewDoc) && previewDoc.publicPath ? (
+                  <img src={`${APP_BASE}${previewDoc.publicPath}`} alt={previewDoc.originalName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                ) : isPdfDoc(previewDoc) && previewDoc.publicPath ? (
+                  <iframe title={previewDoc.originalName} src={`${APP_BASE}${previewDoc.publicPath}#toolbar=0&navpanes=0&scrollbar=0`} style={{ width: '100%', height: '100%', border: 'none' }} />
                 ) : (
-                  <iframe
-                    title={previewDoc.originalName}
-                    src={`${APP_BASE}${previewDoc.publicPath}`}
-                    style={{ width: '100%', height: '100%', border: 'none' }}
-                  />
+                  <button type="button" onClick={() => openDocumentInBrowser(previewDoc)} style={{ padding: '10px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 12, fontWeight: 700 }}>
+                    Ouvrir dans le navigateur
+                  </button>
                 )}
               </div>
             </div>
@@ -831,10 +1066,8 @@ const ProductionPage: React.FC = () => {
                       {selectedDossierDocs.map((doc) => (
                         <div
                           key={doc._id}
-                          onDoubleClick={() => {
-                            if (isImageDoc(doc) || isPdfDoc(doc)) openDocumentPreview(doc);
-                          }}
-                          title={doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'Double clic pour ouvrir dans la page' : undefined}
+                          onDoubleClick={() => openDocumentPreview(doc)}
+                          title="Double clic pour ouvrir"
                           style={{
                             display: 'flex',
                             justifyContent: 'space-between',
@@ -843,7 +1076,7 @@ const ProductionPage: React.FC = () => {
                             padding: '10px 12px',
                             borderRadius: 10,
                             background: 'rgba(255,255,255,0.03)',
-                            cursor: doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc)) ? 'zoom-in' : 'default',
+                            cursor: 'pointer',
                           }}
                         >
                           <div>
@@ -852,11 +1085,16 @@ const ProductionPage: React.FC = () => {
                               {isImageDoc(doc) ? 'Image' : isPdfDoc(doc) ? 'PDF / Plan' : isCadDoc(doc) ? 'Fichier CAD' : 'Document'}
                             </div>
                           </div>
-                          {doc.publicPath && (
-                            <button type="button" onClick={() => (isImageDoc(doc) || isPdfDoc(doc) ? openDocumentPreview(doc) : openDocumentInBrowser(doc))} style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}>
-                              {isImageDoc(doc) || isPdfDoc(doc) ? 'Ouvrir ici' : 'Ouvrir'}
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openDocumentPreview(doc);
+                            }}
+                            style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}
+                          >
+                            Ouvrir
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -1035,7 +1273,7 @@ const ProductionPage: React.FC = () => {
 
                 <button onClick={ajouterPiece}
                   style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
-                  ✅ Ajouter la pièce
+                  Ajouter la piece
                 </button>
               </div>
             </div>

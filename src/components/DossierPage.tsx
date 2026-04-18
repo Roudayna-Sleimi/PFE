@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, Eye, PencilLine, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 
 const API = 'http://localhost:5000/api';
 
@@ -15,6 +15,7 @@ interface DossierDocument {
   uploadedBy: string | null;
   createdAt: string;
   size: number;
+  publicPath?: string;
 }
 
 type WatcherStatus = {
@@ -49,6 +50,164 @@ const formatSize = (size: number) => {
   return `${(size / (1024 * 1024)).toFixed(2)} Mo`;
 };
 
+const displayMimeByExt: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  ico: 'image/x-icon',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+};
+
+const cadExtensions = new Set(['stp', 'step', 'sldasm', 'sldprt', 'slddrw', 'igs', 'iges', 'dxf', 'dwg']);
+
+const getFileExtension = (filename = '') => {
+  const ext = filename.includes('.') ? filename.split('.').pop() || '' : '';
+  return ext.trim().toLowerCase();
+};
+
+const getDisplayMimeType = (doc: DossierDocument) => {
+  const ext = getFileExtension(doc.originalName);
+  if (displayMimeByExt[ext]) return displayMimeByExt[ext];
+  if (doc.mimeType && doc.mimeType !== 'application/octet-stream') return doc.mimeType;
+  return 'application/octet-stream';
+};
+
+const getFileBadge = (doc: DossierDocument) => {
+  const ext = getFileExtension(doc.originalName);
+  const mime = String(doc.mimeType || '');
+  if (ext === 'pdf' || mime === 'application/pdf') return 'PDF';
+  if (displayMimeByExt[ext]?.startsWith('image/') || mime.startsWith('image/')) return 'IMG';
+  if (cadExtensions.has(ext)) return '3D';
+  return (ext || 'FILE').slice(0, 4).toUpperCase();
+};
+
+const canPreviewInBrowser = (doc: DossierDocument) => {
+  const mimeType = getDisplayMimeType(doc);
+  return mimeType === 'application/pdf' || mimeType.startsWith('image/');
+};
+
+const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string | null) => {
+  const mimeType = getDisplayMimeType(doc);
+  const ext = getFileExtension(doc.originalName).toUpperCase() || 'FILE';
+  const isPreviewable = canPreviewInBrowser(doc);
+  const docBody = popup.document.body;
+
+  popup.document.title = doc.originalName;
+  docBody.replaceChildren();
+  docBody.style.margin = '0';
+  docBody.style.minHeight = '100vh';
+  docBody.style.background = '#020617';
+  docBody.style.color = '#e2e8f0';
+  docBody.style.fontFamily = 'Arial, sans-serif';
+
+  const shell = popup.document.createElement('div');
+  shell.style.minHeight = '100vh';
+  shell.style.display = 'flex';
+  shell.style.flexDirection = 'column';
+
+  const header = popup.document.createElement('div');
+  header.style.padding = '12px 16px';
+  header.style.borderBottom = '1px solid rgba(255,255,255,0.10)';
+  header.style.background = '#0f172a';
+  header.style.fontSize = '13px';
+  header.style.fontWeight = '700';
+  header.style.overflow = 'hidden';
+  header.style.textOverflow = 'ellipsis';
+  header.style.whiteSpace = 'nowrap';
+  header.textContent = doc.originalName;
+
+  const content = popup.document.createElement('div');
+  content.style.flex = '1';
+  content.style.minHeight = '0';
+  content.style.display = 'flex';
+  content.style.alignItems = 'center';
+  content.style.justifyContent = 'center';
+
+  shell.appendChild(header);
+  shell.appendChild(content);
+  docBody.appendChild(shell);
+
+  if (isPreviewable && url && mimeType.startsWith('image/')) {
+    const image = popup.document.createElement('img');
+    image.src = url;
+    image.alt = doc.originalName;
+    image.style.maxWidth = '100%';
+    image.style.maxHeight = 'calc(100vh - 48px)';
+    image.style.objectFit = 'contain';
+    image.onerror = () => {
+      content.replaceChildren();
+      const message = popup.document.createElement('div');
+      message.style.padding = '24px';
+      message.style.textAlign = 'center';
+      message.textContent = 'Apercu image non supporte par ce navigateur.';
+      content.appendChild(message);
+    };
+    content.appendChild(image);
+    return;
+  }
+
+  if (isPreviewable && url && mimeType === 'application/pdf') {
+    const frame = popup.document.createElement('iframe');
+    frame.title = doc.originalName;
+    frame.src = url;
+    frame.style.width = '100%';
+    frame.style.height = 'calc(100vh - 48px)';
+    frame.style.border = 'none';
+    content.appendChild(frame);
+    return;
+  }
+
+  const panel = popup.document.createElement('div');
+  panel.style.maxWidth = '520px';
+  panel.style.padding = '28px';
+  panel.style.textAlign = 'center';
+  panel.style.border = '1px solid rgba(255,255,255,0.10)';
+  panel.style.background = '#0f172a';
+  panel.style.borderRadius = '8px';
+
+  const badge = popup.document.createElement('div');
+  badge.style.margin = '0 auto 14px';
+  badge.style.width = '72px';
+  badge.style.height = '72px';
+  badge.style.display = 'grid';
+  badge.style.placeItems = 'center';
+  badge.style.border = '1px solid rgba(125,211,252,0.28)';
+  badge.style.borderRadius = '8px';
+  badge.style.color = '#7dd3fc';
+  badge.style.fontWeight = '900';
+  badge.textContent = cadExtensions.has(ext.toLowerCase()) ? '3D' : ext;
+
+  const title = popup.document.createElement('div');
+  title.style.fontSize = '16px';
+  title.style.fontWeight = '800';
+  title.style.marginBottom = '8px';
+  title.textContent = doc.originalName;
+
+  const hint = popup.document.createElement('div');
+  hint.style.color = '#94a3b8';
+  hint.style.fontSize = '13px';
+  hint.style.lineHeight = '1.5';
+  hint.textContent = cadExtensions.has(ext.toLowerCase())
+    ? 'Apercu CAD non disponible dans le navigateur sans viewer/converter. Aucun telechargement lance.'
+    : 'Apercu non disponible pour ce type de fichier. Aucun telechargement lance.';
+
+  panel.appendChild(badge);
+  panel.appendChild(title);
+  panel.appendChild(hint);
+  content.appendChild(panel);
+};
+
+const expandedAria = (expanded: boolean): Pick<React.AriaAttributes, 'aria-expanded'> => ({
+  'aria-expanded': expanded ? 'true' : 'false',
+});
+
 const DossierPage: React.FC = () => {
   const [documents, setDocuments] = useState<DossierDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,16 +222,6 @@ const DossierPage: React.FC = () => {
   const [clientOptions, setClientOptions] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [watcherStatus, setWatcherStatus] = useState<WatcherStatus | null>(null);
-
-  const [preview, setPreview] = useState<{ url: string; title: string; mimeType?: string } | null>(null);
-  const [editingDoc, setEditingDoc] = useState<DossierDocument | null>(null);
-  const [editForm, setEditForm] = useState({
-    clientLastName: '',
-    clientFirstName: '',
-    projectName: '',
-    pieceName: '',
-    storageDate: '',
-  });
 
   const token = localStorage.getItem('token') || '';
   const role = localStorage.getItem('role') || 'user';
@@ -180,31 +329,30 @@ const DossierPage: React.FC = () => {
     }
   };
 
-  const handleDownload = async (id: string, filename: string) => {
-    try {
-      const res = await fetch(`${API}/dossiers/${id}/download`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const data = await readJsonMaybe(res);
-        throw new Error(data.message || 'Téléchargement impossible');
-      }
-
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur de téléchargement');
+  const openDocument = async (doc: DossierDocument) => {
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) {
+      setError('Fenetre bloquee par le navigateur. Autorisez les popups pour ouvrir le fichier.');
+      return;
     }
-  };
+    popup.opener = null;
+    popup.document.title = doc.originalName;
+    popup.document.body.style.margin = '0';
+    popup.document.body.style.minHeight = '100vh';
+    popup.document.body.style.display = 'grid';
+    popup.document.body.style.placeItems = 'center';
+    popup.document.body.style.background = '#0f172a';
+    popup.document.body.style.color = '#e2e8f0';
+    popup.document.body.style.fontFamily = 'Arial, sans-serif';
+    const loadingText = popup.document.createElement('p');
+    loadingText.textContent = `Ouverture de ${doc.originalName}...`;
+    popup.document.body.appendChild(loadingText);
 
-  const openPreview = async (doc: DossierDocument) => {
+    if (!canPreviewInBrowser(doc)) {
+      renderDocumentWindow(popup, doc, null);
+      return;
+    }
+
     try {
       setError('');
       setMessage('');
@@ -214,67 +362,18 @@ const DossierPage: React.FC = () => {
       });
       if (!res.ok) {
         const data = await readJsonMaybe(res);
-        throw new Error(data.message || 'Preview impossible');
+        throw new Error(data.message || 'Ouverture impossible');
       }
-      const blob = await res.blob();
+
+      const rawBlob = await res.blob();
+      const mimeType = getDisplayMimeType(doc);
+      const blob = rawBlob.type === mimeType ? rawBlob : new Blob([rawBlob], { type: mimeType });
       const url = window.URL.createObjectURL(blob);
-      setPreview({ url, title: doc.originalName, mimeType: doc.mimeType });
+      renderDocumentWindow(popup, doc, url);
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur preview');
-    }
-  };
-
-  const closePreview = () => {
-    if (preview?.url) window.URL.revokeObjectURL(preview.url);
-    setPreview(null);
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      setError('');
-      const res = await fetch(`${API}/dossiers/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await readJsonMaybe(res);
-      if (!res.ok) throw new Error(data.message || 'Suppression impossible');
-      setDocuments((prev) => prev.filter((d) => d._id !== id));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur de suppression');
-    }
-  };
-
-  const startEdit = (doc: DossierDocument) => {
-    setEditingDoc(doc);
-    setEditForm({
-      clientLastName: doc.clientLastName || '',
-      clientFirstName: doc.clientFirstName || '',
-      projectName: doc.projectName || '',
-      pieceName: doc.pieceName || '',
-      storageDate: (doc.storageDate || '').slice(0, 10),
-    });
-  };
-
-  const saveEdit = async () => {
-    if (!editingDoc) return;
-    try {
-      setError('');
-      setMessage('');
-      const res = await fetch(`${API}/dossiers/${editingDoc._id}`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(editForm),
-      });
-      const data = await readJsonMaybe(res);
-      if (!res.ok) throw new Error(data.message || 'Mise à jour impossible');
-      setDocuments((prev) => prev.map((d) => (d._id === editingDoc._id ? data : d)));
-      setEditingDoc(null);
-      setMessage('Métadonnées mises à jour.');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur de mise à jour');
+      popup.close();
+      setError(e instanceof Error ? e.message : 'Erreur ouverture fichier');
     }
   };
 
@@ -337,6 +436,52 @@ const DossierPage: React.FC = () => {
   const toggleProject = (key: string) => setExpandedProjects((p) => ({ ...p, [key]: !p[key] }));
   const togglePiece = (key: string) => setExpandedPieces((p) => ({ ...p, [key]: !p[key] }));
 
+  useEffect(() => {
+    if (tree.length === 0) return;
+
+    setExpandedClients((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      tree.forEach((clientNode) => {
+        if (next[clientNode.key] === undefined) {
+          next[clientNode.key] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    setExpandedProjects((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      tree.forEach((clientNode) => {
+        clientNode.projects.forEach((projectNode) => {
+          if (next[projectNode.key] === undefined) {
+            next[projectNode.key] = true;
+            changed = true;
+          }
+        });
+      });
+      return changed ? next : prev;
+    });
+
+    setExpandedPieces((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      tree.forEach((clientNode) => {
+        clientNode.projects.forEach((projectNode) => {
+          projectNode.pieces.forEach((pieceNode) => {
+            if (next[pieceNode.key] === undefined) {
+              next[pieceNode.key] = true;
+              changed = true;
+            }
+          });
+        });
+      });
+      return changed ? next : prev;
+    });
+  }, [tree]);
+
   return (
     <div style={{ flex: 1, padding: 24, overflowY: 'auto', minWidth: 0, width: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 18, flexWrap: 'wrap' }}>
@@ -393,15 +538,21 @@ const DossierPage: React.FC = () => {
       <div style={{ ...cardStyle, padding: 18, marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
           <div>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Recherche</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher un client, projet, pièce, fichier..." style={inputStyle} />
+            <label htmlFor="dossier-search" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Recherche</label>
+            <input
+              id="dossier-search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher un client, projet, pièce, fichier..."
+              style={inputStyle}
+            />
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginTop: 12 }}>
           <div>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Projet</label>
-            <select value={project} onChange={(e) => setProject(e.target.value)} style={inputStyle} title="Projet">
+            <label htmlFor="dossier-project-filter" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Projet</label>
+            <select id="dossier-project-filter" value={project} onChange={(e) => setProject(e.target.value)} style={inputStyle} title="Projet">
               <option value="">Tous les projets</option>
               {projectOptions.map((name) => (
                 <option key={name} value={name}>{name}</option>
@@ -409,8 +560,8 @@ const DossierPage: React.FC = () => {
             </select>
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Client</label>
-            <select value={client} onChange={(e) => setClient(e.target.value)} style={inputStyle} title="Client">
+            <label htmlFor="dossier-client-filter" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Client</label>
+            <select id="dossier-client-filter" value={client} onChange={(e) => setClient(e.target.value)} style={inputStyle} title="Client">
               <option value="">Tous les clients</option>
               {clientOptions.map((name) => (
                 <option key={name} value={name}>{name}</option>
@@ -418,8 +569,14 @@ const DossierPage: React.FC = () => {
             </select>
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Pièce</label>
-            <input value={piece} onChange={(e) => setPiece(e.target.value)} placeholder="Ex: Piece1" style={inputStyle} />
+            <label htmlFor="dossier-piece-filter" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Pièce</label>
+            <input
+              id="dossier-piece-filter"
+              value={piece}
+              onChange={(e) => setPiece(e.target.value)}
+              placeholder="Ex: Piece1"
+              style={inputStyle}
+            />
           </div>
         </div>
 
@@ -449,7 +606,8 @@ const DossierPage: React.FC = () => {
         </div>
       </div>
 
-      {(message || error) && (        <div style={{
+      {(message || error) && (
+        <div style={{
           ...cardStyle,
           padding: '12px 16px',
           marginBottom: 18,
@@ -486,7 +644,7 @@ const DossierPage: React.FC = () => {
                     fontWeight: 900,
                   }}
                   title="Afficher/masquer"
-                  aria-expanded={!!expandedClients[c.key]}
+                  {...expandedAria(Boolean(expandedClients[c.key]))}
                 >
                   <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     {expandedClients[c.key] ? <ChevronDown size={16} color="#94a3b8" /> : <ChevronRight size={16} color="#94a3b8" />}
@@ -516,7 +674,7 @@ const DossierPage: React.FC = () => {
                             fontWeight: 800,
                           }}
                           title="Afficher/masquer"
-                          aria-expanded={!!expandedProjects[p.key]}
+                          {...expandedAria(Boolean(expandedProjects[p.key]))}
                         >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                             {expandedProjects[p.key] ? <ChevronDown size={16} color="#94a3b8" /> : <ChevronRight size={16} color="#94a3b8" />}
@@ -546,7 +704,7 @@ const DossierPage: React.FC = () => {
                                     fontWeight: 800,
                                   }}
                                   title="Afficher/masquer"
-                                  aria-expanded={!!expandedPieces[pi.key]}
+                                  {...expandedAria(Boolean(expandedPieces[pi.key]))}
                                 >
                                   <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                                     {expandedPieces[pi.key] ? <ChevronDown size={16} color="#94a3b8" /> : <ChevronRight size={16} color="#94a3b8" />}
@@ -558,10 +716,7 @@ const DossierPage: React.FC = () => {
                                 {expandedPieces[pi.key] && (
                                   <div style={{ padding: 10, display: 'grid', gap: 8 }}>
                                     {pi.docs.map((doc) => {
-                                      const mime = String(doc.mimeType || '');
-                                      const extRaw = doc.originalName.includes('.') ? doc.originalName.split('.').pop() || '' : '';
-                                      const ext = extRaw.trim().toUpperCase();
-                                      const badge = mime === 'application/pdf' ? 'PDF' : mime.startsWith('image/') ? 'IMG' : (ext || 'FILE').slice(0, 4);
+                                      const badge = getFileBadge(doc);
 
                                       return (
                                         <div
@@ -583,7 +738,20 @@ const DossierPage: React.FC = () => {
                                               <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.6, color: '#7dd3fc' }}>{badge}</span>
                                             </div>
                                             <div style={{ minWidth: 0 }}>
-                                              <div style={{ color: 'white', fontWeight: 800, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.originalName}>
+                                              <div
+                                                onDoubleClick={() => openDocument(doc)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    openDocument(doc);
+                                                  }
+                                                }}
+                                                role="button"
+                                                tabIndex={0}
+                                                style={{ color: 'white', fontWeight: 800, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                                                title="Double clic pour ouvrir"
+                                                aria-label={`Ouvrir ${doc.originalName}`}
+                                              >
                                                 {doc.originalName}
                                               </div>
                                               <div style={{ color: '#64748b', fontSize: 12, marginTop: 3 }}>
@@ -594,76 +762,28 @@ const DossierPage: React.FC = () => {
                                         </div>
 
                                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
-                                          {(doc.mimeType === 'application/pdf' || String(doc.mimeType || '').startsWith('image/')) && (
-                                            <button
-                                              onClick={() => openPreview(doc)}
-                                              style={{
-                                                width: 36,
-                                                height: 34,
-                                                borderRadius: 10,
-                                                border: '1px solid rgba(255,255,255,0.10)',
-                                                background: 'rgba(255,255,255,0.04)',
-                                                color: '#e2e8f0',
-                                                cursor: 'pointer',
-                                              }}
-                                              title="Voir"
-                                              aria-label="Voir"
-                                            >
-                                              <Eye size={16} />
-                                            </button>
-                                          )}
                                           <button
-                                            onClick={() => handleDownload(doc._id, doc.originalName)}
+                                            onClick={() => openDocument(doc)}
                                             style={{
-                                              width: 36,
                                               height: 34,
+                                              padding: '0 12px',
                                               borderRadius: 10,
                                               border: '1px solid rgba(56,189,248,0.24)',
                                               background: 'rgba(56,189,248,0.10)',
                                               color: '#7dd3fc',
                                               cursor: 'pointer',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: 6,
+                                              fontWeight: 900,
+                                              fontSize: 12,
                                             }}
-                                            title="Download"
-                                            aria-label="Download"
+                                            title="Ouvrir dans une autre fenetre"
+                                            aria-label={`Ouvrir ${doc.originalName}`}
                                           >
-                                            <Download size={16} />
+                                            <ExternalLink size={15} />
+                                            Ouvrir
                                           </button>
-                                          {role === 'admin' && (
-                                            <button
-                                              onClick={() => startEdit(doc)}
-                                              style={{
-                                                width: 36,
-                                                height: 34,
-                                                borderRadius: 10,
-                                                border: '1px solid rgba(56,189,248,0.24)',
-                                                background: 'rgba(56,189,248,0.08)',
-                                                color: '#7dd3fc',
-                                                cursor: 'pointer',
-                                              }}
-                                              title="Modifier"
-                                              aria-label="Modifier"
-                                            >
-                                              <PencilLine size={16} />
-                                            </button>
-                                          )}
-                                          {role === 'admin' && (
-                                            <button
-                                              onClick={() => handleDelete(doc._id)}
-                                              style={{
-                                                width: 36,
-                                                height: 34,
-                                                borderRadius: 10,
-                                                border: '1px solid rgba(239,68,68,0.25)',
-                                                background: 'rgba(239,68,68,0.08)',
-                                                color: '#f87171',
-                                                cursor: 'pointer',
-                                              }}
-                                              title="Supprimer"
-                                              aria-label="Supprimer"
-                                            >
-                                              <Trash2 size={16} />
-                                            </button>
-                                          )}
                                         </div>
                                       </div>
                                       );
@@ -683,173 +803,6 @@ const DossierPage: React.FC = () => {
           </div>
         )}
       </div>
-
-      {preview && (
-        <div
-          onClick={closePreview}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 18,
-            zIndex: 50,
-          }}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 'min(1100px, 100%)',
-              maxHeight: '92vh',
-              overflow: 'hidden',
-              borderRadius: 16,
-              border: '1px solid rgba(255,255,255,0.10)',
-              background: 'rgba(15,23,42,0.96)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-              <div style={{ color: 'white', fontWeight: 800, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={preview.title}>
-                {preview.title}
-              </div>
-              <button
-                onClick={closePreview}
-                style={{
-                  width: 40,
-                  height: 36,
-                  borderRadius: 10,
-                  border: '1px solid rgba(255,255,255,0.10)',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-                aria-label="Fermer"
-                title="Fermer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div style={{ height: 'calc(92vh - 58px)', maxHeight: 760, background: 'rgba(0,0,0,0.2)' }}>
-              {preview.mimeType?.startsWith('image/') ? (
-                <img src={preview.url} alt={preview.title} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
-              ) : preview.mimeType === 'application/pdf' ? (
-                <iframe title={preview.title} src={preview.url} style={{ width: '100%', height: '100%', border: 'none' }} />
-              ) : (
-                <div style={{ padding: 18, color: '#cbd5e1' }}>
-                  Aperçu non supporté.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editingDoc && (
-        <div
-          onClick={() => setEditingDoc(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 18,
-            zIndex: 60,
-          }}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 'min(720px, 100%)',
-              borderRadius: 16,
-              border: '1px solid rgba(255,255,255,0.10)',
-              background: 'rgba(15,23,42,0.96)',
-              padding: 16,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-              <div style={{ color: 'white', fontWeight: 900 }}>Modifier métadonnées</div>
-              <button
-                onClick={() => setEditingDoc(null)}
-                style={{
-                  width: 40,
-                  height: 36,
-                  borderRadius: 10,
-                  border: '1px solid rgba(255,255,255,0.10)',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-                aria-label="Fermer"
-                title="Fermer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Nom</label>
-                <input value={editForm.clientLastName} onChange={(e) => setEditForm((p) => ({ ...p, clientLastName: e.target.value }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Prénom</label>
-                <input value={editForm.clientFirstName} onChange={(e) => setEditForm((p) => ({ ...p, clientFirstName: e.target.value }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Projet</label>
-                <input value={editForm.projectName} onChange={(e) => setEditForm((p) => ({ ...p, projectName: e.target.value }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Pièce</label>
-                <input value={editForm.pieceName} onChange={(e) => setEditForm((p) => ({ ...p, pieceName: e.target.value }))} style={inputStyle} />
-              </div>
-              <div style={{ gridColumn: '1/-1' }}>
-                <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Date de stockage</label>
-                <input type="date" value={editForm.storageDate} onChange={(e) => setEditForm((p) => ({ ...p, storageDate: e.target.value }))} style={inputStyle} />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
-              <button
-                onClick={() => setEditingDoc(null)}
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: 10,
-                  border: '1px solid rgba(255,255,255,0.10)',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                  fontWeight: 800,
-                }}
-              >
-                Annuler
-              </button>
-              <button
-                onClick={saveEdit}
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: 10,
-                  border: 'none',
-                  background: 'linear-gradient(135deg,#0ea5e9,#22c55e)',
-                  color: 'white',
-                  cursor: 'pointer',
-                  fontWeight: 900,
-                }}
-              >
-                Enregistrer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

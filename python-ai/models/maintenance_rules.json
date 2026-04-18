@@ -1,0 +1,106 @@
+{
+  "version": "simple-rules-v1",
+  "created_at": "2026-04-17T22:07:18.700305+00:00",
+  "dataset_path": "C:\\Users\\dell\\Desktop\\pfe\\PFE\\python-ai\\data\\lstm_dataset.csv",
+  "features": [
+    "vibX",
+    "vibY",
+    "vibZ",
+    "courant",
+    "rpm"
+  ],
+  "thresholds": {
+    "current_warning": 15.0,
+    "current_critical": 20.0,
+    "vibration_warning": 2.0,
+    "vibration_critical": 3.0,
+    "pressure_warning_low": 4.5,
+    "pressure_warning_high": 10.0,
+    "pressure_critical_low": 3.5,
+    "pressure_critical_high": 11.0,
+    "baseline_min_points": 20,
+    "warning_zscore": 3.0,
+    "critical_zscore": 4.0
+  },
+  "label_counts": {
+    "normal": 12010,
+    "warning": 2,
+    "critical": 38
+  },
+  "machine_baselines": {
+    "ESP32-NODE-01": {
+      "vibX": {
+        "count": 12007,
+        "mean": 0.017795,
+        "std": 0.055494,
+        "min": -1.24,
+        "max": 0.35
+      },
+      "vibY": {
+        "count": 12007,
+        "mean": 0.062203,
+        "std": 0.073636,
+        "min": -0.4,
+        "max": 0.61
+      },
+      "vibZ": {
+        "count": 12007,
+        "mean": 0.891122,
+        "std": 0.052097,
+        "min": -1.3,
+        "max": 1.97
+      },
+      "courant": {
+        "count": 12007,
+        "mean": 0.000565,
+        "std": 0.061872,
+        "min": 0.0,
+        "max": 6.78
+      },
+      "rpm": {
+        "count": 12007,
+        "mean": 0.059965,
+        "std": 3.948077,
+        "min": 0.0,
+        "max": 300.0
+      }
+    },
+    "compresseur": {
+      "vibX": {
+        "count": 3,
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "vibY": {
+        "count": 3,
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "vibZ": {
+        "count": 3,
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "courant": {
+        "count": 3,
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "rpm": {
+        "count": 3,
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      }
+    }
+  }
+}
