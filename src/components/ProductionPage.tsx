@@ -31,6 +31,10 @@ interface Piece {
   matiereType?: string;
   matiereReference?: string;
   solidworksPath?: string;
+  planDocumentId?: string;
+  planPath?: string;
+  planName?: string;
+  planMimeType?: string;
 }
 
 interface MachineApi {
@@ -119,6 +123,12 @@ const readJsonMaybe = async (res: Response) => {
   } catch {
     return { message: String(text || '').replace(/\s+/g, ' ').trim() };
   }
+};
+
+const resolvePublicPathUrl = (publicPath?: string) => {
+  if (!publicPath) return '';
+  if (/^https?:\/\//i.test(publicPath)) return publicPath;
+  return `${APP_BASE}${publicPath.startsWith('/') ? publicPath : `/${publicPath}`}`;
 };
 
 const canPreviewInBrowser = (doc: DossierDocument) => {
@@ -274,6 +284,12 @@ const ProductionPage: React.FC = () => {
   const [filtre, setFiltre] = useState('Toutes');
   const [showForm, setShowForm] = useState(false);
   const [selectedPiece, setSelectedPiece] = useState<Piece | null>(null);
+  const [editingPieceInfo, setEditingPieceInfo] = useState(false);
+  const [pieceInfoDraft, setPieceInfoDraft] = useState({
+    dimension: '',
+    matiereType: '',
+    matiereReference: '',
+  });
   const [newPiece, setNewPiece] = useState<Partial<Piece>>({ matiere: true, status: 'En cours' });
   const [dossiers, setDossiers] = useState<DossierDocument[]>([]);
   const [selectedDossierClient, setSelectedDossierClient] = useState('');
@@ -376,11 +392,6 @@ const ProductionPage: React.FC = () => {
   const enCours = pieces.filter(p => normalizePieceStatus(p.status) === 'En cours').length;
   const terminees = pieces.filter(p => normalizePieceStatus(p.status) === 'Terminé').length;
   const alertes = pieces.filter(p => !p.matiere);
-  const piecesNoquete = pieces.filter((p) => {
-    const requiredQty = toNumber(p.quantite);
-    return requiredQty > 0 && toNumber(p.quantiteProduite) < requiredQty && normalizePieceStatus(p.status) !== 'Terminé';
-  });
-
   const filtrees = filtre === 'Toutes' ? pieces : pieces.filter(p => normalizePieceStatus(p.status) === filtre);
 
   const dossiersByPiece = useMemo(() => {
@@ -430,6 +441,10 @@ const ProductionPage: React.FC = () => {
     newPiece.matiereType ? materialOptions[newPiece.matiereType] || [] : []
   ), [newPiece.matiereType]);
 
+  const selectedEditMaterialReferences = useMemo(() => (
+    pieceInfoDraft.matiereType ? materialOptions[pieceInfoDraft.matiereType] || [] : []
+  ), [pieceInfoDraft.matiereType]);
+
 
   // ── Ajouter pièce ──
   const ajouterPiece = async () => {
@@ -452,11 +467,21 @@ const ProductionPage: React.FC = () => {
           solidworksPath: newPiece.solidworksPath || null,
           matiereType: newPiece.matiereType || '',
           matiereReference: newPiece.matiereReference || '',
+          planDocumentId: newPiece.planDocumentId || '',
+          planPath: newPiece.planPath || '',
+          planName: newPiece.planName || '',
+          planMimeType: newPiece.planMimeType || '',
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        setPieces(prev => [data, ...prev]);
+        const createdPiece = {
+          ...data,
+          dimension: data.dimension || newPiece.dimension || '',
+          matiereType: data.matiereType || newPiece.matiereType || '',
+          matiereReference: data.matiereReference || newPiece.matiereReference || '',
+        };
+        setPieces(prev => [createdPiece, ...prev]);
         setShowForm(false);
         setNewPiece({ matiere: true, status: 'En cours' });
         setChainSteps([]);
@@ -500,6 +525,45 @@ const ProductionPage: React.FC = () => {
     }
   };
 
+  const savePieceInfo = async () => {
+    if (!selectedPiece) return;
+    const payload = {
+      dimension: pieceInfoDraft.dimension.trim(),
+      matiereType: pieceInfoDraft.matiereType,
+      matiereReference: pieceInfoDraft.matiereReference,
+    };
+
+    try {
+      const res = await fetch(`${API}/pieces/${selectedPiece._id}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const updatedPiece = { ...selectedPiece, ...data, ...payload };
+        setPieces(prev => prev.map(piece => piece._id === updatedPiece._id ? updatedPiece : piece));
+        setSelectedPiece(updatedPiece);
+        setEditingPieceInfo(false);
+      }
+    } catch (err) {
+      console.error('Erreur mise a jour details piece:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedPiece) {
+      setEditingPieceInfo(false);
+      return;
+    }
+    setPieceInfoDraft({
+      dimension: selectedPiece.dimension || '',
+      matiereType: selectedPiece.matiereType || '',
+      matiereReference: selectedPiece.matiereReference || '',
+    });
+    setEditingPieceInfo(false);
+  }, [selectedPiece]);
+
   useEffect(() => {
     if (!selectedDossierClient) {
       setSelectedDossierProject('');
@@ -525,10 +589,15 @@ const ProductionPage: React.FC = () => {
   useEffect(() => {
     if (!selectedDossierPiece) return;
     const cadDoc = selectedDossierDocs.find((doc) => isCadDoc(doc));
+    const planDoc = selectedDossierDocs.find((doc) => isImageDoc(doc)) || selectedDossierDocs.find((doc) => isPdfDoc(doc)) || cadDoc || null;
     setNewPiece((prev) => ({
       ...prev,
       nom: selectedDossierPiece,
       solidworksPath: cadDoc?.publicPath || prev.solidworksPath || undefined,
+      planDocumentId: planDoc?._id || '',
+      planPath: planDoc?.publicPath || '',
+      planName: planDoc?.originalName || '',
+      planMimeType: planDoc ? getDisplayMimeType(planDoc) : '',
     }));
   }, [selectedDossierDocs, selectedDossierPiece]);
 
@@ -537,6 +606,26 @@ const ProductionPage: React.FC = () => {
   const getPrimaryPreviewDoc = (pieceName: string) => {
     const docs = getPieceDocuments(pieceName);
     return docs.find((doc) => isImageDoc(doc)) || docs.find((doc) => isPdfDoc(doc)) || docs.find((doc) => isCadDoc(doc)) || null;
+  };
+
+  const getPiecePreviewDoc = (piece: Piece) => {
+    const linkedDoc = getPrimaryPreviewDoc(piece.nom);
+    if (linkedDoc) return linkedDoc;
+
+    const planPath = piece.planPath || piece.solidworksPath || '';
+    const planName = piece.planName || (planPath ? planPath.split('/').pop() || 'Plan piece' : '');
+    if (!planPath && !planName) return null;
+
+    return {
+      _id: piece.planDocumentId || `${piece._id}-plan`,
+      originalName: planName || 'Plan piece',
+      mimeType: piece.planMimeType || displayMimeByExt[getFileExtension(planName || planPath)] || '',
+      publicPath: planPath,
+      clientLastName: '',
+      clientFirstName: '',
+      projectName: '',
+      pieceName: piece.nom,
+    };
   };
 
   const openDocumentInBrowser = async (doc: DossierDocument) => {
@@ -554,7 +643,7 @@ const ProductionPage: React.FC = () => {
     popup.document.body.textContent = `Ouverture de ${doc.originalName}...`;
 
     if (doc.publicPath) {
-      renderDocumentWindow(popup, doc, canPreviewInBrowser(doc) ? `${APP_BASE}${doc.publicPath}` : null);
+      renderDocumentWindow(popup, doc, canPreviewInBrowser(doc) ? resolvePublicPathUrl(doc.publicPath) : null);
       return;
     }
 
@@ -608,7 +697,7 @@ const ProductionPage: React.FC = () => {
             background: mainTab === tab ? 'linear-gradient(135deg,rgba(0,102,255,0.15),rgba(0,212,255,0.15))' : 'rgba(30,41,59,0.6)',
             color: mainTab === tab ? '#00d4ff' : '#64748b',
           }}>
-            {tab === 'production' ? 'Production' : 'Clients'}
+            {tab === 'production' ? 'Les pièces' : 'Clients'}
           </button>
         ))}
       </div>
@@ -622,8 +711,8 @@ const ProductionPage: React.FC = () => {
         {/* ── Header ── */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>🏭 Production</h2>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces et tâches de l'usine</p>
+            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>Les pièces</h2>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces de l'usine</p>
           </div>
           <button onClick={() => {
             setSelectedDossierClient('');
@@ -658,27 +747,6 @@ const ProductionPage: React.FC = () => {
             </div>
           ))}
         </div>
-
-        {/* ── Noquète (quantité manquante) ── */}
-        {piecesNoquete.length > 0 && (
-          <div style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderLeft: '4px solid #f97316', borderRadius: 12, padding: '14px 18px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <AlertTriangle size={16} color="#f97316" />
-              <span style={{ color: '#f97316', fontWeight: 700, fontSize: 13 }}>⚠️ Quantité insuffisante — {piecesNoquete.length} pièce(s)</span>
-            </div>
-            {piecesNoquete.map(p => {
-              const produit = p.quantiteProduite || 0;
-              const manque = p.quantite - produit;
-              return (
-                <div key={p._id} style={{ color: '#fdba74', fontSize: 12, marginBottom: 3, display: 'flex', gap: 8 }}>
-                  <span>• <strong>{p.nom}</strong></span>
-                  <span style={{ color: '#94a3b8' }}>({produit}/{p.quantite} pcs — manque {manque})</span>
-                  <span style={{ color: '#64748b' }}>{p.machine} · {p.employe}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         {/* ── Alertes matière ── */}
         {alertes.length > 0 && (
@@ -736,7 +804,7 @@ const ProductionPage: React.FC = () => {
             const producedQty = toNumber(piece.quantiteProduite);
             const machineChain = getMachineChain(piece);
             const pieceDocs = getPieceDocuments(piece.nom);
-            const previewDoc = getPrimaryPreviewDoc(piece.nom);
+            const previewDoc = getPiecePreviewDoc(piece);
             return (
               <div key={piece._id} onClick={() => { setSelectedPiece(piece); }}
                 style={{ ...card, cursor: 'pointer', overflow: 'hidden', transition: 'all 0.2s' }}
@@ -755,14 +823,14 @@ const ProductionPage: React.FC = () => {
                 >
                   {previewDoc && isImageDoc(previewDoc) && previewDoc.publicPath ? (
                     <img
-                      src={`${APP_BASE}${previewDoc.publicPath}`}
+                      src={resolvePublicPathUrl(previewDoc.publicPath)}
                       alt={piece.nom}
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
                   ) : previewDoc && isPdfDoc(previewDoc) && previewDoc.publicPath ? (
                     <iframe
                       title={`Plan ${piece.nom}`}
-                      src={`${APP_BASE}${previewDoc.publicPath}#toolbar=0&navpanes=0&scrollbar=0`}
+                      src={`${resolvePublicPathUrl(previewDoc.publicPath)}#toolbar=0&navpanes=0&scrollbar=0`}
                       style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
                     />
                   ) : (
@@ -873,6 +941,56 @@ const ProductionPage: React.FC = () => {
               </div>
 
               <div style={{ padding: '18px 22px' }}>
+                    {(() => {
+                      const detailPreviewDoc = getPiecePreviewDoc(selectedPiece);
+                      const detailPreviewUrl = detailPreviewDoc?.publicPath ? resolvePublicPathUrl(detailPreviewDoc.publicPath) : '';
+
+                      return (
+                        <div
+                          onDoubleClick={() => openDocumentPreview(detailPreviewDoc)}
+                          title={detailPreviewDoc ? 'Double clic pour ouvrir' : undefined}
+                          style={{
+                            height: 210,
+                            borderRadius: 8,
+                            overflow: 'hidden',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            background: 'rgba(2,6,23,0.72)',
+                            display: 'grid',
+                            placeItems: 'center',
+                            position: 'relative',
+                            cursor: detailPreviewDoc ? 'pointer' : 'default',
+                            marginBottom: 16,
+                          }}
+                        >
+                          {detailPreviewDoc && isImageDoc(detailPreviewDoc) && detailPreviewUrl ? (
+                            <img
+                              src={detailPreviewUrl}
+                              alt={detailPreviewDoc.originalName || selectedPiece.nom}
+                              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', background: '#020617' }}
+                            />
+                          ) : detailPreviewDoc && isPdfDoc(detailPreviewDoc) && detailPreviewUrl ? (
+                            <iframe
+                              title={detailPreviewDoc.originalName || selectedPiece.nom}
+                              src={`${detailPreviewUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+                              style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
+                            />
+                          ) : (
+                            <div style={{ display: 'grid', justifyItems: 'center', gap: 8, color: '#94a3b8', textAlign: 'center', padding: 18 }}>
+                              <PieceIcon nom={selectedPiece.nom} />
+                              <div style={{ fontSize: 12, fontWeight: 700 }}>
+                                {detailPreviewDoc && isCadDoc(detailPreviewDoc) ? 'Fichier CAD lie' : 'Aucune image ou plan lie'}
+                              </div>
+                            </div>
+                          )}
+                          {detailPreviewDoc && (
+                            <div style={{ position: 'absolute', left: 10, right: 10, bottom: 10, padding: '7px 9px', borderRadius: 8, background: 'rgba(2,6,23,0.72)', color: '#dbeafe', fontSize: 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {detailPreviewDoc.originalName}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                       {[
                         { label: 'Machine', value: selectedPiece.machine, icon: <Wrench size={13} /> },
@@ -897,8 +1015,76 @@ const ProductionPage: React.FC = () => {
                         </div>
                       ))}
                     </div>
+                    <div style={{ background: 'rgba(30,41,59,0.42)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: '14px', marginBottom: 14 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: editingPieceInfo ? 12 : 0 }}>
+                        <div>
+                          <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 800 }}>Détails matière et dimension</div>
+                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>Corriger les champs si la pièce a été ajoutée avant la sauvegarde complète.</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEditingPieceInfo(prev => !prev)}
+                          style={{ border: '1px solid rgba(125,211,252,0.28)', borderRadius: 8, background: 'rgba(14,165,233,0.12)', color: '#7dd3fc', padding: '8px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+                        >
+                          {editingPieceInfo ? 'Annuler' : 'Modifier'}
+                        </button>
+                      </div>
+
+                      {editingPieceInfo && (
+                        <div style={{ display: 'grid', gap: 12 }}>
+                          <div>
+                            <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Dimension</label>
+                            <input
+                              type="text"
+                              value={pieceInfoDraft.dimension}
+                              onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, dimension: event.target.value }))}
+                              placeholder="ex: 120 x 40 x 12 mm"
+                              style={inputStyle}
+                            />
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Type matière</label>
+                              <select
+                                value={pieceInfoDraft.matiereType}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, matiereType: event.target.value, matiereReference: '' }))}
+                                style={selectStyle}
+                                title="Type matière"
+                              >
+                                <option value="">Choisir une matière</option>
+                                {Object.keys(materialOptions).map((materialType) => (
+                                  <option key={materialType} value={materialType}>{materialType}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Référence matière</label>
+                              <select
+                                value={pieceInfoDraft.matiereReference}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, matiereReference: event.target.value }))}
+                                style={selectStyle}
+                                title="Référence matière"
+                                disabled={!pieceInfoDraft.matiereType}
+                              >
+                                <option value="">Choisir une référence</option>
+                                {selectedEditMaterialReferences.map((ref) => (
+                                  <option key={ref} value={ref}>{ref}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={savePieceInfo}
+                            style={{ width: '100%', padding: '10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontSize: 13, fontWeight: 800 }}
+                          >
+                            Enregistrer les détails
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {!selectedPiece.matiere && (
-                      <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
+                      <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '12px 16px', marginBottom: 14 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ef4444', fontSize: 13, fontWeight: 600 }}>
                           <AlertTriangle size={15} /> Matière insuffisante — commande nécessaire
                         </div>
@@ -1001,9 +1187,9 @@ const ProductionPage: React.FC = () => {
               </div>
               <div style={{ flex: 1, minHeight: 0, background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {isImageDoc(previewDoc) && previewDoc.publicPath ? (
-                  <img src={`${APP_BASE}${previewDoc.publicPath}`} alt={previewDoc.originalName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                  <img src={resolvePublicPathUrl(previewDoc.publicPath)} alt={previewDoc.originalName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                 ) : isPdfDoc(previewDoc) && previewDoc.publicPath ? (
-                  <iframe title={previewDoc.originalName} src={`${APP_BASE}${previewDoc.publicPath}#toolbar=0&navpanes=0&scrollbar=0`} style={{ width: '100%', height: '100%', border: 'none' }} />
+                  <iframe title={previewDoc.originalName} src={`${resolvePublicPathUrl(previewDoc.publicPath)}#toolbar=0&navpanes=0&scrollbar=0`} style={{ width: '100%', height: '100%', border: 'none' }} />
                 ) : (
                   <button type="button" onClick={() => openDocumentInBrowser(previewDoc)} style={{ padding: '10px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 12, fontWeight: 700 }}>
                     Ouvrir dans le navigateur

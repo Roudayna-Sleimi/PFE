@@ -53,6 +53,26 @@ const createWorkforceController = (deps) => {
     }
   };
 
+  // Title: Handle demande update.
+  const updateDemande = async (req, res) => {
+    try {
+      const demande = await service.updateDemande(req.params.id, req.body || {});
+      return res.json(demande);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  };
+
+  // Title: Handle demande deletion.
+  const deleteDemande = async (req, res) => {
+    try {
+      const result = await service.deleteDemande(req.params.id);
+      return res.json(result);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  };
+
   // Title: Handle users listing.
   const listUsers = async (_req, res) => {
     try {
@@ -138,6 +158,8 @@ const createWorkforceController = (deps) => {
     listDemandes,
     approveDemande,
     refuseDemande,
+    updateDemande,
+    deleteDemande,
     listUsers,
     assignEmployeMachine,
     employesOverview,

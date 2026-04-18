@@ -156,7 +156,7 @@ const startDossierWatcher = async ({ rootDir, Dossier, logger = console }) => {
           storageDate: new Date(`${storageDate}T00:00:00`),
           searchableText,
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
       if (why) logger.log(`[dossier-watcher] upsert (${why}): ${rel}`);
     } catch (e) {

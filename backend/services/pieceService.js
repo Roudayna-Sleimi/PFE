@@ -67,7 +67,25 @@ const createPieceService = (deps) => {
 
   // Title: Create one piece with optional uploaded file.
   const createPiece = async (payload = {}, file = null, username = null) => {
-    const { nom, machine, machineChain, employe, quantite, prix, status, matiere, solidworksPath, ref } = payload;
+    const {
+      nom,
+      machine,
+      machineChain,
+      employe,
+      quantite,
+      prix,
+      status,
+      matiere,
+      dimension,
+      matiereType,
+      matiereReference,
+      solidworksPath,
+      planDocumentId,
+      planPath,
+      planName,
+      planMimeType,
+      ref,
+    } = payload;
     if (!nom) {
       const error = new Error('Nom requis');
       error.statusCode = 400;
@@ -88,7 +106,14 @@ const createPieceService = (deps) => {
       prix: Number(prix) || 0,
       status: status || 'En cours',
       matiere: typeof matiere === 'boolean' ? matiere : matiere !== 'false',
+      dimension: dimension || '',
+      matiereType: matiereType || '',
+      matiereReference: matiereReference || '',
       solidworksPath: solidworksPath || null,
+      planDocumentId: planDocumentId || '',
+      planPath: planPath || '',
+      planName: planName || '',
+      planMimeType: planMimeType || '',
       fichier: file ? file.filename : null,
       taches: [],
     });
@@ -105,7 +130,14 @@ const createPieceService = (deps) => {
       'prix',
       'status',
       'matiere',
+      'dimension',
+      'matiereType',
+      'matiereReference',
       'solidworksPath',
+      'planDocumentId',
+      'planPath',
+      'planName',
+      'planMimeType',
       'ref',
       'stock',
       'maxStock',
@@ -133,7 +165,7 @@ const createPieceService = (deps) => {
       updates.currentMachine = nextChain[safeStep] || null;
     }
 
-    const piece = await Piece.findByIdAndUpdate(pieceId, updates, { new: true });
+    const piece = await Piece.findByIdAndUpdate(pieceId, updates, { returnDocument: 'after' });
     if (!piece) {
       const error = new Error('Piece introuvable');
       error.statusCode = 404;

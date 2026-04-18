@@ -9,8 +9,6 @@ const { Server } = require('socket.io');
 const multer     = require('multer');
 const path       = require('path');
 const fs         = require('fs');
-const helmet     = require('helmet');
-const rateLimit  = require('express-rate-limit');
 const { startDossierWatcher } = require('./dossierWatcher');
 const { ensureBaseMachines } = require('./services/machineCatalog');
 const { slugify } = require('./utils/slugify');
@@ -68,23 +66,6 @@ const io = new Server(server, {
 
 app.use(express.json());
 app.use(cors({ origin: '*' }));
-
-// Security
-app.use(helmet());
-
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: { message: 'Trop de requetes, reessayez dans 15 minutes.' }
-});
-app.use('/api/', limiter);
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: { message: 'Trop de tentatives, reessayez dans 15 minutes.' }
-});
-app.use('/api/auth/', authLimiter);
 
 // MongoDB
 // Start the folder watcher only after MongoDB + the Dossier model are ready,

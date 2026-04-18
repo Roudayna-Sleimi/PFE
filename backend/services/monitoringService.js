@@ -140,7 +140,7 @@ const createMonitoringService = (deps) => {
       return acc;
     }, {});
 
-    const contact = await Contact.findByIdAndUpdate(contactId, updates, { new: true });
+    const contact = await Contact.findByIdAndUpdate(contactId, updates, { returnDocument: 'after' });
     if (!contact) {
       const error = new Error('Contact introuvable');
       error.statusCode = 404;
@@ -290,7 +290,7 @@ const createMonitoringService = (deps) => {
       updates.resolvedBy = username;
     }
 
-    const request = await MaintenanceRequest.findByIdAndUpdate(requestId, updates, { new: true });
+    const request = await MaintenanceRequest.findByIdAndUpdate(requestId, updates, { returnDocument: 'after' });
     if (!request) {
       const error = new Error('Demande maintenance introuvable');
       error.statusCode = 404;

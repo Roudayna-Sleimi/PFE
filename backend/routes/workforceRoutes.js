@@ -9,6 +9,8 @@ const createWorkforceRoutes = (deps) => {
 
   router.post('/demandes', controller.createDemande);
   router.get('/demandes', authMiddleware, adminMiddleware, controller.listDemandes);
+  router.patch('/demandes/:id', authMiddleware, adminMiddleware, controller.updateDemande);
+  router.delete('/demandes/:id', authMiddleware, adminMiddleware, controller.deleteDemande);
   router.post('/demandes/:id/approuver', authMiddleware, adminMiddleware, controller.approveDemande);
   router.post('/demandes/:id/refuser', authMiddleware, adminMiddleware, controller.refuseDemande);
 

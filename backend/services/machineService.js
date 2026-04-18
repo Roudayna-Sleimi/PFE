@@ -275,7 +275,7 @@ const createMachine = async (payload = {}) => {
             deletedAt: null,
           },
         },
-        { new: true }
+        { returnDocument: 'after' }
       );
     }
 
@@ -308,7 +308,7 @@ const deleteMachine = async (machineId) => {
   const existing = await MachineModel.findOneAndUpdate(
     { id: machineId },
     { $set: { deletedAt: new Date() } },
-    { new: true }
+    { returnDocument: 'after' }
   );
   if (existing) return existing;
 
@@ -344,7 +344,7 @@ const updateMachine = async (machineId, payload = {}) => {
         name: updates.name || machineId,
       },
     },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
 };
 

@@ -86,6 +86,46 @@ const createWorkforceService = (deps) => {
     return { message: 'Demande refusee' };
   };
 
+  // Title: Update one demande identity/contact fields.
+  const updateDemande = async (demandeId, payload = {}) => {
+    const { nom, email, poste, telephone } = payload;
+    if (!nom || !email || !poste || !telephone) {
+      const error = new Error('Tous les champs sont requis');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const demande = await Demande.findByIdAndUpdate(
+      demandeId,
+      {
+        nom: String(nom).trim(),
+        email: String(email).trim(),
+        poste: String(poste).trim(),
+        telephone: String(telephone).trim(),
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!demande) {
+      const error = new Error('Demande introuvable');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    return demande;
+  };
+
+  // Title: Delete one demande.
+  const deleteDemande = async (demandeId) => {
+    const demande = await Demande.findByIdAndDelete(demandeId);
+    if (!demande) {
+      const error = new Error('Demande introuvable');
+      error.statusCode = 404;
+      throw error;
+    }
+    return { message: 'Demande supprimee' };
+  };
+
   // Title: List users with lightweight fields.
   const listUsers = async () => {
     return User.find({}, 'username role isOnline lastSeen assignedMachine machineStatus currentActivity machineStatusUpdatedAt');
@@ -103,7 +143,7 @@ const createWorkforceService = (deps) => {
     const user = await User.findOneAndUpdate(
       { _id: userId, role: 'employe' },
       { assignedMachine },
-      { new: true }
+      { returnDocument: 'after' }
     ).select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt isOnline');
 
     if (!user) {
@@ -481,6 +521,8 @@ const createWorkforceService = (deps) => {
     listDemandes,
     approveDemande,
     refuseDemande,
+    updateDemande,
+    deleteDemande,
     listUsers,
     assignEmployeMachine,
     employesOverview,

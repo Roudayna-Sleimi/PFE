@@ -6,9 +6,9 @@ import { getMachineFunctions, type MachineFunction } from '../utils/machineFunct
 
 interface Alert {
   _id: string;
-  machineId: string;
-  node: string;
-  type: string;
+  machineId?: string | null;
+  node?: string | null;
+  type?: string;
   severity: 'critical' | 'warning' | 'info';
   message: string;
   status: 'new' | 'seen' | 'resolved' | 'notified';
@@ -44,6 +44,7 @@ interface Props { machine: Machine; onBack: () => void; }
 
 // Machines avec capteurs live (ESP32 connectés)
 const LIVE_MACHINES = ['rectifieuse', 'compresseur'];
+const normalizeAlertText = (value: unknown) => String(value ?? '').toLowerCase();
 
 // ── FIX : compresseur n'a pas de tab "Pièces" ──
 const getTabs = (machineId: string): string[] => {
@@ -115,27 +116,41 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     return machine.name;
   })();
 
-  const fetchAlerts = useCallback(() => {
+  const fetchAlerts = useCallback(async () => {
     if (!LIVE_MACHINES.includes(machine.id)) return;
     const token = localStorage.getItem('token') || '';
     setAlertsLoading(true);
-    fetch('http://localhost:5000/api/alerts?limit=50', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(r => r.json())
-      .then((data: Alert[]) => {
-        if (!Array.isArray(data)) return;
-        const filtered = data.filter(a =>
-          a.machineId === machine.id ||
-          a.machineId === machine.machId ||
-          a.node === machine.node ||
-          (machine.id === 'rectifieuse' && (a.machineId?.toLowerCase().includes('rectif') || a.node?.toLowerCase().includes('esp32'))) ||
-          (machine.id === 'compresseur' && (a.machineId?.toLowerCase().includes('compress') || a.node?.toLowerCase().includes('compress')))
+    try {
+      const response = await fetch('http://localhost:5000/api/alerts?limit=50', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data)) {
+        setAlerts([]);
+        return;
+      }
+
+      const machineId = normalizeAlertText(machine.id);
+      const machId = normalizeAlertText(machine.machId);
+      const node = normalizeAlertText(machine.node);
+      const filtered = data.filter((alert: Alert) => {
+        const alertMachineId = normalizeAlertText(alert.machineId);
+        const alertNode = normalizeAlertText(alert.node);
+
+        return (
+          alertMachineId === machineId ||
+          alertMachineId === machId ||
+          alertNode === node ||
+          (machine.id === 'rectifieuse' && (alertMachineId.includes('rectif') || alertNode.includes('esp32'))) ||
+          (machine.id === 'compresseur' && (alertMachineId.includes('compress') || alertNode.includes('compress')))
         );
-        setAlerts(filtered);
-      })
-      .catch(() => {})
-      .finally(() => setAlertsLoading(false));
+      });
+      setAlerts(filtered);
+    } catch {
+      setAlerts([]);
+    } finally {
+      setAlertsLoading(false);
+    }
   }, [machine.id, machine.machId, machine.node]);
 
   useEffect(() => {

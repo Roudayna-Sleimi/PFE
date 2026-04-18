@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Check, X, Clock, UserPlus } from 'lucide-react';
+import { Users, Check, X, Clock, UserPlus, PencilLine, Trash2 } from 'lucide-react';
 
 interface Demande {
   _id: string;
@@ -7,10 +7,27 @@ interface Demande {
   email: string;
   poste: string;
   telephone: string;
-  statut: 'en attente' | 'approuvée' | 'refusée';
+  statut: string;
   username: string | null;
   createdAt: string;
 }
+
+const emptyEditForm = {
+  nom: '',
+  email: '',
+  poste: '',
+  telephone: '',
+};
+
+const normalizeDemandeStatut = (statut: string) => {
+  const normalized = String(statut || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (normalized.includes('approuv')) return 'approuvee';
+  if (normalized.includes('refus')) return 'refusee';
+  return 'en attente';
+};
 
 const DemandesPage: React.FC = () => {
   const [demandes, setDemandes]   = useState<Demande[]>([]);
@@ -23,6 +40,10 @@ const DemandesPage: React.FC = () => {
   const [password, setPassword]   = useState('');
   const [modalErr, setModalErr]   = useState('');
   const [modalLoad, setModalLoad] = useState(false);
+  const [editing, setEditing] = useState<Demande | null>(null);
+  const [editForm, setEditForm] = useState(emptyEditForm);
+  const [editErr, setEditErr] = useState('');
+  const [editLoad, setEditLoad] = useState(false);
 
   const token = localStorage.getItem('token');
 
@@ -55,6 +76,60 @@ const DemandesPage: React.FC = () => {
     } catch { alert('Erreur serveur'); }
   };
 
+  const openEdit = (demande: Demande) => {
+    setEditing(demande);
+    setEditForm({
+      nom: demande.nom || '',
+      email: demande.email || '',
+      poste: demande.poste || '',
+      telephone: demande.telephone || '',
+    });
+    setEditErr('');
+  };
+
+  const handleModifier = async () => {
+    if (!editing) return;
+    if (!editForm.nom || !editForm.email || !editForm.poste || !editForm.telephone) {
+      setEditErr('Tous les champs sont requis');
+      return;
+    }
+
+    setEditLoad(true);
+    setEditErr('');
+    try {
+      const res = await fetch(`http://localhost:5000/api/demandes/${editing._id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setEditErr(data.message || 'Modification impossible');
+        return;
+      }
+      setEditing(null);
+      setEditForm(emptyEditForm);
+      fetchDemandes();
+    } catch {
+      setEditErr('Erreur serveur');
+    } finally {
+      setEditLoad(false);
+    }
+  };
+
+  const handleSupprimer = async (id: string) => {
+    if (!confirm('Supprimer cette demande ?')) return;
+    try {
+      await fetch(`http://localhost:5000/api/demandes/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      fetchDemandes();
+    } catch {
+      alert('Erreur serveur');
+    }
+  };
+
   const handleApprouver = async () => {
     if (!username || !password) { setModalErr('Username et mot de passe requis'); return; }
     setModalLoad(true);
@@ -78,18 +153,19 @@ const DemandesPage: React.FC = () => {
     }
   };
 
-  const enAttente  = demandes.filter(d => d.statut === 'en attente');
-  const traitees   = demandes.filter(d => d.statut !== 'en attente');
+  const enAttente  = demandes.filter(d => normalizeDemandeStatut(d.statut) === 'en attente');
+  const traitees   = demandes.filter(d => normalizeDemandeStatut(d.statut) !== 'en attente');
 
   const statutBadge = (statut: Demande['statut']) => {
-    if (statut === 'approuvée') return (
+    const normalized = normalizeDemandeStatut(statut);
+    if (normalized === 'approuvee') return (
       <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-green-500/10 border border-green-500/30 text-green-400">
-        <Check size={11} /> Approuvée
+        <Check size={11} /> Approuvee
       </span>
     );
-    if (statut === 'refusée') return (
+    if (normalized === 'refusee') return (
       <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-500/10 border border-red-500/30 text-red-400">
-        <X size={11} /> Refusée
+        <X size={11} /> Refusee
       </span>
     );
     return (
@@ -151,6 +227,11 @@ const DemandesPage: React.FC = () => {
                 </div>
                 <div className="flex gap-2">
                   <button
+                    onClick={() => openEdit(d)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 transition-all">
+                    <PencilLine size={13} /> Modifier
+                  </button>
+                  <button
                     onClick={() => { setSelected(d); setModalErr(''); setUsername(''); setPassword(''); }}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-green-500/20 border border-green-500/30 hover:bg-green-500/30 transition-all">
                     <UserPlus size={13} /> Approuver
@@ -159,6 +240,11 @@ const DemandesPage: React.FC = () => {
                     onClick={() => handleRefuser(d._id)}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-red-400 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-all">
                     <X size={13} /> Refuser
+                  </button>
+                  <button
+                    onClick={() => handleSupprimer(d._id)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-red-300 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-all">
+                    <Trash2 size={13} /> Supprimer
                   </button>
                 </div>
               </div>
@@ -186,6 +272,18 @@ const DemandesPage: React.FC = () => {
                   {d.username && <div className="text-slate-500 text-xs mt-0.5">Utilisateur: @{d.username}</div>}
                 </div>
                 {statutBadge(d.statut)}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => openEdit(d)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 transition-all">
+                    <PencilLine size={13} /> Modifier
+                  </button>
+                  <button
+                    onClick={() => handleSupprimer(d._id)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-red-300 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-all">
+                    <Trash2 size={13} /> Supprimer
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -196,6 +294,58 @@ const DemandesPage: React.FC = () => {
         <div className="text-center py-16">
           <div className="text-5xl mb-4 text-slate-500">-</div>
           <div className="text-slate-400 text-sm">Aucune demande pour le moment</div>
+        </div>
+      )}
+
+      {/* Modal modification */}
+      {editing && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#0f172a] border border-white/[0.08] rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-white font-bold text-base">Modifier la demande</h3>
+              <button onClick={() => setEditing(null)} title="Fermer"
+                className="w-8 h-8 rounded-lg bg-slate-700/60 border border-white/[0.08] flex items-center justify-center text-slate-400 hover:text-white transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3 mb-4">
+              {[
+                { key: 'nom', label: 'Nom', placeholder: 'Nom complet' },
+                { key: 'email', label: 'Email', placeholder: 'email@exemple.com' },
+                { key: 'poste', label: 'Poste', placeholder: 'Poste' },
+                { key: 'telephone', label: 'Telephone', placeholder: 'Telephone' },
+              ].map((field) => (
+                <div key={field.key}>
+                  <label className="text-xs text-slate-400 font-medium mb-1.5 block">{field.label}</label>
+                  <input
+                    type="text"
+                    placeholder={field.placeholder}
+                    value={editForm[field.key as keyof typeof editForm]}
+                    onChange={e => setEditForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                    className="w-full px-3 py-2.5 bg-slate-700/50 border border-white/[0.08] rounded-lg text-white text-sm placeholder-slate-500 outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
+                  />
+                </div>
+              ))}
+            </div>
+
+            {editErr && (
+              <div className="text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-4">
+                {editErr}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={() => setEditing(null)}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium text-slate-400 bg-slate-700/50 border border-white/[0.08] hover:text-white transition-colors">
+                Annuler
+              </button>
+              <button onClick={handleModifier} disabled={editLoad}
+                className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white border-none cursor-pointer hover:-translate-y-0.5 transition-transform disabled:opacity-50 bg-gradient-to-br from-[#0066ff] to-[#00d4ff]">
+                {editLoad ? 'Modification...' : 'Modifier'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

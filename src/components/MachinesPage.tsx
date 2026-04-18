@@ -509,23 +509,6 @@ const MachinesPage: React.FC = () => {
                 ))}
               </div>
 
-              {machine.fonctions && machine.fonctions.length > 0 && (
-                <div className="px-5 mb-4">
-                  <div className="text-[11px] font-semibold text-slate-500 mb-2">Fonctions</div>
-                  <div className="grid grid-cols-1 gap-2">
-                    {machine.fonctions.slice(0, 3).map((fonction) => (
-                      <div
-                        key={fonction.title}
-                        className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-2"
-                      >
-                        <div className="text-[10px] font-semibold text-cyan-100">{fonction.title}</div>
-                        <div className="mt-0.5 text-[10px] leading-snug text-slate-400">{fonction.desc}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               <div className="flex items-center gap-4 px-5 pb-4 flex-wrap">
                 {isLiveMachine(machine) ? (
                   <>
