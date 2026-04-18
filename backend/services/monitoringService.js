@@ -1,3 +1,8 @@
+const SENSOR_MAINTENANCE_MACHINES = [
+  { id: 'rectifieuse', name: 'Rectifieuse', node: 'ESP32-NODE-03' },
+  { id: 'compresseur', name: 'Compresseur ABAC', node: 'compresseur' },
+];
+
 // Title: Build monitoring and maintenance service.
 const createMonitoringService = (deps) => {
   const {
@@ -7,6 +12,7 @@ const createMonitoringService = (deps) => {
     CallLog,
     MaintenanceReport,
     MaintenanceRequest,
+    MachineModel,
     io,
     sanitizeSeverity,
     resolveMachineIdentity,
@@ -208,7 +214,7 @@ const createMonitoringService = (deps) => {
 
   // Title: Return maintenance dashboard overview.
   const maintenanceOverview = async () => {
-    const [reports, requests, latestSensors] = await Promise.all([
+    const [reports, requests, latestSensors, machines] = await Promise.all([
       MaintenanceReport.find({}).sort({ createdAt: -1 }).limit(100).lean(),
       MaintenanceRequest.find({}).sort({ createdAt: -1 }).limit(100).lean(),
       SensorData.aggregate([
@@ -216,14 +222,57 @@ const createMonitoringService = (deps) => {
         { $group: { _id: '$node', doc: { $first: '$$ROOT' } } },
         { $replaceRoot: { newRoot: '$doc' } },
       ]),
+      MachineModel ? MachineModel.find({ deletedAt: null, id: { $in: SENSOR_MAINTENANCE_MACHINES.map((machine) => machine.id) } }).sort({ name: 1 }).lean() : [],
     ]);
 
-    const sensorCards = latestSensors.map((sensor) => {
+    const latestSensorsByNode = new Map();
+    const latestSensorsByMachineId = new Map();
+    for (const sensor of latestSensors) {
       const identity = resolveMachineIdentity(sensor);
+      if (identity.node) latestSensorsByNode.set(String(identity.node), sensor);
+      if (identity.machineId) latestSensorsByMachineId.set(String(identity.machineId), sensor);
+      if (sensor.machineId) latestSensorsByMachineId.set(String(sensor.machineId), sensor);
+    }
+
+    const buildNormalCard = (identity, report = null, request = null) => ({
+      ...identity,
+      latestSensor: null,
+      severity: report?.severity || 'normal',
+      anomalyScore: report?.anomalyScore ?? 0,
+      prediction: report?.prediction || { label: 'Pas de donnees capteurs', eta: '-', confidence: 0 },
+      recommendedAction: report?.recommendedAction || 'Configurer des capteurs pour activer la maintenance predictive.',
+      lastReport: report || null,
+      openRequest: request || null,
+    });
+
+    const cardsById = new Map();
+    const machinesById = new Map(machines.map((machine) => [machine.id, machine]));
+    const monitoredMachines = SENSOR_MAINTENANCE_MACHINES.map((baseMachine) => {
+      const machine = machinesById.get(baseMachine.id);
+      return {
+        id: baseMachine.id,
+        name: machine?.name || baseMachine.name,
+        node: machine?.node || baseMachine.node,
+      };
+    });
+
+    for (const machine of monitoredMachines) {
+      const identity = {
+        machineId: machine.id,
+        machineName: machine.name,
+        node: machine.node || machine.id,
+      };
       const report = reports.find((row) => row.machineId === identity.machineId || row.node === identity.node);
       const request = requests.find((row) => (row.machineId === identity.machineId || row.node === identity.node) && ['open', 'in_progress'].includes(row.status));
+      const sensor = latestSensorsByNode.get(String(identity.node)) || latestSensorsByMachineId.get(String(identity.machineId));
+
+      if (!sensor) {
+        cardsById.set(identity.machineId, buildNormalCard(identity, report, request));
+        continue;
+      }
+
       const assessment = buildMaintenanceAssessment(sensor, []);
-      return {
+      cardsById.set(identity.machineId, {
         ...identity,
         latestSensor: sensor,
         severity: report?.severity || assessment.severity,
@@ -232,11 +281,30 @@ const createMonitoringService = (deps) => {
         recommendedAction: report?.recommendedAction || assessment.recommendedAction,
         lastReport: report || null,
         openRequest: request || null,
-      };
-    });
+      });
+    }
+
+    for (const sensor of latestSensors) {
+      const identity = resolveMachineIdentity(sensor);
+      if (!SENSOR_MAINTENANCE_MACHINES.some((machine) => machine.id === identity.machineId)) continue;
+      if (cardsById.has(identity.machineId)) continue;
+      const report = reports.find((row) => row.machineId === identity.machineId || row.node === identity.node);
+      const request = requests.find((row) => (row.machineId === identity.machineId || row.node === identity.node) && ['open', 'in_progress'].includes(row.status));
+      const assessment = buildMaintenanceAssessment(sensor, []);
+      cardsById.set(identity.machineId, {
+        ...identity,
+        latestSensor: sensor,
+        severity: report?.severity || assessment.severity,
+        anomalyScore: report?.anomalyScore ?? assessment.anomalyScore,
+        prediction: report?.prediction || assessment.prediction,
+        recommendedAction: report?.recommendedAction || assessment.recommendedAction,
+        lastReport: report || null,
+        openRequest: request || null,
+      });
+    }
 
     return {
-      machines: sensorCards,
+      machines: Array.from(cardsById.values()).sort((a, b) => String(a.machineName || '').localeCompare(String(b.machineName || ''))),
       reports: reports.slice(0, 20),
       requests: requests.slice(0, 20),
       counts: {

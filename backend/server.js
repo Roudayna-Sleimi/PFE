@@ -414,6 +414,7 @@ app.use('/api', createMonitoringRoutes({
   CallLog,
   MaintenanceReport,
   MaintenanceRequest,
+  MachineModel,
   io,
   sanitizeSeverity,
   resolveMachineIdentity,

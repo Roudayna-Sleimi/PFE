@@ -4,6 +4,153 @@ const normalizeStatus = (value = '') => String(value).toLowerCase().normalize('N
 // Title: Check if a piece status is considered completed.
 const isCompletedStatus = (value = '') => normalizeStatus(value).includes('termine');
 
+const DEFAULT_MACHINE_POWER_KW = 4.5;
+const MACHINE_POWER_ESTIMATES = [
+  { key: 'compresseur', kw: 5.5 },
+  { key: 'rectifieuse', kw: 3.5 },
+  { key: 'fraisage', kw: 6 },
+  { key: 'tournage', kw: 5 },
+  { key: 'percage', kw: 2.2 },
+  { key: 'taraudage', kw: 2 },
+];
+
+const asPositiveNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const getMachinePowerKw = (machine = '') => {
+  const key = normalizeStatus(machine);
+  const match = MACHINE_POWER_ESTIMATES.find((row) => key.includes(normalizeStatus(row.key)));
+  return match?.kw || DEFAULT_MACHINE_POWER_KW;
+};
+
+const estimateEnergyKwh = (machine, seconds) => {
+  const hours = Math.max(0, Number(seconds || 0)) / 3600;
+  return Number((hours * getMachinePowerKw(machine)).toFixed(2));
+};
+
+const addReportSeconds = (row, seconds) => {
+  row.machiningSeconds += Math.max(0, Math.round(seconds || 0));
+};
+
+const buildProductionReports = (events = [], employes = [], pieces = []) => {
+  const employeeByName = new Map(employes.map((employe) => [employe.username, employe]));
+  const byMachine = new Map();
+  const byEmployee = new Map();
+  const activeSessions = new Map();
+  let totalPiecesFromEvents = 0;
+  const now = Date.now();
+
+  const ensureMachine = (machineName = 'Inconnue') => {
+    const machine = machineName || 'Inconnue';
+    if (!byMachine.has(machine)) {
+      byMachine.set(machine, {
+        machine,
+        piecesProduced: 0,
+        machiningSeconds: 0,
+        energyKwh: 0,
+      });
+    }
+    return byMachine.get(machine);
+  };
+
+  const ensureEmployee = (username = 'Inconnu') => {
+    const safeUsername = username || 'Inconnu';
+    if (!byEmployee.has(safeUsername)) {
+      const employe = employeeByName.get(safeUsername);
+      byEmployee.set(safeUsername, {
+        username: safeUsername,
+        piecesProduced: 0,
+        machiningSeconds: 0,
+        energyKwh: 0,
+        assignedMachine: employe?.assignedMachine || null,
+      });
+    }
+    return byEmployee.get(safeUsername);
+  };
+
+  const addSessionMetrics = (machine, username, seconds) => {
+    const safeSeconds = Math.max(0, Math.round(seconds || 0));
+    const energyKwh = estimateEnergyKwh(machine, safeSeconds);
+    const machineRow = ensureMachine(machine);
+    const employeeRow = ensureEmployee(username);
+    addReportSeconds(machineRow, safeSeconds);
+    addReportSeconds(employeeRow, safeSeconds);
+    machineRow.energyKwh = Number((machineRow.energyKwh + energyKwh).toFixed(2));
+    employeeRow.energyKwh = Number((employeeRow.energyKwh + energyKwh).toFixed(2));
+  };
+
+  const sortedEvents = [...events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  for (const event of sortedEvents) {
+    const eventTime = new Date(event.createdAt).getTime();
+    if (Number.isNaN(eventTime)) continue;
+
+    const machine = event.machine || 'Inconnue';
+    const username = event.username || 'Inconnu';
+    const sessionKey = `${username}:${machine}`;
+
+    if (event.action === 'started') {
+      ensureMachine(machine);
+      ensureEmployee(username);
+      activeSessions.set(sessionKey, { machine, username, startedAt: eventTime });
+      continue;
+    }
+
+    if (event.action === 'paused' || event.action === 'stopped') {
+      const session = activeSessions.get(sessionKey);
+      if (session) {
+        const seconds = Math.max(0, (eventTime - session.startedAt) / 1000);
+        addSessionMetrics(session.machine, session.username, seconds);
+        activeSessions.delete(sessionKey);
+      }
+    }
+
+    if (event.action === 'stopped') {
+      const produced = asPositiveNumber(event.pieceCount, 0);
+      totalPiecesFromEvents += produced;
+      ensureMachine(machine).piecesProduced += produced;
+      ensureEmployee(username).piecesProduced += produced;
+    }
+  }
+
+  for (const session of activeSessions.values()) {
+    const seconds = Math.max(0, (now - session.startedAt) / 1000);
+    addSessionMetrics(session.machine, session.username, seconds);
+  }
+
+  if (totalPiecesFromEvents === 0) {
+    for (const piece of pieces) {
+      const produced = asPositiveNumber(piece.quantiteProduite, 0);
+      if (produced <= 0) continue;
+
+      const machine = piece.currentMachine || piece.machine || 'Inconnue';
+      ensureMachine(machine).piecesProduced += produced;
+
+      const username = piece.employe || piece.history?.slice().reverse().find((entry) => entry.by)?.by;
+      if (username) ensureEmployee(username).piecesProduced += produced;
+    }
+  }
+
+  const reportByMachine = [...byMachine.values()]
+    .filter((row) => row.piecesProduced > 0 || row.machiningSeconds > 0)
+    .map((row) => ({
+      ...row,
+      energyKwh: Number(row.energyKwh.toFixed(2)),
+    }))
+    .sort((a, b) => b.machiningSeconds - a.machiningSeconds || b.piecesProduced - a.piecesProduced);
+
+  const reportByEmployee = [...byEmployee.values()]
+    .filter((row) => row.piecesProduced > 0 || row.machiningSeconds > 0)
+    .map((row) => ({
+      ...row,
+      energyKwh: Number(row.energyKwh.toFixed(2)),
+    }))
+    .sort((a, b) => b.machiningSeconds - a.machiningSeconds || b.piecesProduced - a.piecesProduced);
+
+  return { reportByMachine, reportByEmployee };
+};
+
 // Title: Build demandes workflow and workforce related services.
 const createWorkforceService = (deps) => {
   const {
@@ -482,6 +629,14 @@ const createWorkforceService = (deps) => {
     const pauses = events.filter((event) => event.action === 'paused').length;
     const anomalies = alerts.filter((alert) => alert.severity === 'critical' || alert.type === 'sensor').length;
     const tempsMachine = computeWorkByMachine(events);
+    const { reportByMachine, reportByEmployee } = buildProductionReports(events, employes, pieces);
+    const totalMachiningSeconds = reportByMachine.reduce((sum, row) => sum + row.machiningSeconds, 0);
+    const totalPiecesFromEvents = events
+      .filter((event) => event.action === 'stopped')
+      .reduce((sum, event) => sum + asPositiveNumber(event.pieceCount, 0), 0);
+    const totalPiecesFromPieces = pieces.reduce((sum, piece) => sum + asPositiveNumber(piece.quantiteProduite, 0), 0);
+    const totalPiecesProduced = Math.max(totalPiecesFromEvents, totalPiecesFromPieces);
+    const totalEnergyKwh = Number(reportByMachine.reduce((sum, row) => sum + row.energyKwh, 0).toFixed(2));
 
     const performanceEmployes = employes.map((employe) => {
       const piecesEmploye = pieces.filter((piece) => piece.employe === employe.username);
@@ -512,6 +667,12 @@ const createWorkforceService = (deps) => {
       anomalies,
       tempsMachine,
       performanceEmployes,
+      totalEnergyKwh,
+      totalMachiningSeconds,
+      totalPiecesProduced,
+      energyEstimated: totalMachiningSeconds > 0,
+      reportByMachine,
+      reportByEmployee,
       logs,
     };
   };
