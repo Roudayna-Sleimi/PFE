@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BarChart2, Clock, Package, Zap, Users, AlertTriangle, Search } from 'lucide-react';
+import { AlertTriangle, BarChart2, Clock, Package, Search, Users, Zap } from 'lucide-react';
 
 interface ReportRowMachine {
   machine: string;
@@ -37,9 +37,11 @@ interface ReportsOverview {
   reportByEmployee: ReportRowEmployee[];
   logs: ReportLog[];
 }
+
 interface Props {
   darkMode?: boolean;
 }
+
 const normalizeReportsOverview = (payload: Partial<ReportsOverview> | null | undefined): ReportsOverview => ({
   piecesTraitees: Number(payload?.piecesTraitees || 0),
   pauses: Number(payload?.pauses || 0),
@@ -48,9 +50,9 @@ const normalizeReportsOverview = (payload: Partial<ReportsOverview> | null | und
   totalMachiningSeconds: Number(payload?.totalMachiningSeconds || 0),
   totalPiecesProduced: Number(payload?.totalPiecesProduced || 0),
   energyEstimated: Boolean(payload?.energyEstimated),
-  reportByMachine: Array.isArray(payload?.reportByMachine) ? payload!.reportByMachine : [],
-  reportByEmployee: Array.isArray(payload?.reportByEmployee) ? payload!.reportByEmployee : [],
-  logs: Array.isArray(payload?.logs) ? payload!.logs : [],
+  reportByMachine: Array.isArray(payload?.reportByMachine) ? payload.reportByMachine : [],
+  reportByEmployee: Array.isArray(payload?.reportByEmployee) ? payload.reportByEmployee : [],
+  logs: Array.isArray(payload?.logs) ? payload.logs : [],
 });
 
 const fmtDuration = (seconds: number) => {
@@ -73,7 +75,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
   useEffect(() => {
     const load = async () => {
       if (role !== 'admin') {
-        setError("Accès réservé à l'admin.");
+        setError("Acces reserve a l'admin.");
         setLoading(false);
         return;
       }
@@ -100,19 +102,25 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
     load();
   }, [role, token]);
 
+  const accent = darkMode ? '#60a5fa' : '#1d4ed8';
+  const neutral = darkMode ? '#e2e8f0' : '#0f172a';
+
   const theme = useMemo(() => ({
-    page: darkMode ? 'bg-transparent text-white' : 'bg-slate-100 text-slate-900',
-    card: darkMode ? 'bg-slate-800/50 border-white/[0.08]' : 'bg-white border-slate-200',
-    muted: darkMode ? 'text-slate-400' : 'text-slate-500',
-    subtle: darkMode ? 'text-slate-500' : 'text-slate-400',
-    tableHead: darkMode ? 'text-slate-400 bg-slate-900/30' : 'text-slate-500 bg-slate-50',
-    rowBorder: darkMode ? 'border-white/[0.06]' : 'border-slate-200',
+    page: 'bg-[var(--app-bg)] text-[var(--app-text)]',
+    card: 'bg-[var(--app-card)] border-[color:var(--app-border)]',
+    muted: 'text-[var(--app-muted)]',
+    subtle: 'text-[var(--app-subtle)]',
+    tableHead: 'text-[var(--app-heading)] bg-[var(--app-surface-strong)]',
+    rowBorder: 'border-[color:var(--app-border)]',
+    tableShell: 'border-[color:var(--app-border)]',
+    input: darkMode ? 'placeholder:text-[var(--app-subtle)]' : 'placeholder:text-[var(--app-subtle)]',
+    error: darkMode ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-red-200 bg-white text-red-700',
   }), [darkMode]);
 
   const summary = data ? [
-    { label: 'Consommation énergie', value: `${data.totalEnergyKwh.toLocaleString('fr-FR')} kWh`, icon: <Zap size={18} color="#475569" /> },
-    { label: 'Pièces produites', value: `${data.totalPiecesProduced.toLocaleString('fr-FR')} pcs`, icon: <Package size={18} color="#3b82f6" /> },
-    { label: "Temps d'usinage", value: fmtDuration(data.totalMachiningSeconds), icon: <Clock size={18} color="#22c55e" /> },
+    { label: 'Consommation energie', value: `${data.totalEnergyKwh.toLocaleString('fr-FR')} kWh`, icon: <Zap size={18} color={neutral} /> },
+    { label: 'Pieces produites', value: `${data.totalPiecesProduced.toLocaleString('fr-FR')} pcs`, icon: <Package size={18} color={accent} /> },
+    { label: "Temps d'usinage", value: fmtDuration(data.totalMachiningSeconds), icon: <Clock size={18} color={accent} /> },
     { label: 'Anomalies', value: `${data.anomalies}`, icon: <AlertTriangle size={18} color="#ef4444" /> },
   ] : [];
 
@@ -127,35 +135,33 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
     }
 
     return {
-      machines: data.reportByMachine.filter(row => row.machine.toLowerCase().includes(q)),
-      employees: data.reportByEmployee.filter(row => [row.username, row.assignedMachine]
-        .some(value => String(value || '').toLowerCase().includes(q))),
-      logs: data.logs.filter(log => [log.machine, log.username, log.action, log.pieceName]
-        .some(value => String(value || '').toLowerCase().includes(q))),
+      machines: data.reportByMachine.filter((row) => row.machine.toLowerCase().includes(q)),
+      employees: data.reportByEmployee.filter((row) =>
+        [row.username, row.assignedMachine].some((value) => String(value || '').toLowerCase().includes(q))),
+      logs: data.logs.filter((log) =>
+        [log.machine, log.username, log.action, log.pieceName].some((value) => String(value || '').toLowerCase().includes(q))),
     };
   }, [data, search]);
 
   return (
-    <div className={`flex-1 p-6 overflow-y-auto ${theme.page}`}>
-      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+    <div className={`flex-1 overflow-y-auto p-6 ${theme.page}`}>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold mb-1">Rapports de production</h2>
-          <p className={`text-sm ${theme.muted}`}>
-            Rapport global, par machine et par employé.
-          </p>
+          <h2 className="mb-1 text-2xl font-bold">Rapports de production</h2>
+          <p className={`text-sm ${theme.muted}`}>Rapport global, par machine et par employe.</p>
         </div>
         {data?.energyEstimated && (
-          <div className={`px-3 py-2 rounded-lg border text-xs font-semibold ${theme.card}`}>
-            Énergie estimée selon temps machine
+          <div className={`rounded-lg border px-3 py-2 text-xs font-semibold ${theme.card}`}>
+            Energie estimee selon temps machine
           </div>
         )}
         <div className={`flex h-10 min-w-[300px] items-center gap-2 rounded-lg border px-3 ${theme.card}`}>
-          <Search size={15} className={theme.muted} />
+          <Search size={15} color={neutral} />
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Rechercher machine, employé, action..."
-            className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+            placeholder="Rechercher machine, employe, action..."
+            className={`w-full bg-transparent text-sm outline-none ${theme.input}`}
           />
         </div>
       </div>
@@ -167,42 +173,42 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
       )}
 
       {!loading && error && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-300">
+        <div className={`rounded-xl border p-6 text-sm ${theme.error}`}>
           {error}
         </div>
       )}
 
       {!loading && !error && data && (
         <>
-          <div className="grid grid-cols-4 gap-4 mb-6">
+          <div className="mb-6 grid grid-cols-4 gap-4">
             {summary.map((item) => (
               <div key={item.label} className={`rounded-xl border p-4 ${theme.card}`}>
                 <div className="mb-3">{item.icon}</div>
-                <div className="text-[22px] font-bold mb-1">{item.value}</div>
+                <div className="mb-1 text-[22px] font-bold">{item.value}</div>
                 <div className={`text-xs ${theme.muted}`}>{item.label}</div>
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-5 mb-6">
+          <div className="mb-6 grid grid-cols-2 gap-5">
             <section className={`rounded-xl border p-5 ${theme.card}`}>
-              <div className="flex items-center gap-2 mb-4">
-                <BarChart2 size={16} color="#38bdf8" />
+              <div className="mb-4 flex items-center gap-2">
+                <BarChart2 size={16} color={accent} />
                 <h3 className="text-base font-bold">Rapport par machine</h3>
               </div>
 
               {filtered.machines.length === 0 ? (
-                <div className={`text-sm ${theme.muted}`}>Aucune donnée machine.</div>
+                <div className={`text-sm ${theme.muted}`}>Aucune donnee machine.</div>
               ) : (
-                <div className="overflow-hidden rounded-lg border border-white/[0.06]">
+                <div className={`overflow-hidden rounded-lg border ${theme.tableShell}`}>
                   <div className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
                     <span>Machine</span>
-                    <span>Pièces</span>
+                    <span>Pieces</span>
                     <span>Usinage</span>
-                    <span>Énergie</span>
+                    <span>Energie</span>
                   </div>
                   {filtered.machines.map((row) => (
-                    <div key={row.machine} className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 px-4 py-3 text-sm border-t ${theme.rowBorder}`}>
+                    <div key={row.machine} className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
                       <span className="font-semibold">{row.machine}</span>
                       <span>{row.piecesProduced}</span>
                       <span>{fmtDuration(row.machiningSeconds)}</span>
@@ -214,23 +220,23 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
             </section>
 
             <section className={`rounded-xl border p-5 ${theme.card}`}>
-              <div className="flex items-center gap-2 mb-4">
-                <Users size={16} color="#22c55e" />
-                <h3 className="text-base font-bold">Rapport par employé</h3>
+              <div className="mb-4 flex items-center gap-2">
+                <Users size={16} color={accent} />
+                <h3 className="text-base font-bold">Rapport par employe</h3>
               </div>
 
               {filtered.employees.length === 0 ? (
-                <div className={`text-sm ${theme.muted}`}>Aucune donnée employé.</div>
+                <div className={`text-sm ${theme.muted}`}>Aucune donnee employe.</div>
               ) : (
-                <div className="overflow-hidden rounded-lg border border-white/[0.06]">
+                <div className={`overflow-hidden rounded-lg border ${theme.tableShell}`}>
                   <div className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
-                    <span>Employé</span>
-                    <span>Pièces</span>
+                    <span>Employe</span>
+                    <span>Pieces</span>
                     <span>Usinage</span>
-                    <span>Énergie</span>
+                    <span>Energie</span>
                   </div>
                   {filtered.employees.map((row) => (
-                    <div key={row.username} className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 px-4 py-3 text-sm border-t ${theme.rowBorder}`}>
+                    <div key={row.username} className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
                       <div>
                         <div className="font-semibold">{row.username}</div>
                         <div className={`text-[11px] ${theme.subtle}`}>{row.assignedMachine || 'Aucune machine fixe'}</div>
@@ -246,29 +252,27 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
           </div>
 
           <section className={`rounded-xl border p-5 ${theme.card}`}>
-            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-base font-bold">Journal récent</h3>
-                <p className={`text-xs ${theme.muted}`}>Dernières opérations machine et production.</p>
+                <h3 className="text-base font-bold">Journal recent</h3>
+                <p className={`text-xs ${theme.muted}`}>Dernieres operations machine et production.</p>
               </div>
-              <div className={`text-xs ${theme.subtle}`}>
-                {filtered.logs.length} ligne(s)
-              </div>
+              <div className={`text-xs ${theme.subtle}`}>{filtered.logs.length} ligne(s)</div>
             </div>
 
             {filtered.logs.length === 0 ? (
               <div className={`text-sm ${theme.muted}`}>Aucun log disponible.</div>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-white/[0.06]">
+              <div className={`overflow-hidden rounded-lg border ${theme.tableShell}`}>
                 <div className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
                   <span>Machine</span>
-                  <span>Employé</span>
+                  <span>Employe</span>
                   <span>Action</span>
-                  <span>Pièces</span>
+                  <span>Pieces</span>
                   <span>Date</span>
                 </div>
                 {filtered.logs.slice(0, 12).map((log, index) => (
-                  <div key={`${log.machine}-${log.at}-${index}`} className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 px-4 py-3 text-sm border-t ${theme.rowBorder}`}>
+                  <div key={`${log.machine}-${log.at}-${index}`} className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
                     <span>{log.machine}</span>
                     <span>{log.username}</span>
                     <span className="capitalize">{log.action}</span>

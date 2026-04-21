@@ -4,6 +4,31 @@ const path = require('path');
 const createPieceService = (deps) => {
   const { Piece, io, normalizeMachineChain, uploadsDir } = deps;
 
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const toBoolean = (value, fallback = false) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return fallback;
+  };
+
+  const canEmployeeEditPiece = (piece, username) => {
+    if (!piece || !username) return false;
+    if (piece.employe === username) return true;
+    return Array.isArray(piece.taches) && piece.taches.some((task) => task?.employe === username);
+  };
+
+  const resolvePieceStatus = (piece, overrides = {}, explicitStatus = null) => {
+    if (explicitStatus !== null && explicitStatus !== undefined) return explicitStatus;
+    // Saving the piece form must not advance the workflow on its own.
+    // Real status changes are driven by machine actions or an explicit admin status update.
+    return overrides.status ?? piece.status;
+  };
+
   // Title: List pieces with optional machine/status filters.
   const listPieces = async (query = {}) => {
     const { machine, status } = query;
@@ -56,12 +81,12 @@ const createPieceService = (deps) => {
       const nextStep = currentStep + 1;
       piece.currentStep = nextStep;
       piece.currentMachine = chain[nextStep];
-      piece.status = 'En cours';
-      piece.history.push({ machine: chain[nextStep], action: 'entered', by: username });
+      piece.status = 'Arrêté';
     }
 
     await piece.save();
     io.emit('piece-progressed', piece);
+    io.emit('dashboard-refresh', { pieceId });
     return piece;
   };
 
@@ -73,6 +98,7 @@ const createPieceService = (deps) => {
       machineChain,
       employe,
       quantite,
+      quantiteProduite,
       prix,
       status,
       matiere,
@@ -93,7 +119,7 @@ const createPieceService = (deps) => {
     }
 
     const chain = normalizeMachineChain(machine, machineChain);
-    return Piece.create({
+    const piece = await Piece.create({
       ref: ref || '',
       nom,
       machine: machine || 'Rectifieuse',
@@ -102,10 +128,12 @@ const createPieceService = (deps) => {
       currentMachine: chain[0] || machine || 'Rectifieuse',
       history: [{ machine: chain[0] || machine || 'Rectifieuse', action: 'entered', by: username }],
       employe: employe || '',
-      quantite: Number(quantite) || 0,
-      prix: Number(prix) || 0,
+      quantite: toNumber(quantite, 0),
+      quantiteProduite: toNumber(quantiteProduite, 0),
+      quantiteRuban: 0,
+      prix: toNumber(prix, 0),
       status: status || 'Arrêté',
-      matiere: typeof matiere === 'boolean' ? matiere : matiere !== 'false',
+      matiere: toBoolean(matiere, false),
       dimension: dimension || '',
       matiereType: matiereType || '',
       matiereReference: matiereReference || '',
@@ -117,19 +145,36 @@ const createPieceService = (deps) => {
       fichier: file ? file.filename : null,
       taches: [],
     });
+    io.emit('piece-progressed', piece);
+    io.emit('dashboard-refresh', { pieceId: piece._id });
+    return piece;
   };
 
   // Title: Update one piece.
-  const patchPiece = async (pieceId, payload = {}) => {
-    const allowed = [
+  const patchPiece = async (pieceId, payload = {}, actor = {}) => {
+    const piece = await Piece.findById(pieceId);
+    if (!piece) {
+      const error = new Error('Piece introuvable');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const isAdmin = actor?.role === 'admin';
+    if (!isAdmin && !canEmployeeEditPiece(piece, actor?.username || '')) {
+      const error = new Error('Modification non autorisee');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const adminAllowed = [
       'nom',
       'machine',
       'machineChain',
       'employe',
       'quantite',
+      'quantiteProduite',
       'prix',
       'status',
-      'matiere',
       'dimension',
       'matiereType',
       'matiereReference',
@@ -145,33 +190,46 @@ const createPieceService = (deps) => {
       'currentStep',
       'currentMachine',
     ];
+    const employeeAllowed = [
+      'ref',
+      'quantite',
+      'matiere',
+      'dimension',
+      'matiereType',
+      'matiereReference',
+    ];
+    const allowed = isAdmin ? adminAllowed : employeeAllowed;
 
     const updates = allowed.reduce((acc, key) => {
       if (payload[key] !== undefined) acc[key] = payload[key];
       return acc;
     }, {});
 
-    if (updates.machineChain || updates.machine) {
-      const existing = await Piece.findById(pieceId);
-      if (!existing) {
-        const error = new Error('Piece introuvable');
-        error.statusCode = 404;
-        throw error;
-      }
-      const nextChain = normalizeMachineChain(updates.machine || existing.machine, updates.machineChain || existing.machineChain);
+    ['quantite', 'quantiteProduite', 'prix', 'stock', 'maxStock', 'seuil', 'currentStep'].forEach((key) => {
+      if (updates[key] !== undefined) updates[key] = toNumber(updates[key], 0);
+    });
+    if (updates.matiere !== undefined) {
+      updates.matiere = toBoolean(updates.matiere, Boolean(piece.matiere));
+    }
+
+    const explicitStatus = payload.status !== undefined ? payload.status : null;
+
+    if (isAdmin && (updates.machineChain || updates.machine)) {
+      const nextChain = normalizeMachineChain(updates.machine || piece.machine, updates.machineChain || piece.machineChain);
       updates.machineChain = nextChain;
-      const safeStep = Math.min(Math.max(Number(updates.currentStep ?? existing.currentStep ?? 0), 0), Math.max(nextChain.length - 1, 0));
+      const safeStep = Math.min(Math.max(toNumber(updates.currentStep ?? piece.currentStep, 0), 0), Math.max(nextChain.length - 1, 0));
       updates.currentStep = safeStep;
       updates.currentMachine = nextChain[safeStep] || null;
     }
 
-    const piece = await Piece.findByIdAndUpdate(pieceId, updates, { returnDocument: 'after' });
-    if (!piece) {
-      const error = new Error('Piece introuvable');
-      error.statusCode = 404;
-      throw error;
+    if (updates.quantite !== undefined || updates.quantiteProduite !== undefined || explicitStatus !== null) {
+      updates.status = resolvePieceStatus(piece, updates, explicitStatus);
     }
-    return piece;
+
+    const updatedPiece = await Piece.findByIdAndUpdate(pieceId, updates, { returnDocument: 'after' });
+    io.emit('piece-progressed', updatedPiece);
+    io.emit('dashboard-refresh', { pieceId: updatedPiece._id });
+    return updatedPiece;
   };
 
   // Title: Delete one piece.

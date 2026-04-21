@@ -21,7 +21,7 @@ const createPieceRoutes = (deps) => {
   router.get('/production/pieces-tracking', authMiddleware, controller.piecesTracking);
   router.post('/pieces/:id/progress', authMiddleware, controller.progressPiece);
   router.post('/pieces', authMiddleware, adminMiddleware, pieceUploadMiddleware, controller.createPiece);
-  router.patch('/pieces/:id', authMiddleware, adminMiddleware, controller.patchPiece);
+  router.patch('/pieces/:id', authMiddleware, controller.patchPiece);
   router.delete('/pieces/:id', authMiddleware, adminMiddleware, controller.deletePiece);
   router.get('/pieces/:id/download', authMiddleware, controller.downloadPiece);
 

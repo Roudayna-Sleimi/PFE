@@ -26,6 +26,7 @@ const pieceSchema = new mongoose.Schema({
   employe: { type: String, default: '' },
   quantite: { type: Number, default: 0 },
   quantiteProduite: { type: Number, default: 0 },
+  quantiteRuban: { type: Number, default: 0 },
   prix: { type: Number, default: 0 },
   status: {
     type: String,

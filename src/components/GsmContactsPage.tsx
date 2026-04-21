@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTheme } from '../hooks/useTheme';
 
 const API_BASE_URL = 'http://localhost:5000';
 
@@ -55,6 +56,7 @@ const EMPTY_FORM: ContactFormState = {
 };
 
 const GsmContactsPage: React.FC = () => {
+  const { darkMode } = useTheme();
   const token = localStorage.getItem('token') || '';
   const role = localStorage.getItem('role') || '';
   const isAdmin = role === 'admin';
@@ -301,13 +303,24 @@ const GsmContactsPage: React.FC = () => {
 
   const formatDate = (value?: string) =>
     value ? new Date(value).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
+  const panelClass = 'rounded-xl border border-[color:var(--app-border)] bg-[var(--app-card)]';
+  const nestedPanelClass = 'rounded-lg border border-[color:var(--app-border)] bg-[var(--app-surface-strong)]';
+  const titleClass = 'text-[var(--app-heading)]';
+  const bodyClass = 'text-[var(--app-text)]';
+  const mutedClass = 'text-[var(--app-muted)]';
+  const subtleClass = 'text-[var(--app-subtle)]';
+  const inactiveBadgeStyle = {
+    background: darkMode ? 'rgba(51,65,85,0.68)' : 'rgba(15,23,42,0.08)',
+    borderColor: darkMode ? 'rgba(71,85,105,0.82)' : 'rgba(15,23,42,0.14)',
+    color: darkMode ? '#cbd5e1' : '#233149',
+  };
 
   return (
     <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full" style={{ background: 'transparent' }}>
       <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-white mb-1">Gestion GSM</h2>
-          <p className="text-sm text-slate-500">Contacts d'appel, contact actif et historique des tentatives.</p>
+          <h2 className={`text-2xl font-bold mb-1 ${titleClass}`}>Gestion GSM</h2>
+          <p className={`text-sm ${mutedClass}`}>Contacts d'appel, contact actif et historique des tentatives.</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -338,50 +351,50 @@ const GsmContactsPage: React.FC = () => {
       )}
 
       <div className="grid grid-cols-3 gap-4 mb-5">
-        <div className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
-          <div className="text-xs text-slate-400 mb-1">Contact actif</div>
+        <div className={`${panelClass} p-4`}>
+          <div className={`text-xs mb-1 ${subtleClass}`}>Contact actif</div>
           {activeContact ? (
             <>
-              <div className="text-base font-bold text-white">{activeContact.name}</div>
-              <div className="text-xs text-slate-400 mt-1">{activeContact.role || 'responsable'}</div>
+              <div className={`text-base font-bold ${titleClass}`}>{activeContact.name}</div>
+              <div className={`text-xs mt-1 ${mutedClass}`}>{activeContact.role || 'responsable'}</div>
               <div className="text-sm text-cyan-300 mt-3">{activeContact.phonePrimary}</div>
-              <div className="text-xs text-slate-500 mt-1">{activeContact.phoneBackup || 'Aucun backup'}</div>
+              <div className={`text-xs mt-1 ${mutedClass}`}>{activeContact.phoneBackup || 'Aucun backup'}</div>
             </>
           ) : (
             <div className="text-sm text-amber-300">Aucun contact GSM actif.</div>
           )}
         </div>
 
-        <form onSubmit={saveContact} className="col-span-2 rounded-xl border border-white/10 bg-slate-900/50 p-4">
-          <div className="text-sm font-bold text-white mb-3">{editingId ? 'Modifier contact' : 'Ajouter contact'}</div>
+        <form onSubmit={saveContact} className={`col-span-2 ${panelClass} p-4`}>
+          <div className={`text-sm font-bold mb-3 ${titleClass}`}>{editingId ? 'Modifier contact' : 'Ajouter contact'}</div>
           <div className="grid grid-cols-4 gap-2">
             <input
               value={form.name}
               onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
               placeholder="Nom"
               disabled={!isAdmin}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
+              className="rounded-lg px-3 py-2 text-sm outline-none disabled:opacity-60 border border-[color:var(--app-border)] bg-[var(--app-surface-strong)] text-[var(--app-text)]"
             />
             <input
               value={form.role}
               onChange={e => setForm(prev => ({ ...prev, role: e.target.value }))}
               placeholder="Role"
               disabled={!isAdmin}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
+              className="rounded-lg px-3 py-2 text-sm outline-none disabled:opacity-60 border border-[color:var(--app-border)] bg-[var(--app-surface-strong)] text-[var(--app-text)]"
             />
             <input
               value={form.phonePrimary}
               onChange={e => setForm(prev => ({ ...prev, phonePrimary: e.target.value }))}
               placeholder="Numero principal"
               disabled={!isAdmin}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
+              className="rounded-lg px-3 py-2 text-sm outline-none disabled:opacity-60 border border-[color:var(--app-border)] bg-[var(--app-surface-strong)] text-[var(--app-text)]"
             />
             <input
               value={form.phoneBackup}
               onChange={e => setForm(prev => ({ ...prev, phoneBackup: e.target.value }))}
               placeholder="Numero backup"
               disabled={!isAdmin}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
+              className="rounded-lg px-3 py-2 text-sm outline-none disabled:opacity-60 border border-[color:var(--app-border)] bg-[var(--app-surface-strong)] text-[var(--app-text)]"
             />
           </div>
           <div className="flex items-center gap-2 mt-3">
@@ -397,7 +410,7 @@ const GsmContactsPage: React.FC = () => {
               <button
                 type="button"
                 onClick={resetForm}
-                className="px-4 py-2 rounded-lg text-sm font-semibold text-slate-200 border border-slate-600 bg-slate-800 cursor-pointer"
+                className="px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer border border-[color:var(--app-border)] bg-[var(--app-surface-strong)] text-[var(--app-text)]"
               >
                 Annuler
               </button>
@@ -407,41 +420,44 @@ const GsmContactsPage: React.FC = () => {
         </form>
       </div>
 
-      <div className="rounded-xl border border-white/10 bg-slate-900/50 p-4 mb-5">
+      <div className={`${panelClass} p-4 mb-5`}>
         <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-          <div className="text-sm font-bold text-white">Contacts GSM ({contacts.length})</div>
+          <div className={`text-sm font-bold ${titleClass}`}>Contacts GSM ({contacts.length})</div>
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Recherche nom, role ou numero..."
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white outline-none w-72 max-w-full"
+            className="rounded-lg px-3 py-2 text-xs outline-none w-72 max-w-full border border-[color:var(--app-border)] bg-[var(--app-surface-strong)] text-[var(--app-text)]"
           />
         </div>
         {loadingContacts ? (
-          <div className="text-sm text-slate-500 py-4">Chargement des contacts...</div>
+          <div className={`text-sm py-4 ${mutedClass}`}>Chargement des contacts...</div>
         ) : filteredContacts.length === 0 ? (
-          <div className="text-sm text-slate-500 py-4">Aucun contact trouve.</div>
+          <div className={`text-sm py-4 ${mutedClass}`}>Aucun contact trouve.</div>
         ) : (
           <div className="grid grid-cols-2 gap-3">
             {filteredContacts.map(contact => (
-              <div key={contact._id} className="rounded-lg border border-white/10 bg-slate-800/50 p-3">
+              <div key={contact._id} className={`${nestedPanelClass} p-3`}>
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-sm font-bold text-white">{contact.name}</div>
-                    <div className="text-[11px] text-slate-400">{contact.role || 'responsable'}</div>
+                    <div className={`text-sm font-bold ${titleClass}`}>{contact.name}</div>
+                    <div className={`text-[11px] ${mutedClass}`}>{contact.role || 'responsable'}</div>
                   </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${contact.isActive ? 'text-emerald-300 bg-emerald-500/15 border border-emerald-500/30' : 'text-slate-300 bg-slate-700/50 border border-slate-600'}`}>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${contact.isActive ? 'text-emerald-300 bg-emerald-500/15 border border-emerald-500/30' : ''}`}
+                    style={contact.isActive ? undefined : inactiveBadgeStyle}
+                  >
                     {contact.isActive ? 'ACTIF' : 'INACTIF'}
                   </span>
                 </div>
-                <div className="mt-2 text-xs text-slate-300">Principal: {contact.phonePrimary}</div>
-                <div className="text-xs text-slate-500 mt-1">Backup: {contact.phoneBackup || '-'}</div>
-                <div className="text-[10px] text-slate-600 mt-1">Ajoute: {formatDate(contact.createdAt)}</div>
+                <div className={`mt-2 text-xs ${bodyClass}`}>Principal: {contact.phonePrimary}</div>
+                <div className={`text-xs mt-1 ${mutedClass}`}>Backup: {contact.phoneBackup || '-'}</div>
+                <div className={`text-[10px] mt-1 ${subtleClass}`}>Ajoute: {formatDate(contact.createdAt)}</div>
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
                   <button
                     onClick={() => startEdit(contact)}
                     disabled={!isAdmin}
-                    className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-200 border border-slate-600 bg-slate-700/50 cursor-pointer disabled:opacity-50"
+                    className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer disabled:opacity-50 border border-[color:var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text)]"
                   >
                     Modifier
                   </button>
@@ -468,20 +484,20 @@ const GsmContactsPage: React.FC = () => {
         )}
       </div>
 
-      <div className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
+      <div className={`${panelClass} p-4`}>
         <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-bold text-white">Historique appels GSM</div>
-          <span className="text-xs text-slate-500">{callLogs.length} tentative(s)</span>
+          <div className={`text-sm font-bold ${titleClass}`}>Historique appels GSM</div>
+          <span className={`text-xs ${mutedClass}`}>{callLogs.length} tentative(s)</span>
         </div>
         {loadingHistory ? (
-          <div className="text-sm text-slate-500 py-4">Chargement historique GSM...</div>
+          <div className={`text-sm py-4 ${mutedClass}`}>Chargement historique GSM...</div>
         ) : callLogs.length === 0 ? (
-          <div className="text-sm text-slate-500 py-4">Aucune tentative d'appel enregistree.</div>
+          <div className={`text-sm py-4 ${mutedClass}`}>Aucune tentative d'appel enregistree.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
               <thead>
-                <tr className="text-slate-400 border-b border-slate-700">
+                <tr className={`border-b border-[color:var(--app-border)] ${mutedClass}`}>
                   <th className="text-left py-2 px-2 font-semibold">Date</th>
                   <th className="text-left py-2 px-2 font-semibold">Alerte</th>
                   <th className="text-left py-2 px-2 font-semibold">Numero</th>
@@ -492,14 +508,14 @@ const GsmContactsPage: React.FC = () => {
               </thead>
               <tbody>
                 {callLogs.map(log => (
-                  <tr key={log._id} className="border-b border-slate-800/70">
-                    <td className="py-2 px-2 text-slate-300">{formatDate(log.calledAt)}</td>
+                  <tr key={log._id} className="border-b border-[color:var(--app-border)]">
+                    <td className={`py-2 px-2 ${bodyClass}`}>{formatDate(log.calledAt)}</td>
                     <td className="py-2 px-2">
-                      <div className="text-slate-200">{log.alertMessage}</div>
-                      <div className="text-[10px] text-slate-500">{log.node}</div>
+                      <div className={titleClass}>{log.alertMessage}</div>
+                      <div className={`text-[10px] ${mutedClass}`}>{log.node}</div>
                     </td>
                     <td className="py-2 px-2 text-cyan-300">{log.phoneNumber}</td>
-                    <td className="py-2 px-2 text-slate-300">#{log.attemptNo}</td>
+                    <td className={`py-2 px-2 ${bodyClass}`}>#{log.attemptNo}</td>
                     <td className="py-2 px-2">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                         log.callStatus === 'success'
@@ -513,7 +529,7 @@ const GsmContactsPage: React.FC = () => {
                       </span>
                       {log.errorMessage && <div className="text-[10px] text-red-300 mt-1">{log.errorMessage}</div>}
                     </td>
-                    <td className="py-2 px-2 text-slate-300">
+                    <td className={`py-2 px-2 ${bodyClass}`}>
                       {typeof log.durationSec === 'number' && log.durationSec >= 0 ? `${log.durationSec}s` : '-'}
                     </td>
                   </tr>

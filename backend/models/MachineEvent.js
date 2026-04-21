@@ -8,6 +8,7 @@ const machineEventSchema = new mongoose.Schema({
   pieceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Piece', default: null },
   pieceName: { type: String, default: null },
   pieceCount: { type: Number, default: null },
+  rubanQuantity: { type: Number, default: null },
   createdAt: { type: Date, default: Date.now },
 });
 

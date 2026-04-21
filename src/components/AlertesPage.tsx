@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
+import { useTheme } from '../hooks/useTheme';
 
 interface Alert {
   _id: string;
@@ -27,6 +28,7 @@ interface CallLog {
 const socket = io('http://localhost:5000', { transports: ['websocket'] });
 
 const AlertesPage: React.FC = () => {
+  const { darkMode } = useTheme();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [filter, setFilter] = useState<'all' | 'critical' | 'warning' | 'new' | 'resolved'>('all');
   const [loading, setLoading] = useState(true);
@@ -113,13 +115,17 @@ const AlertesPage: React.FC = () => {
     warning: alerts.filter((a) => a.severity === 'warning').length,
     new: alerts.filter((a) => a.status === 'new').length,
   };
+  const titleClass = 'text-[var(--app-heading)]';
+  const mutedClass = 'text-[var(--app-muted)]';
+  const bodyClass = 'text-[var(--app-text)]';
+  const panelClass = 'rounded-xl border border-[color:var(--app-border)] bg-[var(--app-card)]';
 
   return (
     <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full" style={{ background: 'transparent' }}>
       <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-white mb-1">Alertes</h2>
-          <p className="text-sm text-slate-500">Historique et alertes en temps reel</p>
+          <h2 className={`text-2xl font-bold mb-1 ${titleClass}`}>Alertes</h2>
+          <p className={`text-sm ${mutedClass}`}>Historique et alertes en temps reel</p>
         </div>
         <button
           onClick={fetchAlerts}
@@ -140,7 +146,7 @@ const AlertesPage: React.FC = () => {
             <div className="text-3xl font-bold" style={{ color: s.color }}>
               {s.value}
             </div>
-            <div className="text-xs text-slate-500 mt-1">{s.label}</div>
+            <div className={`text-xs mt-1 ${mutedClass}`}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -153,7 +159,7 @@ const AlertesPage: React.FC = () => {
             className={`px-4 py-1.5 rounded-full text-xs font-semibold cursor-pointer border transition-all ${
               filter === f
                 ? 'bg-[#00d4ff] text-black border-[#00d4ff]'
-                : 'bg-transparent text-slate-400 border-slate-700 hover:border-slate-500'
+                : 'bg-transparent text-[var(--app-muted)] border-[color:var(--app-border)] hover:border-[color:var(--app-border)]'
             }`}
           >
             {f === 'all' ? 'Toutes' : f === 'critical' ? 'Critiques' : f === 'warning' ? 'Attention' : f === 'new' ? 'Nouvelles' : 'Resolues'}
@@ -162,13 +168,13 @@ const AlertesPage: React.FC = () => {
       </div>
 
       {audioMessage && (
-        <div className="mb-4 text-xs text-slate-300 bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2">{audioMessage}</div>
+        <div className={`mb-4 text-xs rounded-lg px-3 py-2 ${panelClass} ${bodyClass}`}>{audioMessage}</div>
       )}
 
       {loading ? (
-        <div className="text-center text-slate-500 py-10">Chargement...</div>
+        <div className={`text-center py-10 ${mutedClass}`}>Chargement...</div>
       ) : filtered.length === 0 ? (
-        <div className="text-center text-slate-500 py-10">Aucune alerte</div>
+        <div className={`text-center py-10 ${mutedClass}`}>Aucune alerte</div>
       ) : (
         <div className="flex flex-col gap-3">
           {filtered.map((alert) => (
@@ -186,7 +192,7 @@ const AlertesPage: React.FC = () => {
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <span className="font-semibold text-white text-sm">{alert.message}</span>
+                  <span className={`font-semibold text-sm ${titleClass}`}>{alert.message}</span>
                   <span
                     className="px-2 py-0.5 rounded-full text-[10px] font-bold"
                     style={{
@@ -196,13 +202,18 @@ const AlertesPage: React.FC = () => {
                   >
                     {alert.severity.toUpperCase()}
                   </span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700 text-slate-300">{alert.type}</span>
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                    style={{ background: darkMode ? 'rgba(51,65,85,0.78)' : 'rgba(15,23,42,0.08)', color: darkMode ? '#cbd5e1' : '#233149' }}
+                  >
+                    {alert.type}
+                  </span>
                   {alert.status === 'resolved' && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/20 text-green-400">RESOLU</span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
+                <div className={`flex items-center gap-4 text-xs flex-wrap ${mutedClass}`}>
                   <span>Node: {alert.node}</span>
                   <span>Heure: {new Date(alert.createdAt).toLocaleString('fr-FR')}</span>
                   {alert.sensorSnapshot?.courant != null && <span>Courant: {alert.sensorSnapshot.courant.toFixed(1)} A</span>}

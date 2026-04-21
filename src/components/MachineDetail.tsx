@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import { ArrowLeft, Activity, Zap, Bell, CheckCircle, Eye, Clock, Package, History } from 'lucide-react';
 import { getMachineVisual } from '../utils/machineVisuals';
@@ -28,6 +28,12 @@ interface Piece {
   prix: number;
   status: 'Terminé' | 'En cours' | 'Contrôle';
   matiere: boolean;
+}
+
+interface EmployeOverview {
+  username: string;
+  currentPieceId?: string | null;
+  machineStatus?: 'started' | 'paused' | 'stopped';
 }
 
 interface Machine {
@@ -79,12 +85,13 @@ const getMachineStatusStyle = (s: Machine['status']) => {
 const santeColor = (v: number) => v >= 70 ? '#22c55e' : v >= 40 ? '#f97316' : '#ef4444';
 
 const fallbackPieceStatusConfig = {
-  color: '#2563eb',
-  bg: 'rgba(37,99,235,0.12)',
-  label: 'En cours',
+  color: '#94a3b8',
+  bg: 'rgba(148,163,184,0.12)',
+  label: 'Arrêté',
 };
 
 const statusPieceConfig = {
+  'Arrêté':  { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', label: 'Arrêté' },
   'Terminé':  { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  label: 'Termine' },
   'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', label: 'En cours' },
   'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', label: 'Controle' },
@@ -99,6 +106,7 @@ const resolvePieceStatusConfig = (status: unknown) => {
 
   if (normalized.includes('termin')) return statusPieceConfig['Terminé'] || fallbackPieceStatusConfig;
   if (normalized.includes('control') || normalized.includes('contr')) return statusPieceConfig['Contrôle'] || fallbackPieceStatusConfig;
+  if (normalized.includes('arret') || normalized.includes('stop')) return statusPieceConfig['Arrêté'] || fallbackPieceStatusConfig;
   if (normalized.includes('encours')) return statusPieceConfig['En cours'] || fallbackPieceStatusConfig;
   return fallbackPieceStatusConfig;
 };
@@ -109,6 +117,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const tabs = getTabs(machine.id);
   const [activeTab, setActiveTab] = useState(tabs[0]);
   const [pieces, setPieces]       = useState<Piece[]>([]);
+  const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
   const [live, setLive]           = useState<LiveData>({
     vibration: machine.vibration, courant: machine.courant,
     rpm: machine.rpm, pression: 0, isLive: false,
@@ -120,6 +129,24 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const st = getMachineStatusStyle(machine.status);
   const visual = getMachineVisual({ id: machine.id, name: machine.name, icon: machine.icon, imageUrl: machine.imageUrl });
   const machineFunctions = getMachineFunctions(machine);
+  const activePieceIds = useMemo(() => (
+    new Set(
+      employeesOverview
+        .filter((row) => row.currentPieceId && (row.machineStatus === 'started' || row.machineStatus === 'paused'))
+        .map((row) => String(row.currentPieceId)),
+    )
+  ), [employeesOverview]);
+
+  const getVisiblePieceStatus = (piece: Piece) => {
+    const normalized = String(piece.status || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    if (normalized.includes('termin')) return 'TerminÃ©';
+    if (normalized.includes('control') || normalized.includes('contr')) return 'ContrÃ´le';
+    if (activePieceIds.has(piece._id)) return 'En cours';
+    return 'Arrêté';
+  };
 
   const piecesMachineName = (() => {
     if (machine.id === 'rectifieuse') return 'Rectifieuse';
@@ -204,6 +231,16 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       .catch(() => {});
   }, [piecesMachineName, hasPieces]);
 
+  useEffect(() => {
+    const token = localStorage.getItem('token') || '';
+    fetch('http://localhost:5000/api/admin/employes-overview', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (Array.isArray(data)) setEmployeesOverview(data); })
+      .catch(() => {});
+  }, []);
+
   // Socket live — seulement pour les machines avec capteurs
   useEffect(() => {
     if (!LIVE_MACHINES.includes(machine.id)) return;
@@ -215,6 +252,21 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     socket.on('sensor-data', handler);
     return () => { socket.off('sensor-data', handler); };
   }, [machine.node, machine.id]);
+
+  useEffect(() => {
+    const handler = (payload: EmployeOverview) => {
+      if (!payload?.username) return;
+      setEmployeesOverview(prev => {
+        const index = prev.findIndex((row) => row.username === payload.username);
+        if (index === -1) return [payload, ...prev];
+        const next = [...prev];
+        next[index] = { ...next[index], ...payload };
+        return next;
+      });
+    };
+    socket.on('employee-machine-updated', handler);
+    return () => { socket.off('employee-machine-updated', handler); };
+  }, []);
 
   // Simulation fallback
   useEffect(() => {
@@ -410,7 +462,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
           ) : (
             <div className="grid grid-cols-2 gap-4">
               {pieces.map(piece => {
-                const sc = resolvePieceStatusConfig(piece.status);
+                const sc = resolvePieceStatusConfig(getVisiblePieceStatus(piece));
                 return (
                   <div key={piece._id}
                     className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-4 hover:border-[rgba(0,212,255,0.2)] transition-all">

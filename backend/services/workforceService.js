@@ -384,7 +384,7 @@ const createWorkforceService = (deps) => {
 
   // Title: Build employee dashboard payload for current user.
   const employeDashboard = async (username) => {
-    const me = await User.findOne({ username }).select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt role');
+    const me = await User.findOne({ username }).select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt currentPieceId currentPieceName role');
     if (!me) {
       const error = new Error('Utilisateur introuvable');
       error.statusCode = 404;
@@ -402,7 +402,7 @@ const createWorkforceService = (deps) => {
 
   // Title: Save one machine action emitted by an employee.
   const employeMachineAction = async (username, payload = {}) => {
-    const { action, activity = '', pieceId = null, pieceCount = null, machineName = null } = payload;
+    const { action, activity = '', pieceId = null, pieceCount = null, rubanQuantity = null, machineName = null } = payload;
     if (!['started', 'paused', 'stopped'].includes(action)) {
       const error = new Error('Action invalide');
       error.statusCode = 400;
@@ -433,10 +433,24 @@ const createWorkforceService = (deps) => {
     user.machineStatusUpdatedAt = new Date();
 
     if (action === 'started' && pieceId) {
-      const currentPiece = await Piece.findById(pieceId).lean();
-      if (currentPiece) {
-        user.currentPieceName = currentPiece.nom;
+      piece = await Piece.findById(pieceId);
+      if (piece) {
+        user.currentPieceName = piece.nom;
         user.currentPieceId = String(pieceId);
+        if (normalizeStatus(piece.status) !== 'termine') {
+          const chain = normalizeMachineChain(piece.machine, piece.machineChain);
+          const currentStep = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
+          const currentMachine = piece.currentMachine || chain[currentStep] || machine;
+          const history = Array.isArray(piece.history) ? piece.history : [];
+          const lastHistory = history[history.length - 1];
+          if (!lastHistory || lastHistory.machine !== currentMachine || lastHistory.action !== 'entered') {
+            history.push({ machine: currentMachine, action: 'entered', by: username });
+            piece.history = history;
+          }
+          piece.status = 'En cours';
+          await piece.save();
+          io.emit('piece-progressed', piece);
+        }
       }
     }
 
@@ -462,19 +476,19 @@ const createWorkforceService = (deps) => {
       piece.history.push({ machine: currentMachine, action: 'completed', by: username });
 
       if (currentStep >= chain.length - 1) {
-        piece.status = 'Termine';
         piece.currentStep = chain.length - 1;
         piece.currentMachine = chain[chain.length - 1] || currentMachine || null;
+        piece.status = 'Arrêté';
       } else {
         const nextStep = currentStep + 1;
         piece.currentStep = nextStep;
         piece.currentMachine = chain[nextStep];
-        piece.status = 'En cours';
-        piece.history.push({ machine: chain[nextStep], action: 'entered', by: username });
+        piece.status = 'Arrêté';
       }
 
       piece.quantiteProduite = (piece.quantiteProduite || 0) + Number(pieceCount || 0);
-      if (piece.quantite > 0 && piece.quantiteProduite >= piece.quantite) {
+      piece.quantiteRuban = (piece.quantiteRuban || 0) + Number(rubanQuantity || 0);
+      if (currentStep >= chain.length - 1 && piece.quantite > 0 && piece.quantiteProduite >= piece.quantite) {
         piece.status = 'Termine';
       }
       await piece.save();
@@ -486,9 +500,10 @@ const createWorkforceService = (deps) => {
       machine,
       action,
       activity,
-      pieceId: piece?._id || null,
-      pieceName: piece?.nom || null,
+      pieceId: piece?._id || (user.currentPieceId || null),
+      pieceName: piece?.nom || (user.currentPieceName || null),
       pieceCount: action === 'stopped' ? Number(pieceCount || 0) : null,
+      rubanQuantity: action === 'stopped' ? Number(rubanQuantity || 0) : null,
     });
 
     const response = {
@@ -501,9 +516,10 @@ const createWorkforceService = (deps) => {
       currentPieceId: user.currentPieceId || null,
       machineStatusUpdatedAt: user.machineStatusUpdatedAt,
       connectedAt: user.connectedAt,
-      pieceId: piece?._id || null,
-      pieceName: piece?.nom || null,
+      pieceId: piece?._id || (user.currentPieceId || null),
+      pieceName: piece?.nom || (user.currentPieceName || null),
       pieceCount: action === 'stopped' ? Number(pieceCount || 0) : null,
+      rubanQuantity: action === 'stopped' ? Number(rubanQuantity || 0) : null,
       createdAt: event.createdAt,
     };
 
@@ -520,12 +536,16 @@ const createWorkforceService = (deps) => {
       Piece.find({}).lean(),
       MachineEvent.find({ createdAt: { $gte: last7 } }).sort({ createdAt: 1 }).lean(),
       Alert.find({ status: { $ne: 'resolved' } }).lean(),
-      User.find({ role: 'employe' }).select('username assignedMachine machineStatus currentActivity isOnline').lean(),
+      User.find({ role: 'employe' }).select('username assignedMachine machineStatus currentActivity isOnline currentPieceId').lean(),
     ]);
 
     const totalPcs = pieces.reduce((sum, piece) => sum + (piece.quantite || 0), 0);
     const totalRevenu = pieces.reduce((sum, piece) => sum + (piece.quantite || 0) * (piece.prix || 0), 0);
-    const enCours = pieces.filter((piece) => normalizeStatus(piece.status) === 'en cours').length;
+    const enCours = new Set(
+      employes
+        .filter((row) => row.currentPieceId && (row.machineStatus === 'started' || row.machineStatus === 'paused'))
+        .map((row) => String(row.currentPieceId)),
+    ).size;
     const totalPieces = pieces.length;
 
     const prodParJour = [];

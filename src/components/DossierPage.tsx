@@ -123,9 +123,9 @@ const getFileVisualMeta = (doc: DossierDocument) => {
     return {
       label: 'IMG',
       kind: 'Image',
-      color: '#2563eb',
-      bg: 'rgba(37,99,235,0.10)',
-      border: 'rgba(37,99,235,0.20)',
+      color: '#1e3a8a',
+      bg: 'rgba(30,58,138,0.10)',
+      border: 'rgba(30,58,138,0.20)',
       icon: FileImage,
     };
   }
@@ -134,9 +134,9 @@ const getFileVisualMeta = (doc: DossierDocument) => {
     return {
       label: ext === 'sldprt' || ext === 'sldasm' || ext === 'slddrw' ? 'SLD' : 'CAD',
       kind: 'Fichier CAO',
-      color: '#0f766e',
-      bg: 'rgba(15,118,110,0.10)',
-      border: 'rgba(15,118,110,0.20)',
+      color: '#1d4ed8',
+      bg: 'rgba(29,78,216,0.10)',
+      border: 'rgba(29,78,216,0.20)',
       icon: FileCog,
     };
   }
@@ -144,9 +144,9 @@ const getFileVisualMeta = (doc: DossierDocument) => {
   return {
     label: (ext || 'FILE').slice(0, 4).toUpperCase(),
     kind: 'Fichier',
-    color: '#475569',
-    bg: 'rgba(71,85,105,0.10)',
-    border: 'rgba(71,85,105,0.20)',
+    color: '#1e3a8a',
+    bg: 'rgba(30,58,138,0.10)',
+    border: 'rgba(30,58,138,0.20)',
     icon: File,
   };
 };
@@ -166,8 +166,8 @@ const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string |
   docBody.replaceChildren();
   docBody.style.margin = '0';
   docBody.style.minHeight = '100vh';
-  docBody.style.background = '#020617';
-  docBody.style.color = '#e2e8f0';
+  docBody.style.background = '#050816';
+  docBody.style.color = '#f8fafc';
   docBody.style.fontFamily = 'Arial, sans-serif';
 
   const shell = popup.document.createElement('div');
@@ -177,7 +177,7 @@ const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string |
 
   const header = popup.document.createElement('div');
   header.style.padding = '12px 16px';
-  header.style.borderBottom = '1px solid rgba(255,255,255,0.10)';
+  header.style.borderBottom = '1px solid rgba(148,163,184,0.18)';
   header.style.background = '#0f172a';
   header.style.fontSize = '13px';
   header.style.fontWeight = '700';
@@ -231,7 +231,7 @@ const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string |
   panel.style.maxWidth = '520px';
   panel.style.padding = '28px';
   panel.style.textAlign = 'center';
-  panel.style.border = '1px solid rgba(255,255,255,0.10)';
+  panel.style.border = '1px solid rgba(148,163,184,0.18)';
   panel.style.background = '#0f172a';
   panel.style.borderRadius = '8px';
 
@@ -241,9 +241,9 @@ const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string |
   badge.style.height = '72px';
   badge.style.display = 'grid';
   badge.style.placeItems = 'center';
-  badge.style.border = '1px solid rgba(125,211,252,0.28)';
+  badge.style.border = '1px solid rgba(37,99,235,0.28)';
   badge.style.borderRadius = '8px';
-  badge.style.color = '#7dd3fc';
+  badge.style.color = '#60a5fa';
   badge.style.fontWeight = '900';
   badge.textContent = cadExtensions.has(ext.toLowerCase()) ? '3D' : ext;
 
@@ -254,7 +254,7 @@ const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string |
   title.textContent = doc.originalName;
 
   const hint = popup.document.createElement('div');
-  hint.style.color = '#94a3b8';
+  hint.style.color = '#cbd5e1';
   hint.style.fontSize = '13px';
   hint.style.lineHeight = '1.5';
   hint.textContent = cadExtensions.has(ext.toLowerCase())
@@ -296,27 +296,27 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
   const [expandedPieces, setExpandedPieces] = useState<Record<string, boolean>>({});
 
   const theme = useMemo(() => ({
-    pageTitle: darkMode ? '#ffffff' : '#07111f',
-    bodyText: darkMode ? '#94a3b8' : '#526277',
-    strongText: darkMode ? '#cbd5e1' : '#102033',
-    cardBg: darkMode ? 'rgba(15,23,42,0.72)' : 'rgba(255,255,255,0.98)',
-    subCardBg: darkMode ? 'rgba(255,255,255,0.03)' : '#f8fbff',
-    nestedBg: darkMode ? 'rgba(15,23,42,0.40)' : '#f3f8fd',
-    softBg: darkMode ? 'rgba(255,255,255,0.02)' : '#ffffff',
-    border: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(15, 35, 60, 0.10)',
-    borderSoft: darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(15, 35, 60, 0.08)',
-    inputBg: darkMode ? 'rgba(15,23,42,0.82)' : '#ffffff',
-    inputText: darkMode ? '#ffffff' : '#0f172a',
-    label: darkMode ? '#94a3b8' : '#66788f',
-    buttonBg: darkMode ? 'rgba(255,255,255,0.04)' : '#f5f9fd',
-    buttonText: darkMode ? '#e2e8f0' : '#1d4ed8',
-    buttonBorder: darkMode ? 'rgba(255,255,255,0.10)' : 'rgba(59,130,246,0.18)',
-    blueShadow: darkMode ? '0 18px 40px -30px rgba(14,165,233,0.4)' : '0 18px 36px -30px rgba(37,99,235,0.24)',
-    badgeBg: darkMode ? 'rgba(56,189,248,0.10)' : 'rgba(37,99,235,0.09)',
-    badgeText: darkMode ? '#7dd3fc' : '#2563eb',
-    actionBg: darkMode ? 'rgba(56,189,248,0.10)' : 'rgba(37,99,235,0.10)',
-    actionText: darkMode ? '#7dd3fc' : '#1d4ed8',
-    actionBorder: darkMode ? 'rgba(56,189,248,0.24)' : 'rgba(37,99,235,0.20)',
+    pageTitle: darkMode ? '#f8fafc' : '#08111f',
+    bodyText: darkMode ? '#bcc9dc' : '#233149',
+    strongText: darkMode ? '#ffffff' : '#122033',
+    cardBg: darkMode ? '#0f1b2d' : '#ffffff',
+    subCardBg: darkMode ? '#0f1b2d' : '#ffffff',
+    nestedBg: darkMode ? '#0b1524' : '#f5f7fb',
+    softBg: darkMode ? '#111f33' : '#f7f9fc',
+    border: darkMode ? 'rgba(143,162,193,0.18)' : '#d6e0ef',
+    borderSoft: darkMode ? 'rgba(143,162,193,0.12)' : '#e3eaf5',
+    inputBg: darkMode ? '#111b2c' : '#ffffff',
+    inputText: darkMode ? '#f8fafc' : '#122033',
+    label: darkMode ? '#dbe5f3' : '#122033',
+    buttonBg: darkMode ? '#111f33' : '#ffffff',
+    buttonText: darkMode ? '#e2e8f0' : '#122033',
+    buttonBorder: darkMode ? 'rgba(143,162,193,0.18)' : '#d6e0ef',
+    blueShadow: darkMode ? '0 14px 28px -20px rgba(1,7,16,0.34)' : 'none',
+    badgeBg: darkMode ? '#111f33' : '#ffffff',
+    badgeText: darkMode ? '#e2e8f0' : '#122033',
+    actionBg: darkMode ? '#111f33' : '#ffffff',
+    actionText: darkMode ? '#e2e8f0' : '#122033',
+    actionBorder: darkMode ? 'rgba(143,162,193,0.18)' : '#d6e0ef',
   }), [darkMode]);
 
   const cardStyle: React.CSSProperties = useMemo(() => ({
@@ -336,7 +336,7 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     fontSize: 13,
     outline: 'none',
     boxSizing: 'border-box',
-    boxShadow: darkMode ? 'none' : '0 8px 20px -24px rgba(37,99,235,0.25)',
+    boxShadow: darkMode ? 'none' : 'none',
   }), [darkMode, theme]);
 
   const fetchDocuments = useCallback(async () => {

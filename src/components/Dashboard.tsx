@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {
   LayoutDashboard, Settings, Activity,
-  Pause, Sun, Moon, X, MessageSquare, UserPlus, LogOut, PhoneCall,
+  Sun, Moon, X, MessageSquare, UserPlus, LogOut, PhoneCall,
   BarChart2, Package, Heart, Search
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
@@ -95,7 +95,7 @@ const Dashboard: React.FC = () => {
   const [currentTime, setCurrentTime]       = useState(new Date());
   const [connected, setConnected]           = useState(false);
   const [hasLiveData, setHasLiveData]       = useState(false);
-  const [paused, setPaused]                 = useState(false);
+  const [paused]                            = useState(false);
   const [latest, setLatest]                 = useState<SensorData>(generateSimData());
   const [latestComp, setLatestComp]         = useState<SensorData>({ node:'compresseur', courant:0, vibX:0, vibY:0, vibZ:0, rpm:0, pression:0 });
   const [showMessaging, setShowMessaging]   = useState(false);
@@ -137,18 +137,18 @@ const [activePage, setActivePage] = useState<
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
-        setProdStats({
+        setProdStats(prev => ({
+          ...prev,
           totalPcs:    data.reduce((s: number, p: { quantite: number }) => s + p.quantite, 0),
           totalRevenu: data.reduce((s: number, p: { quantite: number; prix: number }) => s + p.quantite * p.prix, 0),
-          enCours:     data.filter((p: { status: string }) => p.status === 'En cours').length,
-        });
+        }));
       })
       .catch(() => {});
   }, [activePage]);
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
-    if (activePage === 'employes' && role === 'admin') {
+    if (role === 'admin') {
       fetch('http://localhost:5000/api/admin/employes-overview', {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -157,6 +157,15 @@ const [activePage, setActivePage] = useState<
         .catch(() => {});
     }
   }, [activePage, role]);
+
+  useEffect(() => {
+    const activePieceIds = new Set(
+      employeesOverview
+        .filter(e => e.currentPieceId && (e.machineStatus === 'started' || e.machineStatus === 'paused'))
+        .map(e => String(e.currentPieceId))
+    );
+    setProdStats(prev => ({ ...prev, enCours: activePieceIds.size }));
+  }, [employeesOverview]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -189,7 +198,6 @@ const [activePage, setActivePage] = useState<
         padding: 18px 24px; border-radius: 14px; font-size: 14px;
         font-weight: 600; color: white; max-width: 400px; min-width: 300px;
         background: ${data.severity === 'critical' ? '#ef4444' : '#f59e0b'};
-        box-shadow: 0 12px 32px rgba(0,0,0,0.4);
         border-left: 5px solid ${data.severity === 'critical' ? '#b91c1c' : '#d97706'};
         display: flex; flex-direction: column; gap: 6px; cursor: pointer;
       `;
@@ -277,7 +285,16 @@ const [activePage, setActivePage] = useState<
     return parseFloat(Math.max(0, Math.min(100, 100 - v * 5)).toFixed(1));
   }, [latestComp]);
 
-  const togglePaused = useCallback(() => setPaused(p => !p), []);
+  const pausedColor = darkMode ? '#ffffff' : '#08111f';
+  const stoppedColor = darkMode ? '#ffffff' : '#08111f';
+  const axisColor = darkMode ? '#ffffff' : '#08111f';
+  const tooltipStyle = darkMode
+    ? { background: '#0f172a', border: '1px solid rgba(255,255,255,0.18)', borderRadius: 10, fontSize: 12, color: '#f8fafc' }
+    : { background: '#ffffff', border: '1px solid rgba(15,23,42,0.12)', borderRadius: 10, fontSize: 12, color: '#0f172a' };
+  const piePalette = darkMode
+    ? ['#ffffff', '#1d4ed8', '#2563eb', '#e7eef8', '#1e3a8a']
+    : ['#08111f', '#1e3a8a', '#1d4ed8', '#122033', '#2563eb'];
+
   const handleLogout = useCallback(() => {
     const savedTheme = localStorage.getItem('themeMode') || localStorage.getItem('loginMode');
     localStorage.clear();
@@ -310,18 +327,16 @@ const [activePage, setActivePage] = useState<
     finally { setLoadingHisto(false); }
   };
 
-  const shellBg = darkMode ? 'bg-[#07111f] text-slate-100' : 'bg-slate-100 text-slate-900';
-  const bg2 = darkMode ? 'bg-[#0b1627]/92 backdrop-blur-md' : 'bg-white';
-  const bgCard = darkMode ? 'bg-[#0d1a2d]/80 shadow-[0_16px_32px_-26px_rgba(56,189,248,0.5)]' : 'bg-white';
-  const bgCardStrong = darkMode ? 'bg-[#0b1627]/92 shadow-[0_24px_60px_-34px_rgba(14,165,233,0.6)]' : 'bg-white';
-  const border = darkMode ? 'border-sky-300/15' : 'border-slate-200';
-  const txt1 = darkMode ? 'text-white' : 'text-slate-900';
-  const txt2 = darkMode ? 'text-slate-300' : 'text-slate-500';
-  const txtMut = darkMode ? 'text-slate-400' : 'text-slate-400';
-  const navHover = darkMode ? 'hover:bg-sky-500/10 hover:text-sky-200' : 'hover:bg-[rgba(0,212,255,0.1)] hover:text-[#00d4ff]';
-  const navActive = darkMode
-    ? 'text-sky-100 border border-sky-400/30 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(56,189,248,0.08))] shadow-[0_18px_40px_-32px_rgba(56,189,248,0.9)]'
-    : 'text-[#00d4ff] border border-[rgba(0,212,255,0.2)]';
+  const shellBg = 'bg-[var(--app-bg)] text-[var(--app-text)]';
+  const bg2 = 'bg-[var(--app-surface)]';
+  const bgCard = 'bg-[var(--app-card)]';
+  const bgCardStrong = 'bg-[var(--app-surface-strong)]';
+  const border = 'border-[color:var(--app-border)]';
+  const txt1 = 'text-[var(--app-heading)]';
+  const txt2 = 'text-[var(--app-text)]';
+  const txtMut = 'text-[var(--app-muted)]';
+  const navHover = 'hover:bg-[var(--app-surface-strong)] hover:text-[var(--app-heading)]';
+  const navActive = 'text-[var(--app-heading)] border border-[color:var(--app-border)] bg-[var(--app-surface-strong)]';
 
   // ── navItems ──
 const navItems = [
@@ -388,14 +403,14 @@ const navItems = [
 
   return (
     <div className={`flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden relative font-sans ${shellBg}`}>
-      {darkMode && <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(14,165,233,0.14)_0%,rgba(14,165,233,0.03)_34%,#07111f_100%)]" />}
+      {darkMode && <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(29,78,216,0.10)_0%,rgba(29,78,216,0.02)_34%,#020617_100%)]" />}
       {darkMode && <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.06)_1px,transparent_1px)] [background-size:36px_36px] opacity-20" />}
 
       {/* ── SIDEBAR ── */}
       <aside className={`w-[260px] min-w-[260px] ${bg2} border-r ${border} flex flex-col py-6 px-4 h-screen fixed left-0 top-0 overflow-y-auto overflow-x-hidden z-[100]`}>
         <div className={`flex items-center gap-3 mb-8 pb-5 border-b ${border}`}>
           <div className="w-11 h-11 min-w-[44px] rounded-[10px] flex items-center justify-center text-white"
-            style={{ background: 'linear-gradient(135deg,#0066ff,#00d4ff)', boxShadow: '0 8px 16px -4px rgba(0,102,255,0.3)' }}>
+            style={{ background: 'linear-gradient(135deg,#1e3a8a,#1d4ed8)' }}>
             <Activity size={24} />
           </div>
           <div>
@@ -430,12 +445,12 @@ const navItems = [
 
         <div className={`mt-auto pt-4 border-t ${border}`}>
           <div className={`flex items-center gap-2 px-3 py-2 mb-2 rounded-lg border ${border} ${bgCard}`}>
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#0066ff] to-[#00d4ff] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#0f172a] to-[#1e3a8a] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
               {(localStorage.getItem('username') || 'U').charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               <div className={`${txt1} text-xs font-semibold truncate`}>{localStorage.getItem('username')}</div>
-              <div className="text-slate-500 text-[10px] capitalize">{role}</div>
+              <div className={`${txtMut} text-[10px] capitalize`}>{role}</div>
             </div>
           </div>
           <button onClick={handleLogout}
@@ -451,11 +466,11 @@ const navItems = [
         {/* Header */}
         <header className={`h-[70px] ${bg2} border-b ${border} flex items-center justify-between px-6 gap-4 flex-wrap`}>
           <div className="flex items-center gap-4 flex-wrap">
-            <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${darkMode ? 'bg-sky-500/10 border border-sky-400/25 text-sky-100' : 'bg-[rgba(15,118,110,0.1)] border border-[rgba(15,118,110,0.3)] text-[#0f766e]'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connected ? 'bg-green-400' : 'bg-blue-400'}`} />
+            <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${darkMode ? 'bg-black border border-white text-white' : 'bg-white border border-black text-black'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connected ? 'bg-white' : 'bg-black'}`} />
               CNC Concept
             </span>
-            <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] whitespace-nowrap ${darkMode ? 'bg-emerald-500/10 border border-emerald-400/20 text-emerald-200' : 'bg-slate-500/10 border border-slate-500/20 text-slate-600'}`}>
+            <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] whitespace-nowrap ${darkMode ? 'bg-black border border-white text-white' : 'bg-white border border-black text-black'}`}>
               <span>{hasLiveData ? 'Live Wokwi' : 'Simulation'}</span>
             </div>
             <form
@@ -465,7 +480,7 @@ const navItems = [
                 if (globalSearchResults[0]) openGlobalSearchResult(globalSearchResults[0].page);
               }}
             >
-              <div className={`${bgCardStrong} border ${border} flex h-10 w-[310px] max-w-[42vw] items-center gap-2 rounded-xl px-3 shadow-sm`}>
+              <div className={`${bgCardStrong} border ${border} flex h-10 w-[310px] max-w-[42vw] items-center gap-2 rounded-xl px-3`}>
                 <Search size={15} className={txt2} />
                 <input
                   value={globalSearch}
@@ -475,7 +490,7 @@ const navItems = [
                 />
               </div>
               {globalSearch.trim() && (
-                <div className={`${bgCardStrong} ${txt1} border ${border} absolute left-0 top-12 z-[130] w-[360px] max-w-[80vw] overflow-hidden rounded-xl shadow-2xl`}>
+                <div className={`${bgCardStrong} ${txt1} border ${border} absolute left-0 top-12 z-[130] w-[360px] max-w-[80vw] overflow-hidden rounded-xl`}>
                   {globalSearchResults.length === 0 ? (
                     <div className={`px-4 py-3 text-sm ${txt2}`}>Aucun résultat</div>
                   ) : globalSearchResults.map(result => (
@@ -483,7 +498,7 @@ const navItems = [
                       key={result.key}
                       type="button"
                       onClick={() => openGlobalSearchResult(result.page)}
-                      className={`block w-full border-b ${border} bg-transparent px-4 py-3 text-left last:border-b-0 hover:bg-slate-500/10`}
+                      className={`block w-full border-b ${border} bg-transparent px-4 py-3 text-left last:border-b-0 hover:bg-black`}
                     >
                       <div className={`text-sm font-semibold ${txt1}`}>{result.label}</div>
                       <div className={`text-[11px] ${txt2}`}>{result.detail}</div>
@@ -495,12 +510,12 @@ const navItems = [
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <div onClick={toggleTheme} title="Changer le thème"
-              className={`w-9 h-9 rounded-lg ${bgCardStrong} border ${border} flex items-center justify-center cursor-pointer ${txt2} ${darkMode ? 'hover:text-sky-100 hover:bg-sky-500/10' : 'hover:text-[#0f766e]'} flex-shrink-0`}>
+              className={`w-9 h-9 rounded-lg ${bgCardStrong} border ${border} flex items-center justify-center cursor-pointer ${txt2} ${darkMode ? 'hover:text-white hover:bg-black' : 'hover:text-black'} flex-shrink-0`}>
               {darkMode ? <Sun size={18} /> : <Moon size={18} />}
             </div>
             <div className="relative">
               <button onClick={handleOpenMessaging}
-                className={`flex items-center gap-1.5 px-4 py-2 border-none rounded-lg text-white text-xs font-semibold cursor-pointer uppercase tracking-wide whitespace-nowrap ${darkMode ? 'bg-sky-500 hover:bg-sky-400 shadow-[0_18px_36px_-24px_rgba(14,165,233,0.95)]' : 'bg-gradient-to-r from-slate-700 to-slate-500'}`}>
+                className={`flex items-center gap-1.5 px-4 py-2 border-none rounded-lg text-white text-xs font-semibold cursor-pointer uppercase tracking-wide whitespace-nowrap ${darkMode ? 'bg-black hover:bg-black' : 'bg-black hover:bg-black'}`}>
                 <MessageSquare size={14} /> Messages
               </button>
               {unreadMessages > 0 && (
@@ -509,10 +524,6 @@ const navItems = [
                 </span>
               )}
             </div>
-            <button onClick={togglePaused}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-xs font-semibold cursor-pointer uppercase tracking-wide whitespace-nowrap ${darkMode ? 'border border-white/10 bg-white/5 hover:bg-white/10' : 'border-none bg-gradient-to-r from-slate-700 to-slate-500'}`}>
-              <Pause size={14} />{paused ? 'Reprendre' : 'Pause'}
-            </button>
             <button onClick={handleLogout} title="Déconnexion"
               className={`w-9 h-9 rounded-lg ${bgCardStrong} border ${border} flex items-center justify-center cursor-pointer text-red-400 hover:bg-red-500/10 flex-shrink-0`}>
               <LogOut size={17} />
@@ -532,10 +543,10 @@ const navItems = [
             <div className="flex items-start justify-between mb-5 flex-wrap gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-white mb-1">Suivi des Employés</h2>
-                <p className="text-[13px] text-slate-400">Temps réel · Production · Historique complet</p>
+                <p className="text-[13px] text-white">Temps réel · Production · Historique complet</p>
               </div>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold animate-pulse"
-                style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e' }}>
+                style={{ background: 'rgba(29,78,216,0.14)', border: '1px solid rgba(29,78,216,0.24)', color: '#1d4ed8' }}>
                 <Activity size={12} /> Live
               </div>
             </div>
@@ -543,9 +554,9 @@ const navItems = [
             {/* Stats globales */}
             <div className="grid grid-cols-4 gap-3 mb-5">
               {[
-                { label: 'En production', value: employeesOverview.filter(e => e.machineStatus === 'started').length, color: '#22c55e', icon: <Activity size={16} /> },
-                { label: 'En pause',      value: employeesOverview.filter(e => e.machineStatus === 'paused').length,  color: '#475569', icon: <Pause size={16} /> },
-                { label: 'En ligne',      value: employeesOverview.filter(e => e.isOnline).length, color: '#00d4ff', icon: <PhoneCall size={16} /> },
+                { label: 'En production', value: employeesOverview.filter(e => e.machineStatus === 'started').length, color: '#1d4ed8', icon: <Activity size={16} /> },
+                { label: 'En pause',      value: employeesOverview.filter(e => e.machineStatus === 'paused').length,  color: pausedColor, icon: <Activity size={16} /> },
+                { label: 'En ligne',      value: employeesOverview.filter(e => e.isOnline).length, color: '#1e3a8a', icon: <PhoneCall size={16} /> },
                 { label: 'Total',         value: employeesOverview.length, color: '#0369a1', icon: <UserPlus size={16} /> },
               ].map(s => (
                 <div key={s.label} className={`${bgCard} border ${border} rounded-xl p-3 flex items-center gap-3`}>
@@ -553,7 +564,7 @@ const navItems = [
                     style={{ background: s.color + '15', border: `1px solid ${s.color}30` }}>{s.icon}</div>
                   <div>
                     <div className="text-[20px] font-bold" style={{ color: s.color }}>{s.value}</div>
-                    <div className="text-[10px] text-slate-500">{s.label}</div>
+                    <div className={`text-[10px] ${txtMut}`}>{s.label}</div>
                   </div>
                 </div>
               ))}
@@ -566,7 +577,7 @@ const navItems = [
                   <div className={`${bgCard} border ${border} rounded-xl p-8 text-center ${txt2}`}>Aucun employé trouvé</div>
                 ) : employeesOverview.map(emp => {
                   const st = emp.machineStatus || 'stopped';
-                  const stColor = st === 'started' ? '#16a34a' : st === 'paused' ? '#475569' : '#64748b';
+                  const stColor = st === 'started' ? '#1d4ed8' : st === 'paused' ? pausedColor : stoppedColor;
                   const stLabel = st === 'started' ? 'En production' : st === 'paused' ? 'En pause' : 'Arret';
                   const isSelected = selectedEmploye === emp.username;
                   const connectedAt = emp.connectedAt;
@@ -579,8 +590,8 @@ const navItems = [
                       }}
                       className="border rounded-xl p-4 cursor-pointer transition-all"
                       style={{
-                        borderColor: isSelected ? 'rgba(0,212,255,0.4)' : st === 'started' ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.08)',
-                        background: isSelected ? 'rgba(0,102,255,0.08)' : st === 'started' ? 'rgba(34,197,94,0.04)' : 'rgba(15,23,42,0.5)',
+                        borderColor: isSelected ? (darkMode ? 'rgba(76,201,255,0.38)' : 'rgba(29,78,216,0.24)') : st === 'started' ? 'rgba(34,197,94,0.28)' : darkMode ? 'rgba(255,255,255,0.14)' : 'rgba(8,17,31,0.16)',
+                        background: isSelected ? (darkMode ? 'rgba(29,78,216,0.18)' : 'rgba(29,78,216,0.10)') : st === 'started' ? (darkMode ? 'rgba(34,197,94,0.10)' : 'rgba(34,197,94,0.08)') : darkMode ? 'rgba(15,23,42,0.72)' : '#ffffff',
                       }}>
                       {/* Top row */}
                       <div className="flex items-center gap-3 mb-3">
@@ -589,16 +600,16 @@ const navItems = [
                             style={{ background: stColor + '20', border: `2px solid ${stColor}50`, color: stColor }}>
                             {emp.username.charAt(0).toUpperCase()}
                           </div>
-                          <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-900"
-                            style={{ background: emp.isOnline ? '#22c55e' : '#64748b' }} />
+                          <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-black"
+                            style={{ background: emp.isOnline ? '#1d4ed8' : stoppedColor }} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-bold text-white">{emp.username}</div>
                           <div className="text-[11px] font-semibold" style={{ color: stColor }}>{stLabel}</div>
                         </div>
-                        <div className="text-[10px] text-slate-500 text-right">
+                        <div className={`text-[10px] ${txtMut} text-right`}>
                           {connectedAt && emp.isOnline && (
-                            <div className="text-[#22c55e]">Connecté {new Date(connectedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
+                            <div className="text-[#1d4ed8]">Connecté {new Date(connectedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
                           )}
                           {!emp.isOnline && emp.machineStatusUpdatedAt && (
                             <div>Vu {new Date(emp.machineStatusUpdatedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
@@ -608,25 +619,25 @@ const navItems = [
 
                       {/* Info row */}
                       <div className="grid grid-cols-2 gap-2 mb-2">
-                        <div className="rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                          <div className="text-[9px] text-slate-500 mb-0.5">MACHINE</div>
+                        <div className="rounded-lg p-2" style={{ background: darkMode ? 'rgba(255,255,255,0.08)' : '#f8fbff', border: darkMode ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(15,23,42,0.08)' }}>
+                          <div className={`text-[9px] ${txtMut} mb-0.5`}>MACHINE</div>
                           <div className="text-[12px] font-bold text-white truncate">{emp.assignedMachine || '—'}</div>
                         </div>
-                        <div className="rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                          <div className="text-[9px] text-slate-500 mb-0.5">PIECE</div>
+                        <div className="rounded-lg p-2" style={{ background: darkMode ? 'rgba(255,255,255,0.08)' : '#f8fbff', border: darkMode ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(15,23,42,0.08)' }}>
+                          <div className={`text-[9px] ${txtMut} mb-0.5`}>PIECE</div>
                           <div className="text-[12px] font-bold text-white truncate">{currentPieceName || '—'}</div>
                         </div>
                       </div>
 
                       {/* Status update time */}
                       {emp.machineStatusUpdatedAt && (
-                        <div className="text-[10px] text-slate-600 flex items-center gap-1">
+                        <div className={`text-[10px] ${txtMut} flex items-center gap-1`}>
                           <span>Dernière action:</span>
-                          <span className="text-slate-500">{new Date(emp.machineStatusUpdatedAt).toLocaleTimeString('fr-FR')}</span>
+                          <span className={txtMut}>{new Date(emp.machineStatusUpdatedAt).toLocaleTimeString('fr-FR')}</span>
                         </div>
                       )}
 
-                      <div className="mt-2 text-[10px] text-slate-600 text-right">{isSelected ? 'Fermer' : 'Voir historique'}</div>
+                      <div className={`mt-2 text-[10px] ${txtMut} text-right`}>{isSelected ? 'Fermer' : 'Voir historique'}</div>
                     </div>
                   );
                 })}
@@ -636,8 +647,8 @@ const navItems = [
               <div>
                 {!selectedEmploye ? (
                   <div className={`${bgCard} border ${border} rounded-xl p-10 text-center`}>
-                    <UserPlus size={30} className="mx-auto mb-3 text-slate-500" />
-                    <div className="text-slate-500 text-sm">Cliquez sur un employé pour voir le détail</div>
+                    <UserPlus size={30} className={`mx-auto mb-3 ${txtMut}`} />
+                    <div className={`${txtMut} text-sm`}>Cliquez sur un employé pour voir le détail</div>
                   </div>
                 ) : loadingHisto ? (
                   <div className={`${bgCard} border ${border} rounded-xl p-10 text-center ${txt2} text-sm animate-pulse`}>Chargement...</div>
@@ -648,26 +659,26 @@ const navItems = [
                     <div className="flex flex-col gap-3">
                       {/* En-tête employé */}
                       <div className={`${bgCard} border ${border} rounded-xl p-4`}>
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">{selectedEmploye} — Aujourd'hui</div>
+                        <div className="text-xs font-bold text-white uppercase tracking-wider mb-3">{selectedEmploye} — Aujourd'hui</div>
                         <div className="grid grid-cols-2 gap-3 mb-3">
                           <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.15)' }}>
-                            <div className="text-[22px] font-bold text-[#22c55e]">{h.stats.piecesAujourd ?? 0}</div>
-                            <div className="text-[10px] text-slate-500">Pièces produites aujourd'hui</div>
+                            <div className="text-[22px] font-bold text-[#1d4ed8]">{h.stats.piecesAujourd ?? 0}</div>
+                            <div className="text-[10px] text-white">Pièces produites aujourd'hui</div>
                           </div>
                           <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)' }}>
                             <div className="text-[22px] font-bold text-[#3b82f6]">{fmtTime(h.stats.workSecondsToday ?? 0)}</div>
-                            <div className="text-[10px] text-slate-500">Temps travaillé aujourd'hui</div>
+                            <div className="text-[10px] text-white">Temps travaillé aujourd'hui</div>
                           </div>
                         </div>
                         <div className="grid grid-cols-3 gap-2">
                           {[
                             { label: 'Sessions', value: h.stats.totalSessions, color: '#3b82f6' },
-                            { label: 'Pauses',   value: h.stats.totalPausees,  color: '#475569' },
-                            { label: 'Pièces',   value: h.stats.piecesProduites, color: '#22c55e' },
+                            { label: 'Pauses',   value: h.stats.totalPausees,  color: pausedColor },
+                            { label: 'Pièces',   value: h.stats.piecesProduites, color: '#1d4ed8' },
                           ].map(s => (
                             <div key={s.label} className={`${darkMode ? 'bg-[#07111f]/75' : 'bg-white'} rounded-lg p-2 text-center border ${border}`}>
                               <div className="text-[16px] font-bold" style={{ color: s.color }}>{s.value}</div>
-                              <div className="text-[9px] text-slate-500">{s.label}</div>
+                              <div className={`text-[9px] ${txtMut}`}>{s.label}</div>
                             </div>
                           ))}
                         </div>
@@ -677,14 +688,14 @@ const navItems = [
                       <div className={`${bgCard} border ${border} rounded-xl overflow-hidden`}>
                         <div className={`px-4 py-2.5 border-b ${border} text-[11px] font-bold ${txt2} uppercase tracking-wider flex items-center justify-between`}>
                           <span>Timeline</span>
-                          <span className="text-slate-600">{historique.events.length} événements</span>
+                          <span className={txtMut}>{historique.events.length} événements</span>
                         </div>
                         <div className="max-h-72 overflow-y-auto">
                           {historique.events.length === 0 ? (
-                            <div className="p-6 text-center text-slate-500 text-sm">Aucun événement</div>
+                            <div className={`p-6 text-center ${txtMut} text-sm`}>Aucun événement</div>
                           ) : historique.events.map(ev => {
-                            const evColor = ev.action === 'started' ? '#16a34a' : ev.action === 'paused' ? '#475569' : '#dc2626';
-                            const evIcon = ev.action === 'started' ? <Activity size={12} /> : ev.action === 'paused' ? <Pause size={12} /> : <X size={12} />;
+                            const evColor = ev.action === 'started' ? '#1d4ed8' : ev.action === 'paused' ? pausedColor : '#dc2626';
+                            const evIcon = ev.action === 'started' ? <Activity size={12} /> : ev.action === 'paused' ? <Activity size={12} /> : <X size={12} />;
                             const evLabel = ev.action === 'started' ? 'Démarré' : ev.action === 'paused' ? 'Pause' : 'Arrêté';
                             return (
                               <div key={ev._id} className="flex items-start gap-3 px-4 py-2.5 border-b border-white/[0.03] last:border-0">
@@ -695,16 +706,16 @@ const navItems = [
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                                     <span className="text-[11px] font-bold" style={{ color: evColor }}>{evLabel}</span>
-                                    <span className="text-[10px] text-slate-500 truncate">· {ev.machine}</span>
+                                    <span className={`text-[10px] ${txtMut} truncate`}>· {ev.machine}</span>
                                   </div>
                                   {ev.pieceName && (
-                                    <div className="text-[11px] text-slate-400">
+                                    <div className={`text-[11px] ${txtMut}`}>
                                       Piece: {ev.pieceName}
-                                      {ev.pieceCount ? <span className="ml-1 text-[#22c55e] font-bold">→ {ev.pieceCount} pcs</span> : null}
+                                      {ev.pieceCount ? <span className="ml-1 text-[#1d4ed8] font-bold">→ {ev.pieceCount} pcs</span> : null}
                                     </div>
                                   )}
                                 </div>
-                                <div className="text-[10px] text-slate-600 flex-shrink-0">
+                                <div className={`text-[10px] ${txtMut} flex-shrink-0`}>
                                   {new Date(ev.createdAt).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}
                                 </div>
                               </div>
@@ -731,13 +742,13 @@ const navItems = [
                 <p className={`text-[13px] ${txtMut}`}>CNC Concept — Vue Générale Usine</p>
               </div>
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold" style={{ background: 'rgba(15,118,110,0.08)', border: '1px solid rgba(15,118,110,0.2)', color: '#0f766e' }}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-pulse" />
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold" style={{ background: darkMode ? 'rgba(29,78,216,0.16)' : 'rgba(30,58,138,0.08)', border: darkMode ? '1px solid rgba(29,78,216,0.30)' : '1px solid rgba(30,58,138,0.18)', color: darkMode ? '#ffffff' : '#1e3a8a' }}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                   IoT Monitoring
                 </div>
                 <div className="text-right">
                   <div className={`text-[12px] ${txt2} capitalize`}>{currentTime.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' })}</div>
-                  <div className="text-[18px] font-bold text-[#00d4ff] font-mono">{currentTime.toLocaleTimeString('fr-FR')}</div>
+                  <div className="text-[18px] font-bold font-mono" style={{ color: darkMode ? '#2563eb' : '#1e3a8a' }}>{currentTime.toLocaleTimeString('fr-FR')}</div>
                 </div>
               </div>
             </div>
@@ -755,7 +766,7 @@ const navItems = [
                   icon: <Settings size={20} />, title: 'Actifs Machines',
                   main: (dashStats?.employes.actifs ?? 0) + ' actifs',
                   sub: `${dashStats?.employes.enPause ?? 0} pause · ${(dashStats?.employes.total ?? 0) - (dashStats?.employes.actifs ?? 0) - (dashStats?.employes.enPause ?? 0)} arrêt`,
-                  color: '#0f766e', bg: 'rgba(15,118,110,0.08)',
+                  color: '#1e3a8a', bg: 'rgba(30,58,138,0.08)',
                 },
                 {
                   icon: <UserPlus size={20} />, title: 'Employes Connectes',
@@ -791,31 +802,31 @@ const navItems = [
                       <div key={i} className="flex items-center justify-between">
                         <div>
                           <div className={`text-[13px] font-bold ${txt1}`}>{m.machine || '—'}</div>
-                          <div className="text-[10px] text-slate-500">{m.username}</div>
+                          <div className={`text-[10px] ${txtMut}`}>{m.username}</div>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <div className="w-16 h-1.5 rounded-full bg-slate-700/50">
-                            <div className="h-full rounded-full bg-[#0f766e]" style={{ width: '70%' }} />
+                        <div className="w-16 h-1.5 rounded-full bg-black">
+                            <div className="h-full rounded-full bg-[#1e3a8a]" style={{ width: '70%' }} />
                           </div>
-                          <span className="text-[12px] font-bold text-[#0f766e]">En cours</span>
+                          <span className="text-[12px] font-bold text-[#1e3a8a]">En cours</span>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-6 text-slate-500 text-sm">Aucune production active</div>
+                  <div className={`text-center py-6 ${txtMut} text-sm`}>Aucune production active</div>
                 )}
 
                 {/* Activité employés */}
                 <div className={`mt-4 pt-4 border-t ${border}`}>
                   <div className={`text-[11px] font-bold ${txtMut} mb-3 uppercase tracking-wider`}>Activité Employés</div>
                   {(dashStats?.activiteEmployes ?? []).slice(0, 3).map(e => {
-                    const stColor = e.machineStatus === 'started' ? '#16a34a' : e.machineStatus === 'paused' ? '#475569' : '#64748b';
+                    const stColor = e.machineStatus === 'started' ? '#1d4ed8' : e.machineStatus === 'paused' ? pausedColor : stoppedColor;
                     return (
                       <div key={e.username} className="flex items-center gap-2 mb-2">
                         <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: stColor + '20', color: stColor }}>{e.username.charAt(0).toUpperCase()}</div>
                         <span className={`text-[12px] font-semibold ${txt1} w-16 truncate`}>{e.username}</span>
-                        <div className="flex-1 h-1.5 rounded-full bg-slate-700/50">
+                        <div className="flex-1 h-1.5 rounded-full bg-black">
                           <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, e.sessions * 10)}%`, background: stColor }} />
                         </div>
                         <span className="text-[11px] font-bold" style={{ color: stColor }}>{e.pcs} pcs</span>
@@ -836,10 +847,10 @@ const navItems = [
                         <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)'} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisColor }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: axisColor }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={tooltipStyle} />
                     <Area type="monotone" dataKey="pcs" stroke="#3b82f6" strokeWidth={2} fill="url(#prodGrad)" dot={{ fill: '#3b82f6', r: 3 }} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -854,16 +865,16 @@ const navItems = [
                       <PieChart>
                         <Pie data={dashStats.repartition} cx="50%" cy="50%" outerRadius={55} dataKey="value" stroke="none">
                           {dashStats.repartition.map((_, i) => (
-                            <Cell key={i} fill={['#2563eb','#0891b2','#16a34a','#475569','#0f766e'][i % 5]} />
+                            <Cell key={i} fill={piePalette[i % piePalette.length]} />
                           ))}
                         </Pie>
-                        <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                        <Tooltip contentStyle={tooltipStyle} />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="flex flex-col gap-1.5 mt-2">
                       {dashStats.repartition.slice(0, 4).map((r, i) => (
                         <div key={r.name} className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: ['#2563eb','#0891b2','#16a34a','#475569','#0f766e'][i % 5] }} />
+                          <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: piePalette[i % piePalette.length] }} />
                           <span className={`text-[11px] ${txt2} flex-1 truncate`}>{r.name}</span>
                           <span className={`text-[11px] font-bold ${txt1}`}>{r.value} pcs</span>
                         </div>
@@ -871,7 +882,7 @@ const navItems = [
                     </div>
                   </>
                 ) : (
-                  <div className="flex items-center justify-center h-32 text-slate-500 text-sm">Aucune donnée</div>
+                  <div className={`flex items-center justify-center h-32 ${txtMut} text-sm`}>Aucune donnée</div>
                 )}
               </div>
             </div>
@@ -900,15 +911,15 @@ const navItems = [
                   return (
                     <div className="flex flex-col gap-3">
                       {rows.length > 0 ? rows.map((item, index) => (
-                        <div key={`${item.machine}-${index}`} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#22c55e10', border: '1px solid #22c55e25' }}>
-                          <span className='inline-flex items-center justify-center w-8 h-8 rounded-lg' style={{ background: '#22c55e18', color: '#22c55e' }}><Activity size={16} /></span>
+                        <div key={`${item.machine}-${index}`} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#1d4ed810', border: '1px solid #1d4ed825' }}>
+                          <span className='inline-flex items-center justify-center w-8 h-8 rounded-lg' style={{ background: '#1d4ed818', color: '#1d4ed8' }}><Activity size={16} /></span>
                           <div className="flex-1">
                             <div className={`text-[10px] ${txtMut} mb-1 truncate`}>{item.machine || 'Machine inconnue'}</div>
                             <div className="h-1.5 rounded-full bg-black/20">
-                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, (item.seconds / maxSeconds) * 100)}%`, background: '#22c55e' }} />
+                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, (item.seconds / maxSeconds) * 100)}%`, background: '#1d4ed8' }} />
                             </div>
                           </div>
-                          <div className="text-[15px] font-bold text-[#22c55e]">{fmt(item.seconds)}</div>
+                          <div className="text-[15px] font-bold text-[#1d4ed8]">{fmt(item.seconds)}</div>
                         </div>
                       )) : (
                         <div className={`text-sm ${txtMut} rounded-xl p-4 border ${border}`}>
@@ -916,9 +927,9 @@ const navItems = [
                         </div>
                       )}
                       {pauseSec > 0 && (
-                        <div className="flex items-center justify-between px-3 py-2 rounded-xl" style={{ background: '#47556910', border: '1px solid #47556925' }}>
-                          <span className="flex items-center gap-2 text-[11px] text-[#475569] font-semibold"><Pause size={14} /> Pause totale</span>
-                          <span className="text-[13px] font-bold text-[#475569]">{fmt(pauseSec)}</span>
+                        <div className="flex items-center justify-between px-3 py-2 rounded-xl" style={{ background: darkMode ? 'rgba(245,158,11,0.14)' : 'rgba(180,83,9,0.10)', border: `1px solid ${pausedColor}40` }}>
+                          <span className="flex items-center gap-2 text-[11px] font-semibold" style={{ color: pausedColor }}><Activity size={14} /> Pause totale</span>
+                          <span className="text-[13px] font-bold" style={{ color: pausedColor }}>{fmt(pauseSec)}</span>
                         </div>
                       )}
                     </div>
@@ -929,36 +940,36 @@ const navItems = [
               {/* Santé des Machines Live */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
                 <div className="flex items-center gap-2 mb-4">
-                  <Heart size={14} className="text-[#00d4ff]" />
+                  <Heart size={14} style={{ color: darkMode ? '#2563eb' : '#1e3a8a' }} />
                   <span className={`text-sm font-bold ${txt1}`}>Santé des Machines</span>
                 </div>
                 <div className="flex flex-col gap-3">
                   {[
                     { name: 'Rectifieuse', node: 'ESP32-NODE-01', value: sante, color: '#2563eb' },
-                    { name: 'Compresseur', node: 'compresseur',   value: santeComp, color: '#0f766e' },
+                    { name: 'Compresseur', node: 'compresseur',   value: santeComp, color: '#1e3a8a' },
                   ].map((m, i) => (
-                    <div key={i} className={`${darkMode ? 'bg-[#07111f]/75' : 'bg-slate-50'} rounded-xl p-3 border ${border}`}>
+                    <div key={i} className={`${darkMode ? 'bg-black' : 'bg-white'} rounded-xl p-3 border ${border}`}>
                       <div className="flex items-center justify-between mb-2">
                         <div>
                           <div className={'text-[12px] font-bold ' + txt1}>{m.name}</div>
-                          <div className="text-[10px] text-slate-500">{m.node}</div>
+                          <div className={`text-[10px] ${txtMut}`}>{m.node}</div>
                         </div>
                         <span className="text-[18px] font-bold" style={{ color: m.color }}>{m.value.toFixed(0)}%</span>
                       </div>
-                      <div className="h-1.5 rounded-full bg-slate-700/50">
-                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${m.value}%`, background: m.value > 70 ? '#22c55e' : m.value > 40 ? '#f97316' : '#ef4444' }} />
+                      <div className="h-1.5 rounded-full bg-black">
+                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${m.value}%`, background: m.value > 70 ? '#1d4ed8' : m.value > 40 ? '#1e40af' : '#ef4444' }} />
                       </div>
                       <div className="grid grid-cols-3 gap-1.5 mt-2">
                         {(i === 0 ? [
-                          { l: 'Courant', v: `${latest.courant}A`, c: latest.courant > 15 ? '#dc2626' : '#0f766e' },
+                          { l: 'Courant', v: `${latest.courant}A`, c: latest.courant > 15 ? '#dc2626' : '#1e3a8a' },
                           { l: 'Vib.', v: `${latest.vibX.toFixed(1)}g`, c: latest.vibX > 2 ? '#f97316' : '#3b82f6' },
-                          { l: 'RPM', v: `${latest.rpm}`, c: '#475569' },
+                          { l: 'RPM', v: `${latest.rpm}`, c: stoppedColor },
                         ] : [
-                          { l: 'Courant', v: `${latestComp.courant.toFixed(1)}A`, c: latestComp.courant > 15 ? '#dc2626' : '#0f766e' },
+                          { l: 'Courant', v: `${latestComp.courant.toFixed(1)}A`, c: latestComp.courant > 15 ? '#dc2626' : '#1e3a8a' },
                           { l: 'Vib.', v: `${latestComp.vibX.toFixed(2)}g`, c: latestComp.vibX > 2 ? '#f97316' : '#3b82f6' },
                           { l: 'Bar', v: `${(latestComp.pression ?? 0).toFixed(1)}`, c: '#2563eb' },
                         ]).map(s => (
-                          <div key={s.l} className={`${darkMode ? 'bg-slate-800/60' : 'bg-white'} rounded-lg p-1.5 text-center border ${border}`}>
+                          <div key={s.l} className={`${darkMode ? 'bg-black' : 'bg-white'} rounded-lg p-1.5 text-center border ${border}`}>
                             <div className="text-[12px] font-bold" style={{ color: s.c }}>{s.v}</div>
                             <div className={`text-[9px] ${txtMut}`}>{s.l}</div>
                           </div>
@@ -973,26 +984,26 @@ const navItems = [
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
                 <div className="flex items-center justify-between mb-3">
                   <span className={`text-sm font-bold ${txt1}`}>Alertes</span>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ background: alertCount > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)', color: alertCount > 0 ? '#ef4444' : '#22c55e', border: `1px solid ${alertCount > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.25)'}` }}>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-bold" style={{ background: alertCount > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(29,78,216,0.12)', color: alertCount > 0 ? '#ef4444' : '#1d4ed8', border: `1px solid ${alertCount > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(29,78,216,0.25)'}` }}>
                     {alertCount > 0 ? `${alertCount} active(s)` : 'Aucune'}
                   </span>
                 </div>
                 {alertCount === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 gap-2">
-                    <Activity size={32} className="text-slate-500" />
-                    <div className="text-slate-500 text-xs text-center">Aucune alerte active<br/>Toutes les machines fonctionnent normalement</div>
+                    <Activity size={32} className={txtMut} />
+                    <div className={`${txtMut} text-xs text-center`}>Aucune alerte active<br/>Toutes les machines fonctionnent normalement</div>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-2">
                     {[
-                      { label: 'Vibration élevée', machine: 'Rectifieuse', color: '#475569' },
-                      { label: 'Courant anormal',  machine: 'Compresseur', color: '#0f766e' },
+                      { label: 'Vibration élevée', machine: 'Rectifieuse', color: pausedColor },
+                      { label: 'Courant anormal',  machine: 'Compresseur', color: '#1e3a8a' },
                     ].slice(0, alertCount).map((a, i) => (
                       <div key={i} className="flex items-center gap-2 p-2 rounded-lg" style={{ background: a.color + '10', border: `1px solid ${a.color}25` }}>
                         <Activity size={14} style={{ color: a.color }} />
                         <div>
                           <div className="text-[11px] font-bold" style={{ color: a.color }}>{a.label}</div>
-                          <div className="text-[10px] text-slate-500">{a.machine}</div>
+                          <div className={`text-[10px] ${txtMut}`}>{a.machine}</div>
                         </div>
                       </div>
                     ))}
@@ -1011,7 +1022,7 @@ const navItems = [
         <div className="fixed inset-0 z-[1000] bg-[#0f172a]">
           <div className="absolute top-4 right-4 z-10">
             <button onClick={() => setShowMessaging(false)}
-              className="flex items-center gap-1.5 px-[18px] py-2 bg-white/[0.08] border border-white/[0.15] rounded-lg text-slate-200 cursor-pointer text-[13px] font-semibold hover:bg-white/[0.14] transition-colors">
+              className="flex items-center gap-1.5 px-[18px] py-2 bg-black border border-white rounded-lg text-white cursor-pointer text-[13px] font-semibold hover:bg-black transition-colors">
               <X size={14} /> Fermer
             </button>
           </div>

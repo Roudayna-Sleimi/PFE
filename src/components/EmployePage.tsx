@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { getMachineVisual, type MachineIconKind } from "../utils/machineVisuals";
+import { useTheme } from "../hooks/useTheme";
 
 const BASE_URL = "http://localhost:5000";
 
@@ -27,12 +28,15 @@ interface Tache {
 interface Piece {
   _id: string;
   nom: string;
+  ref?: string;
   machine: string;
   machineChain?: string[];
   currentMachine?: string | null;
+  history?: Array<{ machine: string; action: "entered" | "completed"; by?: string; at?: string }>;
   employe?: string;
   quantite: number;
   quantiteProduite?: number;
+  quantiteRuban?: number;
   prix: number;
   status: string;
   matiere: boolean;
@@ -115,10 +119,16 @@ interface Message {
   createdAt: string;
 }
 
+interface EmployeeWorkState {
+  machineStatus: "started" | "paused" | "stopped";
+  currentPieceId: string | null;
+}
+
 interface TrackingEvent {
   type: "start" | "pause" | "resume" | "stop";
   time: Date;
   pieceCount?: number;
+  rubanQuantity?: number;
 }
 
 interface ProductionSession {
@@ -129,14 +139,78 @@ interface ProductionSession {
   events: TrackingEvent[];
 }
 
-type Step = "pieces" | "machines" | "confirm" | "production";
+type Step = "pieces" | "machines" | "production";
+
+interface DimensionFields {
+  largeur: string;
+  longueur: string;
+  hauteur: string;
+}
+
+interface PieceDraft extends DimensionFields {
+  ref: string;
+  quantite: number;
+  matiereType: string;
+  matiereReference: string;
+  matiere: boolean;
+}
 
 const normalizeStatus = (status?: string) => {
-  if (!status) return "En cours";
-  if (status.includes("Termin")) return "Termine";
-  if (status.includes("Contr")) return "Controle";
-  return "En cours";
+  const raw = String(status || "").toLowerCase();
+  if (!raw) return "Arrêté";
+  if (raw.includes("termin")) return "Termine";
+  if (raw.includes("contr")) return "Controle";
+  if (raw.includes("arret") || raw.includes("stop")) return "Arrêté";
+  if (raw.includes("cours")) return "En cours";
+  return "Arrêté";
 };
+
+const toNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const emptyPieceDraft = (): PieceDraft => ({
+  ref: "",
+  largeur: "",
+  longueur: "",
+  hauteur: "",
+  quantite: 0,
+  matiereType: "",
+  matiereReference: "",
+  matiere: false,
+});
+
+const hasCompletedHistory = (piece?: Piece | null) =>
+  Boolean(piece?.history?.some((entry) => entry?.action === "completed"));
+
+const parseDimension = (value?: string): DimensionFields => {
+  const raw = String(value || "").trim();
+  if (!raw) return { largeur: "", longueur: "", hauteur: "" };
+
+  const labelled = {
+    largeur: raw.match(/largeur\s*:\s*([^|]+)/i)?.[1]?.trim() || "",
+    longueur: raw.match(/longueur\s*:\s*([^|]+)/i)?.[1]?.trim() || "",
+    hauteur: raw.match(/hauteur\s*:\s*([^|]+)/i)?.[1]?.trim() || "",
+  };
+
+  if (labelled.largeur || labelled.longueur || labelled.hauteur) return labelled;
+
+  const parts = raw.split(/x|×|\||,/i).map((part) => part.trim()).filter(Boolean);
+  return {
+    largeur: parts[0] || "",
+    longueur: parts[1] || "",
+    hauteur: parts[2] || "",
+  };
+};
+
+const formatDimension = ({ largeur, longueur, hauteur }: DimensionFields) => (
+  [
+    largeur.trim() ? `Largeur: ${largeur.trim()}` : "",
+    longueur.trim() ? `Longueur: ${longueur.trim()}` : "",
+    hauteur.trim() ? `Hauteur: ${hauteur.trim()}` : "",
+  ].filter(Boolean).join(" | ")
+);
 
 const fmt = (sec: number) => {
   const h = Math.floor(sec / 3600);
@@ -147,6 +221,7 @@ const fmt = (sec: number) => {
 
 const getPieceInfoRows = (piece: Piece, machineName?: string) => [
   { label: "Piece", value: piece.nom },
+  { label: "Reference", value: piece.ref || "Non renseignee" },
   { label: "Dimension", value: piece.dimension || "Non renseignee" },
   { label: "Quantite demandee", value: `${piece.quantite || 0} pcs` },
   { label: "Quantite produite", value: `${piece.quantiteProduite || 0} pcs` },
@@ -156,6 +231,14 @@ const getPieceInfoRows = (piece: Piece, machineName?: string) => [
   { label: "Machine", value: machineName || piece.currentMachine || piece.machine || "Non renseignee" },
   { label: "Statut", value: normalizeStatus(piece.status) },
 ];
+
+const materialOptions: Record<string, string[]> = {
+  Aluminium: ["2017", "5083", "7075"],
+  Bronze: ["B12"],
+  Acier: ["42CD4", "40CMD8", "Z160", "Z40", "XC48", "E24"],
+  Inox: ["304", "316L"],
+  Plastique: ["POM noir", "POM blanc", "PEEK", "PA6", "NYLON"],
+};
 
 const getMachineAccent = (machine: Machine) => {
   const haystack = `${machine.name || ""} ${machine.type || ""}`.toLowerCase();
@@ -167,51 +250,28 @@ const getMachineAccent = (machine: Machine) => {
   return "#5eead4";
 };
 
-const PieceInfoGrid: React.FC<{ piece: Piece; machineName?: string }> = ({ piece, machineName }) => (
-  <div style={{ display: "grid", gap: 9, fontSize: 14 }}>
-    {getPieceInfoRows(piece, machineName).map((row) => (
-      <div key={row.label} style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-        <span style={{ color: "#94a3b8" }}>{row.label}</span>
-        <strong style={{ color: row.danger ? "#f87171" : "#f8fafc" }}>{row.value}</strong>
-      </div>
-    ))}
-  </div>
-);
-
-const PieceConsignes: React.FC<{ piece: Piece; machineName?: string }> = ({ piece, machineName }) => {
-  const plan = getPiecePlan(piece);
-  const items = [
-    plan.name ? `Verifier le plan "${plan.name}" avant le demarrage.` : "Verifier le plan associe avant le demarrage.",
-    `Controler la matiere: type ${piece.matiereType || "non renseigne"}, reference ${piece.matiereReference || "non renseignee"}.`,
-    `Preparer ${piece.quantite || 0} piece(s) selon la dimension: ${piece.dimension || "non renseignee"}.`,
-    `Machine de travail: ${machineName || piece.currentMachine || piece.machine || "non renseignee"}.`,
-  ];
-
+const PieceInfoGrid: React.FC<{ piece: Piece; machineName?: string; statusLabel?: string }> = ({ piece, machineName, statusLabel }) => {
+  const { darkMode } = useTheme();
   return (
-    <div style={{ display: "grid", gap: 10 }}>
-      {items.map((item, index) => (
-        <div key={item} style={{ display: "flex", gap: 10, alignItems: "flex-start", color: "#cbd5e1", fontSize: 13, lineHeight: 1.5 }}>
-          <span style={{ width: 24, height: 24, borderRadius: 8, display: "grid", placeItems: "center", background: "rgba(20,184,166,0.13)", color: "#5eead4", fontWeight: 900, flex: "0 0 auto" }}>{index + 1}</span>
-          <span>{item}</span>
+    <div style={{ display: "grid", gap: 9, fontSize: 14 }}>
+      {getPieceInfoRows({ ...piece, status: statusLabel || piece.status }, machineName).map((row) => (
+        <div
+          key={row.label}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "150px 1fr",
+            gap: 10,
+            alignItems: "center",
+            padding: "8px 0",
+            borderBottom: darkMode ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(15,23,42,0.08)",
+          }}
+        >
+          <span style={{ color: darkMode ? "#94a3b8" : "#64748b" }}>{row.label}</span>
+          <strong style={{ color: row.danger ? "#dc2626" : darkMode ? "#f8fafc" : "#0f172a" }}>{row.value}</strong>
         </div>
       ))}
     </div>
   );
-};
-
-const cardStyle: React.CSSProperties = {
-  background: "#0f172a",
-  border: "1px solid rgba(148,163,184,0.18)",
-  borderRadius: 8,
-  padding: 18,
-};
-
-const sectionCardStyle: React.CSSProperties = {
-  background: "linear-gradient(180deg, rgba(15,23,42,0.96), rgba(10,15,28,0.96))",
-  border: "1px solid rgba(148,163,184,0.16)",
-  borderRadius: 8,
-  padding: 22,
-  boxShadow: "0 20px 45px rgba(2,6,23,0.35)",
 };
 
 const badge = (bg: string, color: string): React.CSSProperties => ({
@@ -224,29 +284,8 @@ const badge = (bg: string, color: string): React.CSSProperties => ({
   border: "1px solid rgba(148,163,184,0.18)",
 });
 
-const primaryButton: React.CSSProperties = {
-  padding: "14px 18px",
-  borderRadius: 8,
-  border: "none",
-  cursor: "pointer",
-  background: "linear-gradient(135deg,#0f766e,#14b8a6)",
-  color: "white",
-  fontWeight: 800,
-  fontSize: 14,
-};
-
-const secondaryButton: React.CSSProperties = {
-  padding: "12px 16px",
-  borderRadius: 8,
-  border: "1px solid rgba(148,163,184,0.18)",
-  cursor: "pointer",
-  background: "rgba(255,255,255,0.04)",
-  color: "white",
-  fontWeight: 700,
-  fontSize: 13,
-};
-
 const PiecePlanPreview: React.FC<{ piece: Piece; height?: number; compact?: boolean }> = ({ piece, height = 150, compact = false }) => {
+  const { darkMode } = useTheme();
   const plan = getPiecePlan(piece);
   const directUrl = resolveAssetUrl(plan.path);
   const shouldDownloadPlan = !directUrl && Boolean(piece.planDocumentId) && plan.isPreviewable;
@@ -293,10 +332,10 @@ const PiecePlanPreview: React.FC<{ piece: Piece; height?: number; compact?: bool
       title={previewUrl && plan.isPreviewable ? "Double clic pour ouvrir le plan" : undefined}
       style={{
         height,
-        borderRadius: 8,
+        borderRadius: 18,
         overflow: "hidden",
-        border: "1px solid rgba(148,163,184,0.18)",
-        background: "rgba(2,6,23,0.72)",
+        border: darkMode ? "1px solid rgba(148,163,184,0.18)" : "1px solid rgba(15,23,42,0.08)",
+        background: darkMode ? "linear-gradient(180deg, rgba(2,6,23,0.88), rgba(15,23,42,0.78))" : "linear-gradient(180deg, rgba(248,250,252,0.98), rgba(226,232,240,0.92))",
         display: "grid",
         placeItems: "center",
         cursor: previewUrl && plan.isPreviewable ? "pointer" : "default",
@@ -304,17 +343,29 @@ const PiecePlanPreview: React.FC<{ piece: Piece; height?: number; compact?: bool
       }}
     >
       {previewUrl && plan.isImage ? (
-        <img src={previewUrl} alt={plan.name || piece.nom} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <img
+          src={previewUrl}
+          alt={plan.name || piece.nom}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            objectPosition: "center",
+            display: "block",
+            padding: compact ? 8 : 12,
+            boxSizing: "border-box",
+          }}
+        />
       ) : previewUrl && plan.isPdf ? (
         <iframe title={plan.name || piece.nom} src={`${previewUrl}#toolbar=0&navpanes=0&scrollbar=0`} style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }} />
       ) : (
-        <div style={{ display: "grid", gap: 8, justifyItems: "center", color: "#94a3b8", padding: 16, textAlign: "center" }}>
+        <div style={{ display: "grid", gap: 8, justifyItems: "center", color: darkMode ? "#94a3b8" : "#64748b", padding: 16, textAlign: "center" }}>
           <div style={{ fontSize: compact ? 20 : 28, fontWeight: 900, letterSpacing: 0 }}>{plan.isCad ? "CAD" : "PLAN"}</div>
           <div style={{ fontSize: 12 }}>{plan.name || "Aucun plan associe"}</div>
         </div>
       )}
       {plan.name && (
-        <div style={{ position: "absolute", left: 8, right: 8, bottom: 8, padding: "6px 8px", borderRadius: 8, background: "rgba(2,6,23,0.72)", color: "#dbeafe", fontSize: 11, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ position: "absolute", left: 10, right: 10, bottom: 10, padding: "8px 10px", borderRadius: 12, background: darkMode ? "rgba(2,6,23,0.72)" : "rgba(255,255,255,0.9)", color: darkMode ? "#dbeafe" : "#122033", fontSize: 11, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", boxShadow: "none" }}>
           {plan.name}
         </div>
       )}
@@ -324,6 +375,7 @@ const PiecePlanPreview: React.FC<{ piece: Piece; height?: number; compact?: bool
 
 const EmployePage: React.FC = () => {
   const navigate = useNavigate();
+  const { darkMode, toggleTheme } = useTheme();
   const token = localStorage.getItem("token") || "";
   const username = localStorage.getItem("username") || "";
   const socketRef = useRef<Socket | null>(null);
@@ -340,28 +392,145 @@ const EmployePage: React.FC = () => {
   const [session, setSession] = useState<ProductionSession | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [count, setCount] = useState(0);
+  const [sessionRuban, setSessionRuban] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [pieceDraft, setPieceDraft] = useState<PieceDraft>(emptyPieceDraft);
+  const [savingPiece, setSavingPiece] = useState(false);
+  const [pieceSaveError, setPieceSaveError] = useState("");
+  const [workState, setWorkState] = useState<EmployeeWorkState>({ machineStatus: "stopped", currentPieceId: null });
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgText, setMsgText] = useState("");
   const [unread, setUnread] = useState(0);
+  const [isCompactLayout, setIsCompactLayout] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 1100 : false));
 
   const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const theme = useMemo(() => (
+    {
+      bg: "var(--app-bg)",
+      aside: "var(--app-card)",
+      section: "var(--app-card)",
+      card: "var(--app-card)",
+      inset: "var(--app-surface)",
+      border: "var(--app-border)",
+      text: "var(--app-heading)",
+      textSoft: "var(--app-text)",
+      muted: "var(--app-muted)",
+      subtle: "var(--app-subtle)",
+      accent: "var(--app-accent)",
+      accentStrong: "var(--app-accent-strong)",
+      accentSoft: darkMode ? "rgba(29,78,216,0.18)" : "rgba(29,78,216,0.08)",
+      success: darkMode ? "#34d399" : "#059669",
+      warning: darkMode ? "#f59e0b" : "#d97706",
+      danger: darkMode ? "#f87171" : "#dc2626",
+      inputBg: "var(--app-surface-strong)",
+      shadow: "none",
+      primary: darkMode ? "linear-gradient(135deg,#1d4ed8,#2563eb)" : "#0f172a",
+      secondary: "var(--app-surface)",
+    }
+  ), [darkMode]);
+  const cardStyle: React.CSSProperties = {
+    background: theme.card,
+    border: `1px solid ${theme.border}`,
+    borderRadius: 22,
+    padding: 22,
+    boxShadow: theme.shadow,
+  };
+  const sectionCardStyle: React.CSSProperties = {
+    background: theme.section,
+    border: `1px solid ${theme.border}`,
+    borderRadius: 26,
+    padding: 26,
+    boxShadow: theme.shadow,
+  };
+  const primaryButton: React.CSSProperties = {
+    padding: "14px 18px",
+    borderRadius: 16,
+    border: "none",
+    cursor: "pointer",
+    background: theme.primary,
+    color: "white",
+    fontWeight: 800,
+    fontSize: 14,
+    boxShadow: "none",
+  };
+  const secondaryButton: React.CSSProperties = {
+    padding: "12px 16px",
+    borderRadius: 16,
+    border: `1px solid ${theme.border}`,
+    cursor: "pointer",
+    background: theme.secondary,
+    color: theme.text,
+    fontWeight: 700,
+    fontSize: 13,
+    backdropFilter: "none",
+  };
+  const inputBaseStyle: React.CSSProperties = {
+    width: "100%",
+    borderRadius: 16,
+    border: `1px solid ${theme.border}`,
+    background: theme.inputBg,
+    color: theme.text,
+    padding: "12px 14px",
+    boxSizing: "border-box",
+    boxShadow: darkMode ? "inset 0 1px 0 rgba(255,255,255,0.03)" : "none",
+  };
+  const bigInputStyle: React.CSSProperties = {
+    ...inputBaseStyle,
+    fontSize: 24,
+    fontWeight: 900,
+    padding: "14px 16px",
+  };
+  const subtlePanelStyle: React.CSSProperties = {
+    borderRadius: 20,
+    border: `1px solid ${theme.border}`,
+    background: theme.inset,
+    padding: 18,
+  };
+  const labelStyle: React.CSSProperties = {
+    display: "block",
+    fontSize: 11,
+    color: theme.muted,
+    marginBottom: 6,
+    fontWeight: 700,
+    letterSpacing: 0.2,
+  };
+  const stepDescriptions: Record<Step, { title: string; text: string }> = {
+    pieces: {
+      title: "Selection et preparation",
+      text: "Choisissez une piece, completez seulement les informations utiles, puis passez a la machine.",
+    },
+    machines: {
+      title: "Choix machine",
+      text: "Selectionnez la machine de travail puis lancez la production directement depuis cette etape.",
+    },
+    production: {
+      title: "Suivi de production",
+      text: "Saisissez la production de la session, le ruban utilise et enregistrez proprement la fin du cycle.",
+    },
+  };
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [machinesRes, piecesRes, messagesRes, dossiersData] = await Promise.all([
+        const [machinesRes, piecesRes, messagesRes, dossiersData, employeeDashboard] = await Promise.all([
           fetch(`${BASE_URL}/api/machines`, { headers: authHeaders }),
           fetch(`${BASE_URL}/api/pieces`, { headers: authHeaders }),
           fetch(`${BASE_URL}/api/messages/admin`, { headers: authHeaders }),
           fetch(`${BASE_URL}/api/dossiers`, { headers: authHeaders })
             .then((response) => response.ok ? response.json() : [])
             .catch(() => []),
+          fetch(`${BASE_URL}/api/employe/me/dashboard`, { headers: authHeaders })
+            .then((response) => response.ok ? response.json() : null)
+            .catch(() => null),
         ]);
         const [machinesData, piecesData, messagesData] = await Promise.all([machinesRes.json(), piecesRes.json(), messagesRes.json()]);
         const dossierDocs = Array.isArray(dossiersData) ? dossiersData : [];
+        setWorkState({
+          machineStatus: employeeDashboard?.user?.machineStatus || "stopped",
+          currentPieceId: employeeDashboard?.user?.currentPieceId || null,
+        });
         setMachines(Array.isArray(machinesData) ? machinesData.filter((m) => !String(m.name || "").toLowerCase().includes("compresseur")) : []);
         setPieces(Array.isArray(piecesData) ? piecesData.map((piece) => enrichPieceWithPlan(piece, dossierDocs)) : []);
         setMessages(Array.isArray(messagesData) ? messagesData : []);
@@ -381,12 +550,26 @@ const EmployePage: React.FC = () => {
   }, [messages]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onResize = () => setIsCompactLayout(window.innerWidth < 1100);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
     const socket = io(BASE_URL, { transports: ["websocket"] });
     socketRef.current = socket;
     socket.emit("user-online", { username, role: "employe" });
     socket.on("direct-message", (data: Message) => {
       setMessages((prev) => [...prev, data]);
       if (tab !== "messages") setUnread((prev) => prev + 1);
+    });
+    socket.on("employee-machine-updated", (payload: { username?: string; machineStatus?: "started" | "paused" | "stopped"; currentPieceId?: string | null }) => {
+      if (payload?.username !== username) return;
+      setWorkState({
+        machineStatus: payload.machineStatus || "stopped",
+        currentPieceId: payload.currentPieceId || null,
+      });
     });
     socket.on("piece-progressed", (updatedPiece: Piece) => {
       const mergePiece = (piece: Piece): Piece => ({
@@ -396,12 +579,15 @@ const EmployePage: React.FC = () => {
         planPath: updatedPiece.planPath || piece.planPath,
         planName: updatedPiece.planName || piece.planName,
         planMimeType: updatedPiece.planMimeType || piece.planMimeType,
+        ref: updatedPiece.ref || piece.ref,
+        quantiteRuban: updatedPiece.quantiteRuban ?? piece.quantiteRuban,
         dimension: updatedPiece.dimension || piece.dimension,
         matiereType: updatedPiece.matiereType || piece.matiereType,
         matiereReference: updatedPiece.matiereReference || piece.matiereReference,
       });
       setPieces((prev) => prev.map((piece) => (piece._id === updatedPiece._id ? mergePiece(piece) : piece)));
       setSelectedPiece((prev) => (prev?._id === updatedPiece._id ? mergePiece(prev) : prev));
+      setSession((prev) => (prev?.piece._id === updatedPiece._id ? { ...prev, piece: mergePiece(prev.piece) } : prev));
     });
     return () => {
       socket.disconnect();
@@ -419,17 +605,107 @@ const EmployePage: React.FC = () => {
     };
   }, [session, isPaused]);
 
+  useEffect(() => {
+    if (!selectedPiece) {
+      setPieceDraft(emptyPieceDraft());
+      setPieceSaveError("");
+      return;
+    }
+
+    const dimensions = parseDimension(selectedPiece.dimension);
+    setPieceSaveError("");
+    setPieceDraft({
+      ...dimensions,
+      ref: selectedPiece.ref || "",
+      quantite: toNumber(selectedPiece.quantite, 0),
+      matiereType: selectedPiece.matiereType || "",
+      matiereReference: selectedPiece.matiereReference || "",
+      matiere: Boolean(selectedPiece.matiere),
+    });
+  }, [selectedPiece]);
+
   const myPieces = useMemo(() => {
     return pieces.filter((piece) => {
       const direct = piece.employe === username;
       const viaTask = (piece.taches || []).some((task) => task.employe === username);
-      return (direct || viaTask) && normalizeStatus(piece.status) !== "Termine";
+      return direct || viaTask;
+    }).sort((a, b) => {
+      const aDone = normalizeStatus(a.status) === "Termine" ? 1 : 0;
+      const bDone = normalizeStatus(b.status) === "Termine" ? 1 : 0;
+      return aDone - bDone;
     });
   }, [pieces, username]);
 
-  const progressPct = Math.min(100, Math.round((count / Math.max(1, session?.piece.quantite ?? 1)) * 100));
+  const totalProducedInSession = saved
+    ? toNumber(session?.piece.quantiteProduite, 0)
+    : toNumber(session?.piece.quantiteProduite, 0) + count;
+  const totalRubanInSession = saved
+    ? toNumber(session?.piece.quantiteRuban, 0)
+    : toNumber(session?.piece.quantiteRuban, 0) + sessionRuban;
+  const progressPct = Math.round((totalProducedInSession / Math.max(1, session?.piece.quantite ?? 1)) * 100);
+  const selectedMaterialReferences = useMemo(
+    () => (pieceDraft.matiereType ? materialOptions[pieceDraft.matiereType] || [] : []),
+    [pieceDraft.matiereType]
+  );
+  const getVisibleStatus = (piece: Piece) => {
+    const baseStatus = normalizeStatus(piece.status);
+    if (baseStatus === "Controle") return baseStatus;
+    const isSessionPiece = session?.piece._id === piece._id && (session.statut === "en_cours" || session.statut === "pause");
+    const isActivePiece = workState.currentPieceId === piece._id && (workState.machineStatus === "started" || workState.machineStatus === "paused");
+    if (baseStatus === "Termine" && hasCompletedHistory(piece)) return baseStatus;
+    return isSessionPiece || isActivePiece ? "En cours" : "Arrêté";
+  };
 
-  const postMachineAction = async (action: "started" | "paused" | "stopped", pieceId?: string, pieceCount?: number) => {
+  const saveSelectedPiece = async () => {
+    if (!selectedPiece) return null;
+    setSavingPiece(true);
+    setPieceSaveError("");
+    try {
+      const payload = {
+        ref: pieceDraft.ref,
+        quantite: toNumber(pieceDraft.quantite, 0),
+        matiere: pieceDraft.matiere,
+        dimension: formatDimension(pieceDraft),
+        matiereType: pieceDraft.matiereType,
+        matiereReference: pieceDraft.matiereReference,
+      };
+
+      const response = await fetch(`${BASE_URL}/api/pieces/${selectedPiece._id}`, {
+        method: "PATCH",
+        headers: authHeaders,
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        setPieceSaveError(errorData?.message || "Enregistrement impossible. Verifiez la piece puis reessayez.");
+        return null;
+      }
+      const serverPiece = await response.json();
+      const updatedPiece = {
+        ...selectedPiece,
+        ...payload,
+        ...serverPiece,
+        ref: serverPiece?.ref ?? payload.ref ?? selectedPiece.ref,
+        quantite: toNumber(serverPiece?.quantite ?? payload.quantite, toNumber(selectedPiece.quantite, 0)),
+        quantiteProduite: toNumber(serverPiece?.quantiteProduite, toNumber(selectedPiece.quantiteProduite, 0)),
+        dimension: serverPiece?.dimension ?? payload.dimension ?? selectedPiece.dimension,
+        matiereType: serverPiece?.matiereType ?? payload.matiereType ?? selectedPiece.matiereType,
+        matiereReference: serverPiece?.matiereReference ?? payload.matiereReference ?? selectedPiece.matiereReference,
+        matiere: serverPiece?.matiere ?? payload.matiere ?? selectedPiece.matiere,
+      };
+      setPieces((prev) => prev.map((piece) => (piece._id === updatedPiece._id ? { ...piece, ...updatedPiece } : piece)));
+      setSelectedPiece((prev) => (prev?._id === updatedPiece._id ? { ...prev, ...updatedPiece } : prev));
+      return updatedPiece;
+    } catch (error) {
+      console.error(error);
+      setPieceSaveError("Erreur reseau pendant l'enregistrement du formulaire.");
+      return null;
+    } finally {
+      setSavingPiece(false);
+    }
+  };
+
+  const postMachineAction = async (action: "started" | "paused" | "stopped", pieceId?: string, pieceCount?: number, rubanQuantity?: number) => {
     try {
       await fetch(`${BASE_URL}/api/employe/machine/action`, {
         method: "POST",
@@ -439,6 +715,7 @@ const EmployePage: React.FC = () => {
           activity: action === "started" ? `Production: ${selectedPiece?.nom}` : action === "paused" ? "Pause operateur" : "Cycle termine",
           pieceId: pieceId || null,
           pieceCount: pieceCount || null,
+          rubanQuantity: rubanQuantity || null,
           machineName: selectedMachine?.name || null,
         }),
       });
@@ -449,11 +726,20 @@ const EmployePage: React.FC = () => {
 
   const startSession = async () => {
     if (!selectedPiece || !selectedMachine) return;
-    await postMachineAction("started", selectedPiece._id);
+    const activePiece = pieces.find((piece) => piece._id === selectedPiece._id) || selectedPiece;
+    await postMachineAction("started", activePiece._id);
+    setWorkState({ machineStatus: "started", currentPieceId: activePiece._id });
     const now = new Date();
-    setSession({ machine: selectedMachine, piece: selectedPiece, startTime: now, statut: "en_cours", events: [{ type: "start", time: now }] });
+    setSession({
+      machine: selectedMachine,
+      piece: { ...activePiece, status: normalizeStatus(activePiece.status) === "Termine" ? activePiece.status : "En cours" },
+      startTime: now,
+      statut: "en_cours",
+      events: [{ type: "start", time: now }],
+    });
     setElapsed(0);
     setCount(0);
+    setSessionRuban(0);
     setSaved(false);
     setIsPaused(false);
     setStep("production");
@@ -464,11 +750,13 @@ const EmployePage: React.FC = () => {
     const now = new Date();
     if (isPaused) {
       await postMachineAction("started", session.piece._id);
+      setWorkState({ machineStatus: "started", currentPieceId: session.piece._id });
       setSession((prev) => prev ? { ...prev, statut: "en_cours", events: [...prev.events, { type: "resume", time: now }] } : prev);
       setIsPaused(false);
       return;
     }
     await postMachineAction("paused");
+    setWorkState({ machineStatus: "paused", currentPieceId: session.piece._id });
     setSession((prev) => prev ? { ...prev, statut: "pause", events: [...prev.events, { type: "pause", time: now }] } : prev);
     setIsPaused(true);
   };
@@ -476,29 +764,18 @@ const EmployePage: React.FC = () => {
   const stopSession = async () => {
     if (!session) return;
     const endTime = new Date();
-    await postMachineAction("stopped", session.piece._id, count);
-    try {
-      await fetch(`${BASE_URL}/api/production/sessions`, {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({
-          employee_id: username,
-          machine_id: session.machine.id,
-          machine_name: session.machine.name,
-          piece_id: session.piece._id,
-          piece_name: session.piece.nom,
-          start_time: session.startTime,
-          end_time: endTime,
-          total_pieces: count,
-          duree_secondes: elapsed,
-          statut: "terminee",
-          events: session.events,
-        }),
-      });
-    } catch (error) {
-      console.error(error);
-    }
-    setSession((prev) => prev ? { ...prev, statut: "terminee", events: [...prev.events, { type: "stop", time: endTime, pieceCount: count }] } : prev);
+    await postMachineAction("stopped", session.piece._id, count, sessionRuban);
+    setWorkState({ machineStatus: "stopped", currentPieceId: null });
+    setSession((prev) => prev ? {
+      ...prev,
+      statut: "terminee",
+      piece: {
+        ...prev.piece,
+        quantiteProduite: toNumber(prev.piece.quantiteProduite, 0) + count,
+        quantiteRuban: toNumber(prev.piece.quantiteRuban, 0) + sessionRuban,
+      },
+      events: [...prev.events, { type: "stop", time: endTime, pieceCount: count, rubanQuantity: sessionRuban }],
+    } : prev);
     setSaved(true);
   };
 
@@ -507,6 +784,7 @@ const EmployePage: React.FC = () => {
     setSession(null);
     setElapsed(0);
     setCount(0);
+    setSessionRuban(0);
     setIsPaused(false);
     setSaved(false);
     if (target === "pieces") {
@@ -527,8 +805,7 @@ const EmployePage: React.FC = () => {
 
   const canOpenStep = (target: Step) => {
     if (target === "pieces") return true;
-    if (target === "machines") return Boolean(selectedPiece);
-    if (target === "confirm") return Boolean(selectedPiece && selectedMachine);
+    if (target === "machines") return Boolean(selectedPiece && getVisibleStatus(selectedPiece) !== "Termine");
     return Boolean(session);
   };
 
@@ -541,21 +818,43 @@ const EmployePage: React.FC = () => {
   const workflowSteps: { key: Step; label: string; detail: string }[] = [
     { key: "pieces", label: "Pieces", detail: selectedPiece ? selectedPiece.nom : `${myPieces.length} piece(s)` },
     { key: "machines", label: "Machines", detail: selectedMachine ? selectedMachine.name : selectedPiece ? "Choisir une machine" : "Choisir une piece" },
-    { key: "confirm", label: "Confirmation", detail: selectedPiece && selectedMachine ? "Pret a demarrer" : "Piece et machine" },
-    { key: "production", label: "Production", detail: session ? (saved ? "Session enregistree" : "En cours") : "Apres confirmation" },
+    { key: "production", label: "Production", detail: session ? (saved ? "Session enregistree" : "En cours") : "Apres demarrage" },
   ];
+  const currentStepMeta = stepDescriptions[step];
+  const getStatusTheme = (statusLabel: string) => {
+    if (statusLabel === "En cours") return { bg: theme.accentSoft, text: theme.accent };
+    if (statusLabel === "Termine") return { bg: darkMode ? "rgba(52,211,153,0.16)" : "rgba(5,150,105,0.12)", text: theme.success };
+    if (statusLabel === "Controle") return { bg: darkMode ? "rgba(251,191,36,0.16)" : "rgba(217,119,6,0.12)", text: theme.warning };
+    return { bg: darkMode ? "rgba(148,163,184,0.14)" : "rgba(100,116,139,0.12)", text: theme.muted };
+  };
+  const selectedPieceStatus = selectedPiece ? getVisibleStatus(selectedPiece) : "Arrete";
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", background: "radial-gradient(circle at top, #14213d 0%, #0a0f1c 42%, #050816 100%)", color: "white", fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
-      <aside style={{ width: 260, minWidth: 260, minHeight: "100vh", borderRight: "1px solid rgba(148,163,184,0.16)", background: "rgba(11,18,32,0.92)", padding: 20, display: "flex", flexDirection: "column", gap: 18 }}>
-        <div style={{ borderBottom: "1px solid rgba(148,163,184,0.16)", paddingBottom: 18 }}>
-          <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.2 }}>CNC Pulse</div>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>Espace employe</div>
-          <div style={{ marginTop: 12, ...badge("rgba(20,184,166,0.12)", "#5eead4") }}>{username}</div>
+    <div style={{ minHeight: "100vh", height: isCompactLayout ? "auto" : "100vh", overflow: isCompactLayout ? "visible" : "hidden", display: "flex", flexDirection: isCompactLayout ? "column" : "row", background: theme.bg, color: theme.text, fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
+      <aside style={{ width: isCompactLayout ? "100%" : 292, minWidth: isCompactLayout ? 0 : 292, minHeight: isCompactLayout ? "auto" : "100vh", position: isCompactLayout ? "relative" : "sticky", top: 0, alignSelf: isCompactLayout ? "stretch" : "flex-start", overflowY: isCompactLayout ? "visible" : "auto", flexShrink: 0, borderRight: isCompactLayout ? "none" : `1px solid ${theme.border}`, borderBottom: isCompactLayout ? `1px solid ${theme.border}` : "none", background: theme.aside, padding: isCompactLayout ? 18 : 24, display: "flex", flexDirection: "column", gap: 18, backdropFilter: "blur(18px)", boxShadow: "none" }}>
+        <div style={{ borderBottom: `1px solid ${theme.border}`, paddingBottom: 18, display: "grid", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0.2, color: theme.text }}>CNC Pulse</div>
+              <div style={{ fontSize: 12, color: theme.muted, marginTop: 4 }}>Espace employe</div>
+            </div>
+            <button onClick={toggleTheme} style={{ ...secondaryButton, padding: "10px 12px", minWidth: 90 }}>
+              {darkMode ? "Clair" : "Sombre"}
+            </button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, borderRadius: 18, background: theme.inset, border: `1px solid ${theme.border}` }}>
+            <div style={{ width: 42, height: 42, borderRadius: 14, background: theme.primary, color: "white", display: "grid", placeItems: "center", fontWeight: 900 }}>
+              {String(username || "E").slice(0, 1).toUpperCase()}
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: theme.text }}>{username}</div>
+              <div style={{ fontSize: 11, color: theme.muted }}>Session employee active</div>
+            </div>
+          </div>
         </div>
 
         <nav style={{ display: "grid", gap: 10 }}>
-          <div style={{ color: "rgba(255,255,255,0.36)", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 4 }}>Flux de travail</div>
+          <div style={{ color: theme.subtle, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 4 }}>Flux de travail</div>
           {workflowSteps.map((item, index) => {
             const active = tab === "workflow" && step === item.key;
             const enabled = canOpenStep(item.key);
@@ -567,22 +866,23 @@ const EmployePage: React.FC = () => {
                 style={{
                   width: "100%",
                   textAlign: "left",
-                  borderRadius: 8,
-                  border: active ? "1px solid rgba(20,184,166,0.38)" : "1px solid rgba(148,163,184,0.1)",
-                  background: active ? "linear-gradient(135deg,rgba(20,184,166,0.2),rgba(59,130,246,0.1))" : "rgba(255,255,255,0.03)",
-                  color: enabled ? active ? "#5eead4" : "#cbd5e1" : "#475569",
-                  padding: "13px",
+                  borderRadius: 18,
+                  border: active ? `1px solid ${theme.accent}66` : `1px solid ${theme.border}`,
+                  background: active ? `linear-gradient(135deg, ${theme.accentSoft}, ${darkMode ? "rgba(37,99,235,0.12)" : "rgba(14,165,233,0.08)"})` : theme.inset,
+                  color: enabled ? active ? theme.accent : theme.textSoft : theme.subtle,
+                  padding: "14px",
                   cursor: enabled ? "pointer" : "not-allowed",
                   opacity: enabled ? 1 : 0.58,
+                  boxShadow: active ? (darkMode ? "0 16px 30px rgba(14,165,233,0.12)" : "none") : "none",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", background: active ? "rgba(20,184,166,0.18)" : "rgba(148,163,184,0.08)", fontWeight: 900 }}>
+                  <span style={{ width: 32, height: 32, borderRadius: 12, display: "grid", placeItems: "center", background: active ? theme.accentSoft : theme.inset, fontWeight: 900 }}>
                     {index + 1}
                   </span>
                   <span>
                     <span style={{ display: "block", fontSize: 14, fontWeight: 800 }}>{item.label}</span>
-                    <span style={{ display: "block", fontSize: 11, color: active ? "#99f6e4" : enabled ? "#94a3b8" : "#64748b", marginTop: 3 }}>{item.detail}</span>
+                    <span style={{ display: "block", fontSize: 11, color: active ? theme.textSoft : enabled ? theme.muted : theme.subtle, marginTop: 3 }}>{item.detail}</span>
                   </span>
                 </div>
               </button>
@@ -590,41 +890,53 @@ const EmployePage: React.FC = () => {
           })}
         </nav>
 
+
         <div style={{ marginTop: "auto", display: "grid", gap: 10 }}>
-          <button onClick={() => { localStorage.clear(); navigate("/"); }} style={{ ...badge("rgba(239,68,68,0.14)", "#f87171"), cursor: "pointer", width: "100%", padding: "11px 12px" }}>Quitter</button>
+          <button onClick={() => { localStorage.clear(); navigate("/"); }} style={{ ...secondaryButton, width: "100%", color: theme.danger, borderColor: darkMode ? "rgba(248,113,113,0.24)" : "rgba(220,38,38,0.18)", background: darkMode ? "rgba(127,29,29,0.12)" : "rgba(254,242,242,0.9)" }}>Quitter</button>
         </div>
       </aside>
 
       {tab === "workflow" && (
-        <main style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: 24 }}>
+        <main style={{ flex: 1, minWidth: 0, height: isCompactLayout ? "auto" : "100vh", overflowY: isCompactLayout ? "visible" : "auto", padding: isCompactLayout ? 16 : 24 }}>
         <div style={{ maxWidth: 1080, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
             <div>
-              <div style={{ color: "#5eead4", fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.2 }}>Espace employe</div>
-              <h1 style={{ margin: "4px 0 0", fontSize: 30, lineHeight: 1.1 }}>Flux de production</h1>
+              <div style={{ color: theme.accent, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.2 }}>Espace employe</div>
+              <h1 style={{ margin: "4px 0 0", fontSize: 34, lineHeight: 1.05, color: theme.text }}>Flux de production</h1>
             </div>
             <button
               onClick={() => {
                 setTab("messages");
                 setUnread(0);
               }}
-              style={{ ...secondaryButton, display: "flex", alignItems: "center", gap: 10, background: unread > 0 ? "rgba(20,184,166,0.14)" : "rgba(255,255,255,0.05)", borderColor: unread > 0 ? "rgba(20,184,166,0.34)" : "rgba(148,163,184,0.18)" }}
+              style={{ ...secondaryButton, display: "flex", alignItems: "center", gap: 10, background: unread > 0 ? theme.accentSoft : theme.secondary, borderColor: unread > 0 ? `${theme.accent}55` : theme.border }}
             >
               Messages
-              {unread > 0 && <span style={badge("rgba(20,184,166,0.22)", "#5eead4")}>{unread}</span>}
+              {unread > 0 && <span style={badge(theme.accentSoft, theme.accent)}>{unread}</span>}
             </button>
           </div>
 
-          <div style={{ ...sectionCardStyle, marginBottom: 20, display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>{workflowSteps.find((item) => item.key === step)?.label || "Pieces"}</div>
-              <div style={{ color: "#94a3b8", fontSize: 14, maxWidth: 560 }}>
-                Selectionnez une piece, verifiez son plan et ses details, choisissez une machine, puis demarrez la production.
+          <div style={{ ...sectionCardStyle, marginBottom: 22, display: "grid", gridTemplateColumns: isCompactLayout ? "1fr" : "minmax(320px, 1fr) auto", gap: 18, alignItems: "start" }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", padding: "7px 12px", borderRadius: 999, background: theme.accentSoft, color: theme.accent, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>
+                Etape {workflowSteps.findIndex((item) => item.key === step) + 1}
+                <span style={{ width: 5, height: 5, borderRadius: "50%", background: theme.accent }} />
+                {currentStepMeta.title}
+              </div>
+              <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>{workflowSteps.find((item) => item.key === step)?.label || "Pieces"}</div>
+              <div style={{ color: theme.muted, fontSize: 14, maxWidth: 620, lineHeight: 1.7 }}>
+                {currentStepMeta.text}
               </div>
             </div>
-            <div style={{ display: "grid", gap: 8, minWidth: 180 }}>
-              <div style={{ ...badge("rgba(20,184,166,0.12)", "#5eead4"), justifySelf: "start" }}>Employe: {username}</div>
-              <div style={{ ...badge("rgba(59,130,246,0.12)", "#93c5fd"), justifySelf: "start" }}>Pieces actives: {myPieces.length}</div>
+            <div style={{ display: "grid", gap: 10, minWidth: 220 }}>
+              <div style={{ ...subtlePanelStyle, padding: 14 }}>
+                <div style={{ color: theme.subtle, fontSize: 11, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Employe</div>
+                <div style={{ color: theme.text, fontWeight: 800 }}>{username}</div>
+              </div>
+              <div style={{ ...subtlePanelStyle, padding: 14 }}>
+                <div style={{ color: theme.subtle, fontSize: 11, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Pieces assignees</div>
+                <div style={{ color: theme.text, fontWeight: 800 }}>{myPieces.length}</div>
+              </div>
             </div>
           </div>
 
@@ -632,29 +944,82 @@ const EmployePage: React.FC = () => {
             <div style={sectionCardStyle}>
               {!selectedPiece ? (
                 <>
-                  <h2 style={{ marginTop: 0, marginBottom: 6 }}>Liste des pieces</h2>
-                  <p style={{ color: "#94a3b8", marginTop: 0 }}>Choisissez une piece pour voir le plan, la dimension, la matiere et la quantite enregistree.</p>
-                  {loading ? <div style={cardStyle}>Chargement...</div> : myPieces.length === 0 ? <div style={cardStyle}>Aucune piece assignee pour le moment.</div> : (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+                    <div>
+                      <h2 style={{ margin: 0, color: theme.text }}>Liste des pieces</h2>
+                      <p style={{ color: theme.muted, margin: "8px 0 0", maxWidth: 640, lineHeight: 1.7 }}>
+                        Choisissez une piece pour consulter son plan, verifier les donnees importantes et preparer la production sans melanger les informations.
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ ...subtlePanelStyle, minWidth: 132, padding: 14 }}>
+                        <div style={{ color: theme.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>Pieces</div>
+                        <div style={{ color: theme.text, fontSize: 24, fontWeight: 900, marginTop: 6 }}>{myPieces.length}</div>
+                      </div>
+                      <div style={{ ...subtlePanelStyle, minWidth: 132, padding: 14 }}>
+                        <div style={{ color: theme.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>En cours</div>
+                        <div style={{ color: theme.accent, fontSize: 24, fontWeight: 900, marginTop: 6 }}>
+                          {myPieces.filter((piece) => getVisibleStatus(piece) === "En cours").length}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {loading ? <div style={{ ...cardStyle, color: theme.muted }}>Chargement...</div> : myPieces.length === 0 ? <div style={{ ...cardStyle, color: theme.muted }}>Aucune piece assignee pour le moment.</div> : (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 16 }}>
-                      {myPieces.map((piece) => (
-                        <button key={piece._id} onClick={() => { setSelectedPiece(piece); setSelectedMachine(null); }} style={{ ...cardStyle, textAlign: "left", cursor: "pointer", color: "white", boxShadow: "0 10px 24px rgba(2,6,23,0.22)", transition: "transform 0.18s ease, border-color 0.18s ease" }}>
-                          <div style={{ marginBottom: 12 }}>
-                            <PiecePlanPreview piece={piece} height={132} compact />
-                          </div>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-                            <strong>{piece.nom}</strong>
-                            <span style={badge("rgba(56,189,248,0.14)", "#38bdf8")}>{normalizeStatus(piece.status)}</span>
-                          </div>
-                          <div style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1.7 }}>
-                            <div>Machine actuelle: <span style={{ color: "#38bdf8" }}>{piece.currentMachine || piece.machine}</span></div>
-                            <div>Dimension: <span style={{ color: "white" }}>{piece.dimension || "Non renseignee"}</span></div>
-                            <div>Quantite: <span style={{ color: "white" }}>{piece.quantite} pcs</span></div>
-                            <div>Type matiere: <span style={{ color: "white" }}>{piece.matiereType || "Non renseigne"}</span></div>
-                            <div>Reference: <span style={{ color: "white" }}>{piece.matiereReference || "Non renseignee"}</span></div>
-                            <div>Disponibilite: <span style={{ color: piece.matiere ? "#34d399" : "#f87171" }}>{piece.matiere ? "Disponible" : "Manquante"}</span></div>
-                          </div>
-                        </button>
-                      ))}
+                      {myPieces.map((piece) => {
+                        const statusLabel = getVisibleStatus(piece);
+                        const statusTone = getStatusTheme(statusLabel);
+                        return (
+                          <button
+                            key={piece._id}
+                            onClick={() => { setSelectedPiece(piece); setSelectedMachine(null); }}
+                            style={{
+                              ...cardStyle,
+                              textAlign: "left",
+                              cursor: "pointer",
+                              color: theme.text,
+                              transition: "transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease",
+                              display: "grid",
+                              gap: 14,
+                            }}
+                          >
+                            <PiecePlanPreview piece={piece} height={150} compact />
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                              <div>
+                                <div style={{ fontSize: 18, fontWeight: 900, color: theme.text }}>{piece.nom}</div>
+                                <div style={{ fontSize: 12, color: theme.muted, marginTop: 4 }}>
+                                  {piece.currentMachine || piece.machine || "Machine non definie"}
+                                </div>
+                              </div>
+                              <span style={badge(statusTone.bg, statusTone.text)}>{statusLabel}</span>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10 }}>
+                              <div style={{ ...subtlePanelStyle, padding: 12 }}>
+                                <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Reference</div>
+                                <div style={{ color: theme.text, fontSize: 14, fontWeight: 800, marginTop: 6 }}>{piece.ref || "Non renseignee"}</div>
+                              </div>
+                              <div style={{ ...subtlePanelStyle, padding: 12 }}>
+                                <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Production</div>
+                                <div style={{ color: theme.text, fontSize: 14, fontWeight: 800, marginTop: 6 }}>
+                                  {piece.quantiteProduite || 0} / {piece.quantite || 0}
+                                </div>
+                              </div>
+                              <div style={{ ...subtlePanelStyle, padding: 12 }}>
+                                <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Dimension</div>
+                                <div style={{ color: theme.text, fontSize: 13, fontWeight: 700, marginTop: 6 }}>
+                                  {piece.dimension || "Non renseignee"}
+                                </div>
+                              </div>
+                              <div style={{ ...subtlePanelStyle, padding: 12 }}>
+                                <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Matiere</div>
+                                <div style={{ color: piece.matiere ? theme.success : theme.danger, fontSize: 13, fontWeight: 800, marginTop: 6 }}>
+                                  {piece.matiere ? "Disponible" : "Manquante"}
+                                </div>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </>
@@ -662,31 +1027,153 @@ const EmployePage: React.FC = () => {
                 <>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
                     <div>
-                      <h2 style={{ margin: 0 }}>{selectedPiece.nom}</h2>
-                      <div style={{ color: "#94a3b8", marginTop: 6 }}>Detail de la piece avant le choix de la machine.</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <h2 style={{ margin: 0, color: theme.text }}>{selectedPiece.nom}</h2>
+                        <span style={badge(getStatusTheme(selectedPieceStatus).bg, getStatusTheme(selectedPieceStatus).text)}>{selectedPieceStatus}</span>
+                      </div>
+                      <div style={{ color: theme.muted, marginTop: 8, maxWidth: 620 }}>
+                        Verifiez le plan, completez seulement les champs utiles, puis passez a la machine quand la piece est prete.
+                      </div>
                     </div>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                       <button onClick={() => resetWorkflow("pieces")} style={secondaryButton}>Changer la piece</button>
-                      <button onClick={() => setStep("machines")} style={primaryButton}>Choisir une machine</button>
+                      <button
+                        onClick={async () => {
+                          if (getVisibleStatus(selectedPiece) === "Termine") return;
+                          const updatedPiece = await saveSelectedPiece();
+                          if (!updatedPiece) return;
+                          if (getVisibleStatus(updatedPiece) === "Termine") return;
+                          setStep("machines");
+                        }}
+                        disabled={getVisibleStatus(selectedPiece) === "Termine" || savingPiece}
+                        style={{ ...primaryButton, opacity: getVisibleStatus(selectedPiece) === "Termine" || savingPiece ? 0.55 : 1, cursor: getVisibleStatus(selectedPiece) === "Termine" || savingPiece ? "not-allowed" : "pointer" }}
+                      >
+                        {getVisibleStatus(selectedPiece) === "Termine" ? "Piece terminee" : "Choisir une machine"}
+                      </button>
                     </div>
                   </div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1.1fr) minmax(280px, 0.9fr)", gap: 16 }}>
-                    <div style={cardStyle}>
-                      <div style={{ fontWeight: 800, marginBottom: 12 }}>Plan de fabrication</div>
+                  <div style={{ display: "grid", gridTemplateColumns: isCompactLayout ? "1fr" : "minmax(280px, 1.1fr) minmax(280px, 0.9fr)", gap: 16 }}>
+                    <div style={{ ...cardStyle, display: "grid", gap: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900, color: theme.text }}>Plan de fabrication</div>
+                        <span style={badge(theme.accentSoft, theme.accent)}>{selectedPiece.currentMachine || selectedPiece.machine || "Machine non definie"}</span>
+                      </div>
                       <PiecePlanPreview piece={selectedPiece} height={270} />
-                      <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 10 }}>Double clic sur le plan pour l'ouvrir dans une nouvelle fenetre quand le format est lisible.</div>
+                      <div style={{ ...subtlePanelStyle, padding: 14, display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 10 }}>
+                        <div>
+                          <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Reference</div>
+                          <div style={{ color: theme.text, fontWeight: 800, marginTop: 6 }}>{selectedPiece.ref || "Non renseignee"}</div>
+                        </div>
+                        <div>
+                          <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Production</div>
+                          <div style={{ color: theme.text, fontWeight: 800, marginTop: 6 }}>{selectedPiece.quantiteProduite || 0} / {selectedPiece.quantite || 0}</div>
+                        </div>
+                        <div>
+                          <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Matiere</div>
+                          <div style={{ color: selectedPiece.matiere ? theme.success : theme.danger, fontWeight: 800, marginTop: 6 }}>
+                            {selectedPiece.matiere ? "Disponible" : "A verifier"}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ color: theme.muted, fontSize: 12 }}>Double clic sur le plan pour l'ouvrir dans une nouvelle fenetre quand le format est lisible.</div>
                     </div>
 
-                    <div style={{ display: "grid", gap: 16 }}>
-                      <div style={cardStyle}>
-                        <div style={{ fontWeight: 800, marginBottom: 12 }}>Donnees enregistrees</div>
-                        <PieceInfoGrid piece={selectedPiece} />
-                      </div>
-
-                      <div style={cardStyle}>
-                        <div style={{ fontWeight: 800, marginBottom: 12 }}>Consignes de fabrication</div>
-                        <PieceConsignes piece={selectedPiece} />
+                    <div>
+                      <div style={{ ...cardStyle, display: "grid", gap: 16 }}>
+                        <div>
+                          <div style={{ fontWeight: 900, color: theme.text }}>Formulaire piece</div>
+                          <div style={{ color: theme.muted, fontSize: 12, marginTop: 6 }}>
+                            Remplissez seulement les champs utiles avant de passer a la machine.
+                          </div>
+                        </div>
+                        <div style={{ ...subtlePanelStyle, display: "grid", gap: 12 }}>
+                          <div style={{ color: theme.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.1, fontWeight: 800 }}>Identite</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
+                            <div>
+                              <label style={labelStyle}>Reference</label>
+                              <input value={pieceDraft.ref} onChange={(event) => setPieceDraft((prev) => ({ ...prev, ref: event.target.value }))} placeholder="REF-001" style={inputBaseStyle} />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Quantite requise</label>
+                              <input type="number" value={pieceDraft.quantite} onChange={(event) => setPieceDraft((prev) => ({ ...prev, quantite: toNumber(event.target.value, 0) }))} style={inputBaseStyle} />
+                            </div>
+                          </div>
+                          <div style={{ ...subtlePanelStyle, padding: 14 }}>
+                            <div style={{ color: theme.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.1, fontWeight: 800 }}>Production</div>
+                            <div style={{ color: theme.text, fontSize: 14, fontWeight: 800, marginTop: 8 }}>
+                              {selectedPiece.quantiteProduite || 0} / {selectedPiece.quantite || 0}
+                            </div>
+                            <div style={{ color: theme.muted, fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>
+                              La quantite produite se saisit seulement dans l etape production, apres le choix de la machine.
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ ...subtlePanelStyle, display: "grid", gap: 12 }}>
+                          <div style={{ color: theme.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.1, fontWeight: 800 }}>Dimensions</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 12 }}>
+                            <div>
+                              <label style={labelStyle}>Largeur</label>
+                              <input value={pieceDraft.largeur} onChange={(event) => setPieceDraft((prev) => ({ ...prev, largeur: event.target.value }))} placeholder="120 mm" style={inputBaseStyle} />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Longueur</label>
+                              <input value={pieceDraft.longueur} onChange={(event) => setPieceDraft((prev) => ({ ...prev, longueur: event.target.value }))} placeholder="40 mm" style={inputBaseStyle} />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Hauteur</label>
+                              <input value={pieceDraft.hauteur} onChange={(event) => setPieceDraft((prev) => ({ ...prev, hauteur: event.target.value }))} placeholder="12 mm" style={inputBaseStyle} />
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ ...subtlePanelStyle, display: "grid", gap: 12 }}>
+                          <div style={{ color: theme.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.1, fontWeight: 800 }}>Matiere</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
+                            <div>
+                              <label style={labelStyle}>Type matiere</label>
+                              <select
+                                value={pieceDraft.matiereType}
+                                onChange={(event) => setPieceDraft((prev) => ({ ...prev, matiereType: event.target.value, matiereReference: "" }))}
+                                style={inputBaseStyle}
+                                title="Type matiere"
+                              >
+                                <option value="">Choisir une matiere</option>
+                                {Object.keys(materialOptions).map((materialType) => (
+                                  <option key={materialType} value={materialType}>{materialType}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Reference matiere</label>
+                              <select
+                                value={pieceDraft.matiereReference}
+                                onChange={(event) => setPieceDraft((prev) => ({ ...prev, matiereReference: event.target.value }))}
+                                style={inputBaseStyle}
+                                title="Reference matiere"
+                                disabled={!pieceDraft.matiereType}
+                              >
+                                <option value="">Choisir une reference</option>
+                                {selectedMaterialReferences.map((reference) => (
+                                  <option key={reference} value={reference}>{reference}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <label style={{ ...subtlePanelStyle, display: "flex", alignItems: "center", gap: 10, padding: 14, color: theme.text, fontSize: 13, fontWeight: 700 }}>
+                            <input type="checkbox" checked={pieceDraft.matiere} onChange={(event) => setPieceDraft((prev) => ({ ...prev, matiere: event.target.checked }))} />
+                            Matiere disponible
+                          </label>
+                        </div>
+                        <div style={{ display: "grid", gap: 10 }}>
+                          <button onClick={saveSelectedPiece} disabled={savingPiece} style={{ ...primaryButton, width: "100%", opacity: savingPiece ? 0.7 : 1, cursor: savingPiece ? "wait" : "pointer" }}>
+                            {savingPiece ? "Enregistrement..." : "Enregistrer le formulaire"}
+                          </button>
+                          {pieceSaveError && (
+                            <div style={{ color: theme.danger, fontSize: 12, lineHeight: 1.6 }}>
+                              {pieceSaveError}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -697,17 +1184,31 @@ const EmployePage: React.FC = () => {
 
           {step === "machines" && selectedPiece && (
             <div style={sectionCardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12, flexWrap: "wrap" }}>
                 <div>
-                  <h2 style={{ margin: 0 }}>Choix de la machine</h2>
-                  <div style={{ color: "#94a3b8", marginTop: 6 }}>Piece selectionnee: <span style={{ color: "#34d399" }}>{selectedPiece.nom}</span></div>
+                  <h2 style={{ margin: 0, color: theme.text }}>Choix de la machine</h2>
+                  <div style={{ color: theme.muted, marginTop: 6 }}>
+                    Piece selectionnee: <span style={{ color: theme.success, fontWeight: 800 }}>{selectedPiece.nom}</span>
+                  </div>
                 </div>
                 <button onClick={() => resetWorkflow("pieces")} style={secondaryButton}>Retour aux pieces</button>
               </div>
-              <div style={{ ...cardStyle, marginBottom: 16, padding: 16, background: "rgba(15,23,42,0.82)" }}>
-                <div style={{ fontSize: 13, color: "#94a3b8" }}>
-                  Choisissez la machine qui va travailler cette piece. La machine actuelle reste marquee par un badge.
+              <div style={{ ...subtlePanelStyle, marginBottom: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }}>
+                <div>
+                  <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Statut</div>
+                  <div style={{ color: getStatusTheme(selectedPieceStatus).text, fontWeight: 900, marginTop: 6 }}>{selectedPieceStatus}</div>
                 </div>
+                <div>
+                  <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Machine actuelle</div>
+                  <div style={{ color: theme.text, fontWeight: 900, marginTop: 6 }}>{selectedPiece.currentMachine || selectedPiece.machine || "Non definie"}</div>
+                </div>
+                <div>
+                  <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }}>Quantite</div>
+                  <div style={{ color: theme.text, fontWeight: 900, marginTop: 6 }}>{selectedPiece.quantiteProduite || 0} / {selectedPiece.quantite || 0}</div>
+                </div>
+              </div>
+              <div style={{ ...cardStyle, marginBottom: 16, padding: 18, color: theme.muted, lineHeight: 1.7 }}>
+                Choisissez la machine qui va travailler cette piece. La machine deja utilisee reste marquee pour garder le suivi clair.
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16 }}>
                 {machines.map((machine) => {
@@ -715,49 +1216,52 @@ const EmployePage: React.FC = () => {
                   const Icon = visual.Icon;
                   const accent = getMachineAccent(machine);
                   const isCurrent = machine.name === (selectedPiece.currentMachine || selectedPiece.machine);
+                  const isSelected = selectedMachine?.id === machine.id;
                   return (
                     <button
                       key={machine.id}
-                      onClick={() => { setSelectedMachine(machine); setStep("confirm"); }}
+                      onClick={() => { setSelectedMachine(machine); }}
                       style={{
+                        ...cardStyle,
                         textAlign: "left",
                         cursor: "pointer",
-                        color: "white",
+                        color: theme.text,
                         padding: 0,
                         overflow: "hidden",
-                        borderRadius: 8,
-                        border: isCurrent ? `1px solid ${accent}` : "1px solid rgba(148,163,184,0.14)",
-                        background: "linear-gradient(180deg, rgba(15,23,42,0.96), rgba(8,13,25,0.96))",
-                        boxShadow: "0 18px 35px rgba(2,6,23,0.26)",
+                        borderRadius: 22,
+                        border: isSelected || isCurrent ? `1px solid ${accent}` : `1px solid ${theme.border}`,
                       }}
                     >
-                      <div style={{ height: 118, position: "relative", overflow: "hidden", background: "#020617" }}>
+                      <div style={{ height: 132, position: "relative", overflow: "hidden", background: darkMode ? "#020617" : "#dbeafe" }}>
                         <img src={visual.image} alt={visual.alt} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.64, display: "block" }} />
-                        <div style={{ position: "absolute", inset: 0, background: `linear-gradient(135deg, rgba(2,6,23,0.15), ${accent}33)` }} />
-                        <div style={{ position: "absolute", left: 14, top: 14, width: 42, height: 42, borderRadius: 8, background: "rgba(2,6,23,0.72)", border: `1px solid ${accent}66`, display: "grid", placeItems: "center", color: accent }}>
+                        <div style={{ position: "absolute", inset: 0, background: darkMode ? `linear-gradient(135deg, rgba(2,6,23,0.2), ${accent}33)` : `linear-gradient(135deg, rgba(255,255,255,0.2), ${accent}20)` }} />
+                        <div style={{ position: "absolute", left: 14, top: 14, width: 44, height: 44, borderRadius: 14, background: darkMode ? "rgba(2,6,23,0.72)" : "rgba(255,255,255,0.82)", border: `1px solid ${accent}55`, display: "grid", placeItems: "center", color: accent }}>
                           <Icon size={21} />
                         </div>
                         {isCurrent && (
                           <span style={{ position: "absolute", right: 12, top: 12, ...badge(`${accent}22`, accent) }}>Etape actuelle</span>
                         )}
+                        {isSelected && (
+                          <span style={{ position: "absolute", left: 12, bottom: 12, ...badge(`${accent}22`, accent) }}>Selectionnee</span>
+                        )}
                       </div>
                       <div style={{ padding: 16 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                           <div>
-                            <div style={{ fontSize: 16, fontWeight: 900 }}>{machine.name}</div>
-                            <div style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>
+                            <div style={{ fontSize: 16, fontWeight: 900, color: theme.text }}>{machine.name}</div>
+                            <div style={{ color: theme.muted, fontSize: 12, marginTop: 4 }}>
                               {[machine.marque, machine.model].filter(Boolean).join(" - ") || "Modele non renseigne"}
                             </div>
                           </div>
-                          <span style={badge("rgba(255,255,255,0.06)", "#cbd5e1")}>{machine.type || "Machine"}</span>
+                          <span style={badge(darkMode ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.06)", theme.textSoft)}>{machine.type || "Machine"}</span>
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
-                          <div style={{ padding: 10, borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(148,163,184,0.1)" }}>
-                            <div style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", fontWeight: 800 }}>Connexion</div>
-                            <div style={{ color: machine.hasSensors ? "#34d399" : "#cbd5e1", fontSize: 12, fontWeight: 800, marginTop: 4 }}>{machine.hasSensors ? "Capteurs" : "Manuel"}</div>
+                          <div style={{ ...subtlePanelStyle, padding: 12 }}>
+                            <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", fontWeight: 800 }}>Connexion</div>
+                            <div style={{ color: machine.hasSensors ? theme.success : theme.textSoft, fontSize: 12, fontWeight: 800, marginTop: 4 }}>{machine.hasSensors ? "Capteurs" : "Manuel"}</div>
                           </div>
-                          <div style={{ padding: 10, borderRadius: 8, background: `${accent}12`, border: `1px solid ${accent}33` }}>
-                            <div style={{ color: "#64748b", fontSize: 10, textTransform: "uppercase", fontWeight: 800 }}>Action</div>
+                          <div style={{ padding: 12, borderRadius: 16, background: `${accent}12`, border: `1px solid ${accent}33` }}>
+                            <div style={{ color: theme.subtle, fontSize: 10, textTransform: "uppercase", fontWeight: 800 }}>Action</div>
                             <div style={{ color: accent, fontSize: 12, fontWeight: 900, marginTop: 4 }}>Selectionner</div>
                           </div>
                         </div>
@@ -766,51 +1270,86 @@ const EmployePage: React.FC = () => {
                   );
                 })}
               </div>
-            </div>
-          )}
-
-          {step === "confirm" && selectedPiece && selectedMachine && (
-            <div style={sectionCardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 12 }}>
-                <h2 style={{ margin: 0 }}>Confirmation</h2>
-                <button onClick={() => resetWorkflow("machines")} style={secondaryButton}>Retour machines</button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-                <div style={cardStyle}>
-                  <div style={{ fontWeight: 800, marginBottom: 12 }}>Plan et donnees</div>
-                  <div style={{ marginBottom: 14 }}>
-                    <PiecePlanPreview piece={selectedPiece} height={180} />
+              {selectedMachine && (
+                <div style={{ ...cardStyle, marginTop: 18, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ color: theme.subtle, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, fontWeight: 800 }}>Machine choisie</div>
+                    <div style={{ color: theme.text, fontSize: 20, fontWeight: 900 }}>{selectedMachine.name}</div>
+                    <div style={{ color: selectedPiece.matiere ? theme.success : theme.danger, fontSize: 13, fontWeight: 700 }}>
+                      {selectedPiece.matiere ? "Matiere disponible, vous pouvez demarrer." : "Matiere a verifier avant demarrage."}
+                    </div>
                   </div>
-                  <PieceInfoGrid piece={selectedPiece} machineName={selectedMachine.name} />
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <button onClick={() => setSelectedMachine(null)} style={secondaryButton}>Changer</button>
+                    <button disabled={!selectedPiece.matiere} onClick={startSession} style={{ ...primaryButton, cursor: selectedPiece.matiere ? "pointer" : "not-allowed", opacity: selectedPiece.matiere ? 1 : 0.55 }}>
+                      Demarrer la production
+                    </button>
+                  </div>
                 </div>
-                <div style={cardStyle}>
-                  <div style={{ fontWeight: 800, marginBottom: 12 }}>Consignes de fabrication</div>
-                  <PieceConsignes piece={selectedPiece} machineName={selectedMachine.name} />
-                </div>
-              </div>
-              <button disabled={!selectedPiece.matiere} onClick={startSession} style={{ ...primaryButton, width: "100%", cursor: selectedPiece.matiere ? "pointer" : "not-allowed", opacity: selectedPiece.matiere ? 1 : 0.55 }}>
-                Demarrer la production
-              </button>
+              )}
             </div>
           )}
 
           {step === "production" && session && (
             <div style={sectionCardStyle}>
-              <h2 style={{ marginTop: 0, marginBottom: 16 }}>Production en cours</h2>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 16 }}>
-                <div style={cardStyle}><div style={{ color: "rgba(255,255,255,0.38)", marginBottom: 8 }}>Temps</div><div style={{ fontSize: 30, fontWeight: 900, color: "#38bdf8" }}>{fmt(elapsed)}</div></div>
-                <div style={cardStyle}><div style={{ color: "rgba(255,255,255,0.38)", marginBottom: 8 }}>Pieces</div><div style={{ fontSize: 30, fontWeight: 900, color: "#34d399", marginBottom: 10 }}>{count}</div><div style={{ display: "flex", gap: 8 }}><button onClick={() => setCount((prev) => Math.max(0, prev - 1))} disabled={saved || count === 0} style={secondaryButton}>-</button><button onClick={() => setCount((prev) => prev + 1)} disabled={saved} style={secondaryButton}>+</button></div></div>
-                <div style={cardStyle}><div style={{ color: "rgba(255,255,255,0.38)", marginBottom: 8 }}>Objectif</div><div style={{ fontSize: 30, fontWeight: 900, color: "#fbbf24" }}>{progressPct}%</div><div style={{ fontSize: 12, color: "rgba(255,255,255,0.38)" }}>{session.piece.quantite} pcs demandes</div></div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", marginBottom: 18 }}>
+                <div>
+                  <h2 style={{ margin: 0, color: theme.text }}>Production en cours</h2>
+                  <div style={{ color: theme.muted, marginTop: 8 }}>
+                    {session.piece.nom} sur {session.machine.name}
+                  </div>
+                </div>
+                <span style={badge(isPaused ? (darkMode ? "rgba(251,191,36,0.16)" : "rgba(217,119,6,0.12)") : theme.accentSoft, isPaused ? theme.warning : theme.accent)}>
+                  {isPaused ? "Pause" : saved ? "Session enregistree" : "En cours"}
+                </span>
               </div>
-              <div style={{ ...cardStyle, marginBottom: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 16, marginBottom: 16 }}>
+                <div style={cardStyle}>
+                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Temps</div>
+                  <div style={{ fontSize: 30, fontWeight: 900, color: theme.accent }}>{fmt(elapsed)}</div>
+                </div>
+                <div style={cardStyle}>
+                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Pieces faites</div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={count}
+                    onChange={(event) => setCount(toNumber(event.target.value, 0))}
+                    disabled={saved}
+                    style={bigInputStyle}
+                  />
+                  <div style={{ fontSize: 12, color: theme.subtle, marginTop: 10 }}>Entrez juste un nombre.</div>
+                </div>
+                <div style={cardStyle}>
+                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Quantite ruban</div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={sessionRuban}
+                    onChange={(event) => setSessionRuban(toNumber(event.target.value, 0))}
+                    disabled={saved}
+                    style={bigInputStyle}
+                  />
+                  <div style={{ fontSize: 12, color: theme.subtle, marginTop: 10 }}>Total ruban apres session: {totalRubanInSession}</div>
+                </div>
+                <div style={cardStyle}>
+                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Objectif</div>
+                  <div style={{ fontSize: 30, fontWeight: 900, color: theme.warning }}>{progressPct}%</div>
+                  <div style={{ fontSize: 12, color: theme.subtle }}>{totalProducedInSession} / {session.piece.quantite} pcs</div>
+                </div>
+              </div>
+              <div style={{ ...cardStyle, marginBottom: 16, display: "grid", gap: 16 }}>
                 <div style={{ marginBottom: 14 }}>
                   <PiecePlanPreview piece={session.piece} height={220} />
                 </div>
                 <PieceInfoGrid piece={session.piece} machineName={session.machine.name} />
+                <div style={{ marginTop: 4, paddingTop: 14, borderTop: `1px solid ${theme.border}`, fontSize: 13, color: theme.textSoft }}>
+                  Quantite produite / quantite requise: <strong style={{ color: theme.text }}>{totalProducedInSession} / {session.piece.quantite}</strong>
+                </div>
               </div>
               {!saved ? (
                 <div style={{ display: "flex", gap: 12 }}>
-                  <button onClick={togglePause} style={{ ...primaryButton, flex: 1, background: isPaused ? "linear-gradient(135deg,#0369a1,#0ea5e9)" : "linear-gradient(135deg,#92400e,#f59e0b)" }}>
+                  <button onClick={togglePause} style={{ ...primaryButton, flex: 1, background: isPaused ? "linear-gradient(135deg,#1d4ed8,#0ea5e9)" : "linear-gradient(135deg,#b45309,#f59e0b)" }}>
                     {isPaused ? "Reprendre" : "Pause"}
                   </button>
                   <button onClick={stopSession} style={{ ...primaryButton, flex: 1, background: "linear-gradient(135deg,#7f1d1d,#ef4444)" }}>
@@ -819,7 +1358,7 @@ const EmployePage: React.FC = () => {
                 </div>
               ) : (
                 <div style={cardStyle}>
-                  <div style={{ color: "#34d399", fontWeight: 800, marginBottom: 12 }}>Session enregistree.</div>
+                  <div style={{ color: theme.success, fontWeight: 800, marginBottom: 12 }}>Session enregistree.</div>
                   <div style={{ display: "flex", gap: 12 }}>
                     <button onClick={() => resetWorkflow("pieces")} style={{ ...primaryButton, flex: 1 }}>Nouvelle piece</button>
                     <button onClick={() => resetWorkflow("machines")} style={{ ...secondaryButton, flex: 1 }}>Autre machine</button>
@@ -833,25 +1372,25 @@ const EmployePage: React.FC = () => {
       )}
 
       {tab === "messages" && (
-        <main style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: 24 }}>
+        <main style={{ flex: 1, minWidth: 0, height: isCompactLayout ? "auto" : "100vh", overflowY: isCompactLayout ? "visible" : "auto", padding: isCompactLayout ? 16 : 24 }}>
         <div style={{ maxWidth: 860, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
             <div>
-              <div style={{ color: "#5eead4", fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.2 }}>Messages</div>
-              <h1 style={{ margin: "4px 0 0", fontSize: 30, lineHeight: 1.1 }}>Discussion avec l'administrateur</h1>
+              <div style={{ color: theme.accent, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1.2 }}>Messages</div>
+              <h1 style={{ margin: "4px 0 0", fontSize: 30, lineHeight: 1.1, color: theme.text }}>Discussion avec l'administrateur</h1>
             </div>
             <button onClick={() => setTab("workflow")} style={secondaryButton}>Retour au travail</button>
           </div>
           <div style={{ ...cardStyle, minHeight: 460, display: "flex", flexDirection: "column" }}>
-            <div style={{ fontWeight: 800, marginBottom: 14 }}>Discussion avec l'administrateur</div>
+            <div style={{ fontWeight: 900, marginBottom: 14, color: theme.text }}>Discussion avec l'administrateur</div>
             <div style={{ flex: 1, overflowY: "auto", marginBottom: 14 }}>
               {messages.map((msg) => {
                 const isMe = msg.from === username;
                 return (
                   <div key={msg._id} style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start", marginBottom: 10 }}>
-                    <div style={{ maxWidth: "70%", background: isMe ? "linear-gradient(135deg,#1e40af,#2563eb)" : "rgba(255,255,255,0.05)", padding: "10px 14px", borderRadius: 8 }}>
-                      <div style={{ fontSize: 13 }}>{msg.text}</div>
-                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{new Date(msg.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</div>
+                    <div style={{ maxWidth: "70%", background: isMe ? theme.primary : theme.inset, color: isMe ? "white" : theme.text, padding: "10px 14px", borderRadius: 16, border: isMe ? "none" : `1px solid ${theme.border}` }}>
+                      <div style={{ fontSize: 13, lineHeight: 1.6 }}>{msg.text}</div>
+                      <div style={{ fontSize: 10, color: isMe ? "rgba(255,255,255,0.72)" : theme.subtle, marginTop: 4 }}>{new Date(msg.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</div>
                     </div>
                   </div>
                 );
@@ -859,8 +1398,8 @@ const EmployePage: React.FC = () => {
               <div ref={msgEndRef} />
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <input value={msgText} onChange={(e) => setMsgText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendMessage()} placeholder="Ecrire un message..." style={{ flex: 1, borderRadius: 8, border: "1px solid rgba(56,189,248,0.14)", background: "rgba(4,10,18,0.9)", color: "white", padding: "12px 14px" }} />
-              <button onClick={sendMessage} style={{ ...badge("rgba(56,189,248,0.14)", "#38bdf8"), cursor: "pointer" }}>Envoyer</button>
+              <input value={msgText} onChange={(e) => setMsgText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendMessage()} placeholder="Ecrire un message..." style={{ ...inputBaseStyle, flex: 1 }} />
+              <button onClick={sendMessage} style={{ ...primaryButton, padding: "12px 16px" }}>Envoyer</button>
             </div>
           </div>
         </div>

@@ -14,9 +14,16 @@ interface UserAPI {
   role: string;
 }
 
+interface EmployeOverview {
+  username: string;
+  currentPieceId?: string | null;
+  machineStatus?: 'started' | 'paused' | 'stopped';
+}
+
 interface Piece {
   _id: string;
   nom: string;
+  ref?: string;
   machine: string;
   machineChain?: string[];
   currentMachine?: string | null;
@@ -25,6 +32,7 @@ interface Piece {
   employe: string;
   quantite: number;
   quantiteProduite?: number;
+  quantiteRuban?: number;
   prix: number;
   status: 'Arrêté' | 'En cours' | 'Terminé' | 'Contrôle';
   matiere: boolean;
@@ -65,10 +73,10 @@ interface DossierDocument {
 }
 
 const statusConfig = {
-  'Arrêté': { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.24)', label: 'Arrêté' },
+  'Arrêté': { color: 'var(--app-heading)', bg: 'var(--app-neutral-soft)', border: 'var(--app-neutral-border)', label: 'Arrêté' },
   'Terminé': { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: 'Termine' },
   'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: 'En cours' },
-  'Contrôle': { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.24)', label: 'Arrêté' },
+  'Contrôle': { color: 'var(--app-heading)', bg: 'var(--app-neutral-soft)', border: 'var(--app-neutral-border)', label: 'Arrêté' },
 };
 
 const materialOptions: Record<string, string[]> = {
@@ -335,6 +343,7 @@ const ProductionPage: React.FC = () => {
   const [mainTab, setMainTab] = useState<'production' | 'clients'>(getInitialProductionTab);
   const [dossierPieceNames, setDossierPieceNames] = useState<string[]>([]);
   const [employes, setEmployes] = useState<string[]>([]);
+  const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
   const [machines, setMachines] = useState<MachineApi[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtre, setFiltre] = useState('Toutes');
@@ -344,10 +353,13 @@ const ProductionPage: React.FC = () => {
   const [editingPieceInfo, setEditingPieceInfo] = useState(false);
   const [pieceInfoDraft, setPieceInfoDraft] = useState({
     ...emptyDimensions(),
+    ref: '',
+    quantite: 0,
+    quantiteProduite: 0,
     matiereType: '',
     matiereReference: '',
   });
-  const [newPiece, setNewPiece] = useState<PieceFormState>({ ...emptyDimensions(), matiere: false, status: 'Arrêté' });
+  const [newPiece, setNewPiece] = useState<PieceFormState>({ ...emptyDimensions(), ref: '', quantite: 0, quantiteProduite: 0, matiere: false, status: 'Arrêté' });
   const [dossiers, setDossiers] = useState<DossierDocument[]>([]);
   const [creationContext, setCreationContext] = useState<DossierPieceContext | null>(null);
   const [selectedDossierClient, setSelectedDossierClient] = useState('');
@@ -381,6 +393,18 @@ const ProductionPage: React.FC = () => {
       }
     } catch (err) {
       console.error('Erreur fetch employés:', err);
+    }
+  };
+
+  const fetchEmployesOverview = async () => {
+    try {
+      const res = await fetch(`${API}/admin/employes-overview`, { headers });
+      const data: EmployeOverview[] = await res.json();
+      if (res.ok && Array.isArray(data)) {
+        setEmployeesOverview(data);
+      }
+    } catch (err) {
+      console.error('Erreur fetch aperçu employés:', err);
     }
   };
 
@@ -420,6 +444,7 @@ const ProductionPage: React.FC = () => {
 
   useEffect(() => {
     fetchEmployes();
+    fetchEmployesOverview();
     fetchPieces();
     fetchDossierPieceNames();
     fetchDossiers();
@@ -436,6 +461,17 @@ const ProductionPage: React.FC = () => {
     const socket = io('http://localhost:5000', { transports: ['websocket'] });
     socket.on('piece-progressed', (updatedPiece: Piece) => {
       setPieces(prev => prev.map(p => p._id === updatedPiece._id ? { ...p, ...updatedPiece } : p));
+      setSelectedPiece(prev => prev?._id === updatedPiece._id ? { ...prev, ...updatedPiece } : prev);
+    });
+    socket.on('employee-machine-updated', (payload: EmployeOverview) => {
+      if (!payload?.username) return;
+      setEmployeesOverview(prev => {
+        const index = prev.findIndex((row) => row.username === payload.username);
+        if (index === -1) return [payload, ...prev];
+        const next = [...prev];
+        next[index] = { ...next[index], ...payload };
+        return next;
+      });
     });
     socket.on('dashboard-refresh', () => {
       fetchPieces();
@@ -445,15 +481,31 @@ const ProductionPage: React.FC = () => {
   }, []);
 
   // Stats
+  const activePieceIds = useMemo(() => (
+    new Set(
+      employeesOverview
+        .filter((row) => row.currentPieceId && (row.machineStatus === 'started' || row.machineStatus === 'paused'))
+        .map((row) => String(row.currentPieceId)),
+    )
+  ), [employeesOverview]);
+
+  const getVisiblePieceStatus = (piece: Piece | null | undefined): Piece['status'] => {
+    const normalized = normalizePieceStatus(piece?.status);
+    if (normalized === 'Terminé' || normalized === 'Contrôle') return normalized;
+    if (piece?._id && activePieceIds.has(piece._id)) return 'En cours';
+    return 'Arrêté';
+  };
+
   const totalProduction = pieces.reduce((s, p) => s + toNumber(p.quantite), 0);
   const totalProduit = pieces.reduce((s, p) => s + toNumber(p.quantiteProduite), 0);
-  const enCours = pieces.filter(p => normalizePieceStatus(p.status) === 'En cours').length;
+  const enCours = pieces.filter(p => getVisiblePieceStatus(p) === 'En cours').length;
   const terminees = pieces.filter(p => normalizePieceStatus(p.status) === 'Terminé').length;
   const alertes = pieces.filter(p => !p.matiere);
   const filtrees = useMemo(() => {
     const q = search.trim().toLowerCase();
     return pieces.filter((piece) => {
-      const statusMatches = filtre === 'Toutes' || normalizePieceStatus(piece.status) === filtre;
+      const visibleStatus = getVisiblePieceStatus(piece);
+      const statusMatches = filtre === 'Toutes' || visibleStatus === filtre;
       if (!statusMatches) return false;
       if (!q) return true;
 
@@ -465,13 +517,13 @@ const ProductionPage: React.FC = () => {
         piece.dimension,
         piece.matiereType,
         piece.matiereReference,
-        piece.status,
+        visibleStatus,
         ...(piece.machineChain || []),
       ].join(' ').toLowerCase();
 
       return searchable.includes(q);
     });
-  }, [filtre, pieces, search]);
+  }, [filtre, pieces, search, activePieceIds]);
 
   const dossiersByPiece = useMemo(() => {
     return dossiers.reduce<Record<string, DossierDocument[]>>((acc, doc) => {
@@ -533,8 +585,10 @@ const ProductionPage: React.FC = () => {
     setNewPiece({
       ...emptyDimensions(),
       nom: context.pieceLabel,
+      ref: '',
       employe: '',
       quantite: 0,
+      quantiteProduite: 0,
       matiere: false,
       status: 'Arrêté',
       machine: '',
@@ -560,10 +614,12 @@ const ProductionPage: React.FC = () => {
         method: 'POST', headers,
         body: JSON.stringify({
           nom: newPiece.nom,
+          ref: newPiece.ref || '',
           machine: newPiece.machine,
           ...(effectiveChain.length > 1 ? { machineChain: effectiveChain } : {}),
           employe: newPiece.employe,
           quantite: Number(newPiece.quantite) || 0,
+          quantiteProduite: Number(newPiece.quantiteProduite) || 0,
           prix: 0,
           status: 'Arrêté',
           matiere: false,
@@ -588,7 +644,7 @@ const ProductionPage: React.FC = () => {
         setPieces(prev => [createdPiece, ...prev]);
         setShowForm(false);
         setCreationContext(null);
-        setNewPiece({ ...emptyDimensions(), matiere: false, status: 'Arrêté' });
+        setNewPiece({ ...emptyDimensions(), ref: '', quantite: 0, quantiteProduite: 0, matiere: false, status: 'Arrêté' });
         setChainSteps([]);
         setChainNext('');
         setSelectedDossierClient('');
@@ -613,26 +669,12 @@ const ProductionPage: React.FC = () => {
     } catch (err) { console.error('Erreur progression piece:', err); }
   };
 
-  const markMaterialAvailable = async (pieceId: string) => {
-    try {
-      const res = await fetch(`${API}/pieces/${pieceId}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ matiere: true }),
-      });
-      const updated = await res.json();
-      if (res.ok) {
-        setPieces(prev => prev.map(p => p._id === updated._id ? updated : p));
-        if (selectedPiece?._id === updated._id) setSelectedPiece(updated);
-      }
-    } catch (err) {
-      console.error('Erreur mise a jour matiere:', err);
-    }
-  };
-
   const savePieceInfo = async () => {
     if (!selectedPiece) return;
     const payload = {
+      ref: pieceInfoDraft.ref,
+      quantite: Number(pieceInfoDraft.quantite) || 0,
+      quantiteProduite: Number(pieceInfoDraft.quantiteProduite) || 0,
       dimension: formatDimension(pieceInfoDraft),
       matiereType: pieceInfoDraft.matiereType,
       matiereReference: pieceInfoDraft.matiereReference,
@@ -664,6 +706,9 @@ const ProductionPage: React.FC = () => {
     const dimensions = parseDimension(selectedPiece.dimension);
     setPieceInfoDraft({
       ...dimensions,
+      ref: selectedPiece.ref || '',
+      quantite: selectedPiece.quantite || 0,
+      quantiteProduite: selectedPiece.quantiteProduite || 0,
       matiereType: selectedPiece.matiereType || '',
       matiereReference: selectedPiece.matiereReference || '',
     });
@@ -867,13 +912,7 @@ const ProductionPage: React.FC = () => {
                 <div>
                   • {p.nom} — {p.machine} (Responsable: {p.employe})
                 </div>
-                <button
-                  type="button"
-                  onClick={() => markMaterialAvailable(p._id)}
-                  style={{ padding: '7px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', background: 'rgba(34,197,94,0.18)', color: '#bbf7d0', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}
-                >
-                  Matière reçue
-                </button>
+                <span style={{ fontSize: 11, color: '#fecaca', whiteSpace: 'nowrap' }}>Notification admin</span>
               </div>
             ))}
           </div>
@@ -914,10 +953,13 @@ const ProductionPage: React.FC = () => {
               Aucune pièce — ajoutez-en une !
             </div>
           ) : filtrees.map(piece => {
-            const st = getPieceStatusConfig(piece.status);
-            const pieceStatus = normalizePieceStatus(piece.status);
+            const visibleStatus = getVisiblePieceStatus(piece);
+            const st = getPieceStatusConfig(visibleStatus);
+            const pieceStatus = visibleStatus;
             const requiredQty = toNumber(piece.quantite);
             const producedQty = toNumber(piece.quantiteProduite);
+            const rubanQty = toNumber(piece.quantiteRuban);
+            const progressValue = requiredQty > 0 ? Math.round((producedQty / requiredQty) * 100) : 0;
             const machineChain = getMachineChain(piece);
             const pieceDocs = getPieceDocuments(piece.nom);
             const previewDoc = getPiecePreviewDoc(piece);
@@ -930,7 +972,7 @@ const ProductionPage: React.FC = () => {
                   overflow: 'hidden',
                   transition: 'all 0.2s',
                   borderColor: selectedPiece?._id === piece._id ? 'rgba(15,118,110,0.55)' : 'rgba(255,255,255,0.08)',
-                  boxShadow: selectedPiece?._id === piece._id ? '0 18px 40px -28px rgba(15,118,110,0.45)' : 'none',
+                  boxShadow: 'none',
                   background: selectedPiece?._id === piece._id ? 'rgba(255,255,255,0.05)' : card.background,
                 }}
                 onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(15,118,110,0.45)')}
@@ -950,7 +992,15 @@ const ProductionPage: React.FC = () => {
                     <img
                       src={resolvePublicPathUrl(previewDoc.publicPath)}
                       alt={piece.nom}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
+                        objectPosition: 'center',
+                        display: 'block',
+                        padding: 10,
+                        boxSizing: 'border-box',
+                      }}
                     />
                   ) : previewDoc && isPdfDoc(previewDoc) && previewDoc.publicPath ? (
                     <iframe
@@ -973,7 +1023,7 @@ const ProductionPage: React.FC = () => {
                   )}
                 </div>
                 <div style={{ padding: '12px 14px' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: selectedPiece?._id === piece._id ? '#0f172a' : 'white', marginBottom: 3 }}>{piece.nom}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--app-heading)', marginBottom: 3 }}>{piece.nom}</div>
                   <div style={{ fontSize: 11, color: '#475569', marginBottom: 10 }}>{piece.machine}</div>
                   <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
                     Machine actuelle: <span style={{ color: '#0f766e' }}>{piece.currentMachine || piece.machine}</span>
@@ -982,9 +1032,20 @@ const ProductionPage: React.FC = () => {
                     <div style={{ fontSize: 11, color: '#cbd5e1' }}>
                       Qté requise: <span style={{ color: '#ffffff', fontWeight: 700 }}>{requiredQty} pcs</span>
                     </div>
+                    <div style={{ fontSize: 11, color: '#cbd5e1' }}>
+                      Qté produite: <span style={{ color: '#ffffff', fontWeight: 700 }}>{producedQty} pcs</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                      Qté ruban: <span style={{ color: '#e2e8f0' }}>{rubanQty}</span>
+                    </div>
                     {piece.dimension && (
                       <div style={{ fontSize: 11, color: '#94a3b8' }}>
                         Dimension: <span style={{ color: '#e2e8f0' }}>{piece.dimension}</span>
+                      </div>
+                    )}
+                    {piece.ref && (
+                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                        Réf: <span style={{ color: '#e2e8f0' }}>{piece.ref}</span>
                       </div>
                     )}
                     {(piece.matiereType || piece.matiereReference) && (
@@ -1004,6 +1065,7 @@ const ProductionPage: React.FC = () => {
                     </span>
                     <span style={{ fontSize: 12, fontWeight: 700, color: '#0f766e' }}>{producedQty}/{requiredQty} pcs</span>
                   </div>
+                  <div style={{ marginTop: 4, fontSize: 10, color: '#64748b' }}>Progression: {progressValue}%</div>
                   {/* Progress bar */}
                   {requiredQty > 0 && (
                     <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
@@ -1020,16 +1082,10 @@ const ProductionPage: React.FC = () => {
                   )}
                   {!piece.matiere && (
                     <div style={{ marginTop: 8 }}>
-                      <div style={{ fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
                         <AlertTriangle size={11} /> Matière manquante
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); markMaterialAvailable(piece._id); }}
-                        style={{ width: '100%', border: 'none', borderRadius: 7, background: 'rgba(15,118,110,0.14)', color: '#0f766e', padding: '6px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
-                      >
-                        Confirmer réception matière
-                      </button>
+                      <div style={{ fontSize: 10, color: '#fca5a5' }}>L'employé mettra la matière à jour.</div>
                     </div>
                   )}
                   {piece.matiere && (
@@ -1062,7 +1118,7 @@ const ProductionPage: React.FC = () => {
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>{selectedPiece.nom}</div>
                     <div style={{ fontSize: 12, color: '#475569' }}>
-                      {selectedPiece.currentMachine || selectedPiece.machine} · {getPieceStatusConfig(selectedPiece.status).label}
+                      {selectedPiece.currentMachine || selectedPiece.machine} · {getPieceStatusConfig(getVisiblePieceStatus(selectedPiece)).label}
                     </div>
                   </div>
                 </div>
@@ -1098,7 +1154,16 @@ const ProductionPage: React.FC = () => {
                             <img
                               src={detailPreviewUrl}
                               alt={detailPreviewDoc.originalName || selectedPiece.nom}
-                              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', background: '#020617' }}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                objectPosition: 'center',
+                                display: 'block',
+                                background: '#020617',
+                                padding: 12,
+                                boxSizing: 'border-box',
+                              }}
                             />
                           ) : detailPreviewDoc && isPdfDoc(detailPreviewDoc) && detailPreviewUrl ? (
                             <iframe
@@ -1128,21 +1193,24 @@ const ProductionPage: React.FC = () => {
                       const currentMachine = selectedPiece.currentMachine || chain[0] || selectedPiece.machine || 'Non définie';
                       const currentIndex = Math.max(0, chain.findIndex((machine) => machine === currentMachine));
                       const safeIndex = chain.length > 0 ? currentIndex : 0;
-                      const nextMachine = chain[safeIndex + 1] || (normalizePieceStatus(selectedPiece.status) === 'Terminé' ? 'Terminée' : 'Aucune');
+                      const visibleStatus = getVisiblePieceStatus(selectedPiece);
+                      const nextMachine = chain[safeIndex + 1] || (visibleStatus === 'Terminé' ? 'Terminée' : 'Aucune');
 
                       const topRows = [
                         { label: 'Machine actuelle', value: currentMachine, icon: <Wrench size={13} /> },
                         { label: 'Position actuelle', value: chain.length > 0 ? `Étape ${safeIndex + 1} / ${chain.length}` : 'Étape 1 / 1', icon: <Clock size={13} /> },
                         { label: 'Machine suivante', value: nextMachine, icon: <TrendingUp size={13} /> },
-                        { label: 'Status', value: getPieceStatusConfig(selectedPiece.status).label, icon: <CheckCircle size={13} /> },
+                        { label: 'Status', value: getPieceStatusConfig(visibleStatus).label, icon: <CheckCircle size={13} /> },
                         { label: 'Ordre des machines', value: chain.length > 0 ? chain.join(' -> ') : selectedPiece.machine || 'Non renseigné', icon: <Wrench size={13} />, full: true },
                       ];
 
                       const detailRows = [
+                        { label: 'Référence', value: selectedPiece.ref || 'Non renseignée', icon: <Package size={13} /> },
                         { label: 'Première machine', value: selectedPiece.machine || 'Non renseignée', icon: <Wrench size={13} /> },
                         { label: 'Employé', value: selectedPiece.employe, icon: <User size={13} /> },
                         { label: 'Qté requise', value: `${toNumber(selectedPiece.quantite)} pcs`, icon: <Package size={13} /> },
                         { label: 'Qté produite', value: `${toNumber(selectedPiece.quantiteProduite)} pcs`, icon: <CheckCircle size={13} /> },
+                        { label: 'Qté ruban', value: `${toNumber(selectedPiece.quantiteRuban)}`, icon: <Package size={13} /> },
                         { label: 'Dimension', value: selectedPiece.dimension || 'Non renseignée', icon: <Package size={13} /> },
                         { label: 'Type matière', value: selectedPiece.matiereType || 'Non renseigné', icon: <Package size={13} /> },
                         { label: 'Référence matière', value: selectedPiece.matiereReference || 'Non renseignée', icon: <Package size={13} /> },
@@ -1178,8 +1246,8 @@ const ProductionPage: React.FC = () => {
                     <div style={{ background: 'rgba(30,41,59,0.42)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: '14px', marginBottom: 14 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: editingPieceInfo ? 12 : 0 }}>
                         <div>
-                          <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 800 }}>Détails matière et dimension</div>
-                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>Corriger les champs si la pièce a été ajoutée avant la sauvegarde complète.</div>
+                          <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 800 }}>Formulaire pièce</div>
+                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>Les champs manquants peuvent etre completes par l'employe. La quantite ruban se remplit seulement en production.</div>
                         </div>
                         <button
                           type="button"
@@ -1192,6 +1260,40 @@ const ProductionPage: React.FC = () => {
 
                       {editingPieceInfo && (
                         <div style={{ display: 'grid', gap: 12 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Référence</label>
+                              <input
+                                type="text"
+                                value={pieceInfoDraft.ref}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, ref: event.target.value }))}
+                                placeholder="ex: REF-001"
+                                style={inputStyle}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité requise</label>
+                              <input
+                                type="number"
+                                value={pieceInfoDraft.quantite}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, quantite: Number(event.target.value) }))}
+                                placeholder="0"
+                                style={inputStyle}
+                              />
+                            </div>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité produite</label>
+                              <input
+                                type="number"
+                                value={pieceInfoDraft.quantiteProduite}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, quantiteProduite: Number(event.target.value) }))}
+                                placeholder="0"
+                                style={inputStyle}
+                              />
+                            </div>
+                          </div>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
                             <div>
                               <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Largeur</label>
@@ -1268,18 +1370,11 @@ const ProductionPage: React.FC = () => {
                     {!selectedPiece.matiere && (
                       <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '12px 16px', marginBottom: 14 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#ef4444', fontSize: 13, fontWeight: 600 }}>
-                          <AlertTriangle size={15} /> Matière insuffisante — commande nécessaire
+                          <AlertTriangle size={15} /> Matière insuffisante — attente retour employé
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => markMaterialAvailable(selectedPiece._id)}
-                          style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(34,197,94,0.18)', color: '#bbf7d0', fontSize: 12, fontWeight: 700 }}
-                        >
-                          Matière reçue
-                        </button>
                       </div>
                     )}
-                    {getMachineChain(selectedPiece).length > 1 && normalizePieceStatus(selectedPiece.status) !== 'Terminé' && (
+                    {getMachineChain(selectedPiece).length > 1 && getVisiblePieceStatus(selectedPiece) !== 'Terminé' && (
                       <button
                         onClick={() => progresserPiece(selectedPiece._id)}
                         style={{ width: '100%', padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontSize: 13, fontWeight: 700, marginBottom: 10 }}
@@ -1369,7 +1464,11 @@ const ProductionPage: React.FC = () => {
               </div>
               <div style={{ flex: 1, minHeight: 0, background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {isImageDoc(previewDoc) && previewDoc.publicPath ? (
-                  <img src={resolvePublicPathUrl(previewDoc.publicPath)} alt={previewDoc.originalName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                  <img
+                    src={resolvePublicPathUrl(previewDoc.publicPath)}
+                    alt={previewDoc.originalName}
+                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block', margin: '0 auto' }}
+                  />
                 ) : isPdfDoc(previewDoc) && previewDoc.publicPath ? (
                   <iframe title={previewDoc.originalName} src={`${resolvePublicPathUrl(previewDoc.publicPath)}#toolbar=0&navpanes=0&scrollbar=0`} style={{ width: '100%', height: '100%', border: 'none' }} />
                 ) : (
@@ -1471,13 +1570,43 @@ const ProductionPage: React.FC = () => {
                 </datalist>
               </div>
 
-
-              <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité</label>
-                  <input type="number" placeholder="0"
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Référence</label>
+                  <input
+                    type="text"
+                    placeholder="ex: REF-001"
+                    value={newPiece.ref || ''}
+                    onChange={e => setNewPiece(p => ({ ...p, ref: e.target.value }))}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité requise</label>
+                  <input
+                    type="number"
+                    placeholder="0"
                     value={newPiece.quantite || ''}
                     onChange={e => setNewPiece(p => ({ ...p, quantite: Number(e.target.value) }))}
-                    style={inputStyle} />
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité produite</label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    value={newPiece.quantiteProduite || ''}
+                    onChange={e => setNewPiece(p => ({ ...p, quantiteProduite: Number(e.target.value) }))}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
+                  La quantite ruban sera saisie plus tard par l'employe dans sa session de production.
+                </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>
                 <div>
@@ -1575,6 +1704,9 @@ const ProductionPage: React.FC = () => {
                   </option>
                   {employes.map(e => <option key={e} value={e}>{e}</option>)}
                 </select>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.6 }}>
+                  Les champs matiere restent optionnels. L'employe peut completer la matiere et signaler si elle manque.
+                </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -1642,8 +1774,8 @@ const ProductionPage: React.FC = () => {
               </div>
 
               <button onClick={ajouterPiece}
-                disabled={!newPiece.employe}
-                style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: newPiece.employe ? 'pointer' : 'not-allowed', opacity: newPiece.employe ? 1 : 0.65, background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
+                disabled={!newPiece.nom || !newPiece.employe}
+                style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: newPiece.nom && newPiece.employe ? 'pointer' : 'not-allowed', opacity: newPiece.nom && newPiece.employe ? 1 : 0.65, background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
                 Ajouter la piece
               </button>
             </div>

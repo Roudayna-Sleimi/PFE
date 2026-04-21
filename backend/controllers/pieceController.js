@@ -57,7 +57,7 @@ const createPieceController = (deps) => {
   // Title: Handle patch piece endpoint.
   const patchPiece = async (req, res) => {
     try {
-      const piece = await service.patchPiece(req.params.id, req.body || {});
+      const piece = await service.patchPiece(req.params.id, req.body || {}, req.user || {});
       return res.json(piece);
     } catch (err) {
       return handleError(res, err);
