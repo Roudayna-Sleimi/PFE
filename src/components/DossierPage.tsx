@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, FileText, FileImage, FileCog, File, Grid2x2, List } from 'lucide-react';
+import { useTheme } from '../hooks/useTheme';
 
 const API = 'http://localhost:5000/api';
 
@@ -18,6 +19,19 @@ interface DossierDocument {
   publicPath?: string;
 }
 
+export interface DossierPieceContext {
+  clientLabel: string;
+  projectLabel: string;
+  pieceLabel: string;
+  docs: DossierDocument[];
+  sourceDoc?: DossierDocument | null;
+}
+
+interface DossierPageProps {
+  showAddPieceActions?: boolean;
+  onAddPieceFromDossier?: (context: DossierPieceContext) => void;
+}
+
 type WatcherStatus = {
   running: boolean;
   watchDir: string;
@@ -26,6 +40,8 @@ type WatcherStatus = {
   indexedCount?: number;
   message?: string;
 };
+
+type DossierViewMode = 'list' | 'icons';
 
 const readJsonMaybe = async (res: Response) => {
   const contentType = res.headers.get('content-type') || '';
@@ -86,6 +102,53 @@ const getFileBadge = (doc: DossierDocument) => {
   if (displayMimeByExt[ext]?.startsWith('image/') || mime.startsWith('image/')) return 'IMG';
   if (cadExtensions.has(ext)) return '3D';
   return (ext || 'FILE').slice(0, 4).toUpperCase();
+};
+
+const getFileVisualMeta = (doc: DossierDocument) => {
+  const ext = getFileExtension(doc.originalName);
+  const mime = String(doc.mimeType || '');
+
+  if (ext === 'pdf' || mime === 'application/pdf') {
+    return {
+      label: 'PDF',
+      kind: 'Document PDF',
+      color: '#dc2626',
+      bg: 'rgba(220,38,38,0.10)',
+      border: 'rgba(220,38,38,0.22)',
+      icon: FileText,
+    };
+  }
+
+  if (displayMimeByExt[ext]?.startsWith('image/') || mime.startsWith('image/')) {
+    return {
+      label: 'IMG',
+      kind: 'Image',
+      color: '#2563eb',
+      bg: 'rgba(37,99,235,0.10)',
+      border: 'rgba(37,99,235,0.20)',
+      icon: FileImage,
+    };
+  }
+
+  if (cadExtensions.has(ext)) {
+    return {
+      label: ext === 'sldprt' || ext === 'sldasm' || ext === 'slddrw' ? 'SLD' : 'CAD',
+      kind: 'Fichier CAO',
+      color: '#0f766e',
+      bg: 'rgba(15,118,110,0.10)',
+      border: 'rgba(15,118,110,0.20)',
+      icon: FileCog,
+    };
+  }
+
+  return {
+    label: (ext || 'FILE').slice(0, 4).toUpperCase(),
+    kind: 'Fichier',
+    color: '#475569',
+    bg: 'rgba(71,85,105,0.10)',
+    border: 'rgba(71,85,105,0.20)',
+    icon: File,
+  };
 };
 
 const canPreviewInBrowser = (doc: DossierDocument) => {
@@ -208,7 +271,8 @@ const expandedAria = (expanded: boolean): Pick<React.AriaAttributes, 'aria-expan
   'aria-expanded': expanded ? 'true' : 'false',
 });
 
-const DossierPage: React.FC = () => {
+const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, onAddPieceFromDossier }) => {
+  const { darkMode } = useTheme();
   const [documents, setDocuments] = useState<DossierDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -222,6 +286,7 @@ const DossierPage: React.FC = () => {
   const [clientOptions, setClientOptions] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [watcherStatus, setWatcherStatus] = useState<WatcherStatus | null>(null);
+  const [viewMode, setViewMode] = useState<DossierViewMode>('list');
 
   const token = localStorage.getItem('token') || '';
   const role = localStorage.getItem('role') || 'user';
@@ -230,23 +295,49 @@ const DossierPage: React.FC = () => {
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [expandedPieces, setExpandedPieces] = useState<Record<string, boolean>>({});
 
+  const theme = useMemo(() => ({
+    pageTitle: darkMode ? '#ffffff' : '#07111f',
+    bodyText: darkMode ? '#94a3b8' : '#526277',
+    strongText: darkMode ? '#cbd5e1' : '#102033',
+    cardBg: darkMode ? 'rgba(15,23,42,0.72)' : 'rgba(255,255,255,0.98)',
+    subCardBg: darkMode ? 'rgba(255,255,255,0.03)' : '#f8fbff',
+    nestedBg: darkMode ? 'rgba(15,23,42,0.40)' : '#f3f8fd',
+    softBg: darkMode ? 'rgba(255,255,255,0.02)' : '#ffffff',
+    border: darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(15, 35, 60, 0.10)',
+    borderSoft: darkMode ? 'rgba(255,255,255,0.06)' : 'rgba(15, 35, 60, 0.08)',
+    inputBg: darkMode ? 'rgba(15,23,42,0.82)' : '#ffffff',
+    inputText: darkMode ? '#ffffff' : '#0f172a',
+    label: darkMode ? '#94a3b8' : '#66788f',
+    buttonBg: darkMode ? 'rgba(255,255,255,0.04)' : '#f5f9fd',
+    buttonText: darkMode ? '#e2e8f0' : '#1d4ed8',
+    buttonBorder: darkMode ? 'rgba(255,255,255,0.10)' : 'rgba(59,130,246,0.18)',
+    blueShadow: darkMode ? '0 18px 40px -30px rgba(14,165,233,0.4)' : '0 18px 36px -30px rgba(37,99,235,0.24)',
+    badgeBg: darkMode ? 'rgba(56,189,248,0.10)' : 'rgba(37,99,235,0.09)',
+    badgeText: darkMode ? '#7dd3fc' : '#2563eb',
+    actionBg: darkMode ? 'rgba(56,189,248,0.10)' : 'rgba(37,99,235,0.10)',
+    actionText: darkMode ? '#7dd3fc' : '#1d4ed8',
+    actionBorder: darkMode ? 'rgba(56,189,248,0.24)' : 'rgba(37,99,235,0.20)',
+  }), [darkMode]);
+
   const cardStyle: React.CSSProperties = useMemo(() => ({
-    background: 'rgba(15,23,42,0.72)',
-    border: '1px solid rgba(255,255,255,0.08)',
+    background: theme.cardBg,
+    border: `1px solid ${theme.border}`,
     borderRadius: 16,
-  }), []);
+    boxShadow: theme.blueShadow,
+  }), [theme]);
 
   const inputStyle: React.CSSProperties = useMemo(() => ({
     width: '100%',
-    background: 'rgba(15,23,42,0.82)',
-    border: '1px solid rgba(255,255,255,0.08)',
+    background: theme.inputBg,
+    border: `1px solid ${theme.border}`,
     borderRadius: 10,
     padding: '11px 14px',
-    color: 'white',
+    color: theme.inputText,
     fontSize: 13,
     outline: 'none',
     boxSizing: 'border-box',
-  }), []);
+    boxShadow: darkMode ? 'none' : '0 8px 20px -24px rgba(37,99,235,0.25)',
+  }), [darkMode, theme]);
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -330,32 +421,60 @@ const DossierPage: React.FC = () => {
   };
 
   const openDocument = async (doc: DossierDocument) => {
-    const popup = window.open('about:blank', '_blank');
-    if (!popup) {
-      setError('Fenetre bloquee par le navigateur. Autorisez les popups pour ouvrir le fichier.');
-      return;
-    }
-    popup.opener = null;
-    popup.document.title = doc.originalName;
-    popup.document.body.style.margin = '0';
-    popup.document.body.style.minHeight = '100vh';
-    popup.document.body.style.display = 'grid';
-    popup.document.body.style.placeItems = 'center';
-    popup.document.body.style.background = '#0f172a';
-    popup.document.body.style.color = '#e2e8f0';
-    popup.document.body.style.fontFamily = 'Arial, sans-serif';
-    const loadingText = popup.document.createElement('p');
-    loadingText.textContent = `Ouverture de ${doc.originalName}...`;
-    popup.document.body.appendChild(loadingText);
+    let popup: Window | null = null;
 
     if (!canPreviewInBrowser(doc)) {
-      renderDocumentWindow(popup, doc, null);
+      try {
+        setError('');
+        setMessage('');
+        const res = await fetch(`${API}/dossiers/${doc._id}/download`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const data = await readJsonMaybe(res);
+          throw new Error(data.message || 'Ouverture impossible');
+        }
+
+        const rawBlob = await res.blob();
+        const mimeType = getDisplayMimeType(doc);
+        const blob = rawBlob.type === mimeType ? rawBlob : new Blob([rawBlob], { type: mimeType });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = doc.originalName || 'document';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Erreur ouverture fichier');
+      }
       return;
     }
 
     try {
       setError('');
       setMessage('');
+
+      popup = window.open('about:blank', '_blank');
+      const previewPopup = popup;
+      if (!previewPopup) {
+        setError('Fenetre bloquee par le navigateur. Autorisez les popups pour ouvrir le fichier.');
+        return;
+      }
+      previewPopup.opener = null;
+      previewPopup.document.title = doc.originalName;
+      previewPopup.document.body.style.margin = '0';
+      previewPopup.document.body.style.minHeight = '100vh';
+      previewPopup.document.body.style.display = 'grid';
+      previewPopup.document.body.style.placeItems = 'center';
+      previewPopup.document.body.style.background = '#0f172a';
+      previewPopup.document.body.style.color = '#e2e8f0';
+      previewPopup.document.body.style.fontFamily = 'Arial, sans-serif';
+      const loadingText = previewPopup.document.createElement('p');
+      loadingText.textContent = `Ouverture de ${doc.originalName}...`;
+      previewPopup.document.body.appendChild(loadingText);
 
       const res = await fetch(`${API}/dossiers/${doc._id}/download`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -369,10 +488,10 @@ const DossierPage: React.FC = () => {
       const mimeType = getDisplayMimeType(doc);
       const blob = rawBlob.type === mimeType ? rawBlob : new Blob([rawBlob], { type: mimeType });
       const url = window.URL.createObjectURL(blob);
-      renderDocumentWindow(popup, doc, url);
+      renderDocumentWindow(previewPopup, doc, url);
       window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
     } catch (e) {
-      popup.close();
+      popup?.close();
       setError(e instanceof Error ? e.message : 'Erreur ouverture fichier');
     }
   };
@@ -436,59 +555,13 @@ const DossierPage: React.FC = () => {
   const toggleProject = (key: string) => setExpandedProjects((p) => ({ ...p, [key]: !p[key] }));
   const togglePiece = (key: string) => setExpandedPieces((p) => ({ ...p, [key]: !p[key] }));
 
-  useEffect(() => {
-    if (tree.length === 0) return;
-
-    setExpandedClients((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      tree.forEach((clientNode) => {
-        if (next[clientNode.key] === undefined) {
-          next[clientNode.key] = true;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-
-    setExpandedProjects((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      tree.forEach((clientNode) => {
-        clientNode.projects.forEach((projectNode) => {
-          if (next[projectNode.key] === undefined) {
-            next[projectNode.key] = true;
-            changed = true;
-          }
-        });
-      });
-      return changed ? next : prev;
-    });
-
-    setExpandedPieces((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      tree.forEach((clientNode) => {
-        clientNode.projects.forEach((projectNode) => {
-          projectNode.pieces.forEach((pieceNode) => {
-            if (next[pieceNode.key] === undefined) {
-              next[pieceNode.key] = true;
-              changed = true;
-            }
-          });
-        });
-      });
-      return changed ? next : prev;
-    });
-  }, [tree]);
-
   return (
     <div style={{ flex: 1, padding: 24, overflowY: 'auto', minWidth: 0, width: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 18, flexWrap: 'wrap' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>Dossier</h2>
-          <p style={{ margin: '6px 0 0', fontSize: 13, color: '#64748b', maxWidth: 900 }}>
-            Synchronisation automatique côté serveur depuis <span style={{ color: '#cbd5e1', fontWeight: 700 }}>DOSSIER_WATCH_DIR</span>. Aucun upload manuel.
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: theme.pageTitle }}>Dossier</h2>
+          <p style={{ margin: '6px 0 0', fontSize: 13, color: theme.bodyText, maxWidth: 900 }}>
+            Synchronisation automatique côté serveur depuis <span style={{ color: theme.strongText, fontWeight: 700 }}>DOSSIER_WATCH_DIR</span>. Aucun upload manuel.
           </p>
         </div>
       </div>
@@ -507,7 +580,7 @@ const DossierPage: React.FC = () => {
             flexWrap: 'wrap',
           }}
         >
-          <div style={{ color: watcherStatus.running ? '#86efac' : '#fca5a5', fontSize: 12 }}>
+          <div style={{ color: watcherStatus.running ? (darkMode ? '#86efac' : '#15803d') : (darkMode ? '#fca5a5' : '#b91c1c'), fontSize: 12, fontWeight: 600 }}>
             {watcherStatus.running ? 'Watcher: ON' : 'Watcher: OFF'}
             {watcherStatus.watchDir ? ` | Dir: ${watcherStatus.watchDir}` : ''}
             {typeof watcherStatus.exists === 'boolean' ? ` | Exists: ${watcherStatus.exists ? 'yes' : 'no'}` : ''}
@@ -521,12 +594,13 @@ const DossierPage: React.FC = () => {
                 height: 36,
                 padding: '0 12px',
                 borderRadius: 10,
-                border: '1px solid rgba(255,255,255,0.10)',
-                background: 'rgba(255,255,255,0.04)',
-                color: '#e2e8f0',
+                border: `1px solid ${theme.buttonBorder}`,
+                background: theme.buttonBg,
+                color: theme.buttonText,
                 cursor: 'pointer',
                 fontWeight: 900,
                 fontSize: 12,
+                boxShadow: theme.blueShadow,
               }}
               title="Forcer un rescan du répertoire"
             >
@@ -538,7 +612,7 @@ const DossierPage: React.FC = () => {
       <div style={{ ...cardStyle, padding: 18, marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
           <div>
-            <label htmlFor="dossier-search" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Recherche</label>
+            <label htmlFor="dossier-search" style={{ display: 'block', fontSize: 12, color: theme.label, marginBottom: 6, fontWeight: 600 }}>Recherche</label>
             <input
               id="dossier-search"
               value={search}
@@ -551,7 +625,7 @@ const DossierPage: React.FC = () => {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginTop: 12 }}>
           <div>
-            <label htmlFor="dossier-project-filter" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Projet</label>
+            <label htmlFor="dossier-project-filter" style={{ display: 'block', fontSize: 12, color: theme.label, marginBottom: 6, fontWeight: 600 }}>Projet</label>
             <select id="dossier-project-filter" value={project} onChange={(e) => setProject(e.target.value)} style={inputStyle} title="Projet">
               <option value="">Tous les projets</option>
               {projectOptions.map((name) => (
@@ -560,7 +634,7 @@ const DossierPage: React.FC = () => {
             </select>
           </div>
           <div>
-            <label htmlFor="dossier-client-filter" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Client</label>
+            <label htmlFor="dossier-client-filter" style={{ display: 'block', fontSize: 12, color: theme.label, marginBottom: 6, fontWeight: 600 }}>Client</label>
             <select id="dossier-client-filter" value={client} onChange={(e) => setClient(e.target.value)} style={inputStyle} title="Client">
               <option value="">Tous les clients</option>
               {clientOptions.map((name) => (
@@ -569,7 +643,7 @@ const DossierPage: React.FC = () => {
             </select>
           </div>
           <div>
-            <label htmlFor="dossier-piece-filter" style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Pièce</label>
+            <label htmlFor="dossier-piece-filter" style={{ display: 'block', fontSize: 12, color: theme.label, marginBottom: 6, fontWeight: 600 }}>Pièce</label>
             <input
               id="dossier-piece-filter"
               value={piece}
@@ -581,6 +655,52 @@ const DossierPage: React.FC = () => {
         </div>
 
         <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8, marginRight: 10 }}>
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              style={{
+                height: 40,
+                padding: '0 12px',
+                borderRadius: 10,
+                border: `1px solid ${viewMode === 'list' ? theme.actionBorder : theme.buttonBorder}`,
+                background: viewMode === 'list' ? theme.actionBg : theme.buttonBg,
+                color: viewMode === 'list' ? theme.actionText : theme.buttonText,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontWeight: 800,
+                fontSize: 12,
+              }}
+              title="Affichage liste"
+            >
+              <List size={15} />
+              Liste
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('icons')}
+              style={{
+                height: 40,
+                padding: '0 12px',
+                borderRadius: 10,
+                border: `1px solid ${viewMode === 'icons' ? theme.actionBorder : theme.buttonBorder}`,
+                background: viewMode === 'icons' ? theme.actionBg : theme.buttonBg,
+                color: viewMode === 'icons' ? theme.actionText : theme.buttonText,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontWeight: 800,
+                fontSize: 12,
+              }}
+              title="Affichage grandes icônes"
+            >
+              <Grid2x2 size={15} />
+              Grandes icônes
+            </button>
+          </div>
           <button
             onClick={() => {
               setSearch('');
@@ -592,12 +712,13 @@ const DossierPage: React.FC = () => {
               height: 40,
               padding: '0 14px',
               borderRadius: 10,
-              border: '1px solid rgba(255,255,255,0.10)',
-              background: 'rgba(255,255,255,0.04)',
-              color: '#e2e8f0',
+              border: `1px solid ${theme.buttonBorder}`,
+              background: theme.buttonBg,
+              color: theme.buttonText,
               cursor: 'pointer',
               fontWeight: 800,
               fontSize: 12,
+              boxShadow: theme.blueShadow,
             }}
             title="Réinitialiser"
           >
@@ -620,21 +741,21 @@ const DossierPage: React.FC = () => {
 
       <div style={{ ...cardStyle, padding: 14 }}>
         {loading ? (
-          <div style={{ padding: '28px 6px', color: '#64748b' }}>Chargement...</div>
+          <div style={{ padding: '28px 6px', color: theme.bodyText }}>Chargement...</div>
         ) : tree.length === 0 ? (
-          <div style={{ padding: '28px 6px', color: '#64748b' }}>Aucun document.</div>
+          <div style={{ padding: '28px 6px', color: theme.bodyText }}>Aucun document.</div>
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {tree.map((c) => (
-              <div key={c.key} style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, overflow: 'hidden' }}>
+              <div key={c.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 14, overflow: 'hidden', background: theme.softBg }}>
                 <button
                   onClick={() => toggleClient(c.key)}
                   style={{
                     width: '100%',
                     textAlign: 'left',
-                    background: 'rgba(255,255,255,0.03)',
+                    background: theme.subCardBg,
                     border: 'none',
-                    color: 'white',
+                    color: theme.pageTitle,
                     cursor: 'pointer',
                     padding: '12px 14px',
                     display: 'flex',
@@ -647,24 +768,24 @@ const DossierPage: React.FC = () => {
                   {...expandedAria(Boolean(expandedClients[c.key]))}
                 >
                   <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                    {expandedClients[c.key] ? <ChevronDown size={16} color="#94a3b8" /> : <ChevronRight size={16} color="#94a3b8" />}
+                    {expandedClients[c.key] ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</span>
                   </span>
-                  <span style={{ color: '#94a3b8', fontSize: 12, fontWeight: 800 }}>{c.count} fichier(s)</span>
+                  <span style={{ color: theme.label, fontSize: 12, fontWeight: 800 }}>{c.count} fichier(s)</span>
                 </button>
 
                 {expandedClients[c.key] && (
                   <div style={{ padding: 12, display: 'grid', gap: 10 }}>
                     {c.projects.map((p) => (
-                      <div key={p.key} style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, overflow: 'hidden', marginLeft: 12 }}>
+                      <div key={p.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 12, overflow: 'hidden', marginLeft: 12, background: theme.softBg }}>
                         <button
                           onClick={() => toggleProject(p.key)}
                           style={{
                             width: '100%',
                             textAlign: 'left',
-                            background: 'rgba(15,23,42,0.40)',
+                            background: theme.nestedBg,
                             border: 'none',
-                            color: '#e2e8f0',
+                            color: theme.strongText,
                             cursor: 'pointer',
                             padding: '10px 12px',
                             display: 'flex',
@@ -677,48 +798,206 @@ const DossierPage: React.FC = () => {
                           {...expandedAria(Boolean(expandedProjects[p.key]))}
                         >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                            {expandedProjects[p.key] ? <ChevronDown size={16} color="#94a3b8" /> : <ChevronRight size={16} color="#94a3b8" />}
+                            {expandedProjects[p.key] ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.label}</span>
                           </span>
-                          <span style={{ color: '#94a3b8', fontSize: 12, fontWeight: 800 }}>{p.count}</span>
+                          <span style={{ color: theme.label, fontSize: 12, fontWeight: 800 }}>{p.count}</span>
                         </button>
 
                         {expandedProjects[p.key] && (
                           <div style={{ padding: 10, display: 'grid', gap: 10 }}>
                             {p.pieces.map((pi) => (
-                              <div key={pi.key} style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, overflow: 'hidden', marginLeft: 12 }}>
-                                <button
-                                  onClick={() => togglePiece(pi.key)}
+                              <div key={pi.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 12, overflow: 'hidden', marginLeft: 12, background: theme.softBg }}>
+                                <div
                                   style={{
                                     width: '100%',
-                                    textAlign: 'left',
-                                    background: 'rgba(255,255,255,0.02)',
-                                    border: 'none',
-                                    color: '#cbd5e1',
-                                    cursor: 'pointer',
+                                    background: theme.softBg,
+                                    color: theme.strongText,
                                     padding: '10px 12px',
                                     display: 'flex',
                                     justifyContent: 'space-between',
                                     alignItems: 'center',
                                     gap: 12,
-                                    fontWeight: 800,
                                   }}
-                                  title="Afficher/masquer"
-                                  {...expandedAria(Boolean(expandedPieces[pi.key]))}
                                 >
-                                  <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                    {expandedPieces[pi.key] ? <ChevronDown size={16} color="#94a3b8" /> : <ChevronRight size={16} color="#94a3b8" />}
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pi.label}</span>
-                                  </span>
-                                  <span style={{ color: '#94a3b8', fontSize: 12, fontWeight: 800 }}>{pi.docs.length}</span>
-                                </button>
+                                  <button
+                                    onClick={() => togglePiece(pi.key)}
+                                    style={{
+                                      flex: 1,
+                                      minWidth: 0,
+                                      textAlign: 'left',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      color: theme.strongText,
+                                      cursor: 'pointer',
+                                      padding: 0,
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      gap: 12,
+                                      fontWeight: 800,
+                                    }}
+                                    title="Afficher/masquer"
+                                    {...expandedAria(Boolean(expandedPieces[pi.key]))}
+                                  >
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                      {expandedPieces[pi.key] ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
+                                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pi.label}</span>
+                                    </span>
+                                    <span style={{ color: theme.label, fontSize: 12, fontWeight: 800 }}>{pi.docs.length}</span>
+                                  </button>
+                                  {showAddPieceActions && onAddPieceFromDossier && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onAddPieceFromDossier({
+                                        clientLabel: c.label,
+                                        projectLabel: p.label,
+                                        pieceLabel: pi.label,
+                                        docs: pi.docs,
+                                        sourceDoc: pi.docs[0] || null,
+                                      })}
+                                      style={{
+                                        flexShrink: 0,
+                                        padding: '8px 12px',
+                                        borderRadius: 10,
+                                        border: `1px solid ${theme.actionBorder}`,
+                                        background: theme.actionBg,
+                                        color: theme.actionText,
+                                        cursor: 'pointer',
+                                        fontSize: 12,
+                                        fontWeight: 800,
+                                        boxShadow: theme.blueShadow,
+                                      }}
+                                      title={`Ajouter une piece pour ${pi.label}`}
+                                    >
+                                      Ajouter piece
+                                    </button>
+                                  )}
+                                </div>
 
                                 {expandedPieces[pi.key] && (
-                                  <div style={{ padding: 10, display: 'grid', gap: 8 }}>
+                                  <div
+                                    style={{
+                                      padding: 10,
+                                      display: 'grid',
+                                      gap: 12,
+                                      gridTemplateColumns: viewMode === 'icons'
+                                        ? 'repeat(auto-fill, minmax(220px, 1fr))'
+                                        : '1fr',
+                                      alignItems: 'stretch',
+                                    }}
+                                  >
                                     {pi.docs.map((doc) => {
                                       const badge = getFileBadge(doc);
+                                      const visual = getFileVisualMeta(doc);
+                                      const VisualIcon = visual.icon;
 
-                                      return (
+                                      return viewMode === 'icons' ? (
+                                        <div
+                                          key={doc._id}
+                                          onDoubleClick={() => openDocument(doc)}
+                                          style={{
+                                            borderRadius: 16,
+                                            border: `1px solid ${theme.borderSoft}`,
+                                            background: theme.softBg,
+                                            padding: 16,
+                                            display: 'grid',
+                                            gap: 14,
+                                            cursor: 'pointer',
+                                            textAlign: 'center',
+                                            justifyItems: 'center',
+                                          }}
+                                          title="Double clic pour ouvrir"
+                                        >
+                                          <div
+                                            style={{
+                                              minHeight: 128,
+                                              borderRadius: 14,
+                                              display: 'grid',
+                                              placeItems: 'center',
+                                              background: visual.bg,
+                                              border: `1px solid ${visual.border}`,
+                                            }}
+                                          >
+                                            <div style={{ display: 'grid', justifyItems: 'center', gap: 10 }}>
+                                              <div style={{ width: 72, height: 72, borderRadius: 22, background: '#ffffff', display: 'grid', placeItems: 'center', boxShadow: '0 14px 32px -24px rgba(15,23,42,0.35)' }}>
+                                                <VisualIcon size={34} color={visual.color} />
+                                              </div>
+                                              <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.5, color: visual.color }}>{visual.label}</div>
+                                              <div style={{ fontSize: 12, color: theme.bodyText }}>{visual.kind}</div>
+                                            </div>
+                                          </div>
+
+                                          <div style={{ width: '100%', display: 'grid', gap: 6, justifyItems: 'center' }}>
+                                            <div style={{ color: theme.pageTitle, fontWeight: 800, fontSize: 13, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                              {doc.originalName}
+                                            </div>
+                                            <div style={{ color: theme.bodyText, fontSize: 12 }}>
+                                              {formatSize(doc.size)} | {formatDate(doc.storageDate)}
+                                            </div>
+                                          </div>
+
+                                          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', width: '100%' }}>
+                                            {showAddPieceActions && onAddPieceFromDossier && (
+                                              <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  onAddPieceFromDossier({
+                                                    clientLabel: c.label,
+                                                    projectLabel: p.label,
+                                                    pieceLabel: pi.label,
+                                                    docs: pi.docs,
+                                                    sourceDoc: doc,
+                                                  });
+                                                }}
+                                                style={{
+                                                  height: 36,
+                                                  padding: '0 12px',
+                                                  borderRadius: 10,
+                                                  border: `1px solid ${theme.buttonBorder}`,
+                                                  background: theme.buttonBg,
+                                                  color: theme.buttonText,
+                                                  cursor: 'pointer',
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'center',
+                                                  gap: 6,
+                                                  fontWeight: 800,
+                                                  fontSize: 12,
+                                                }}
+                                              >
+                                                Ajouter
+                                              </button>
+                                            )}
+                                            <button
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                openDocument(doc);
+                                              }}
+                                              style={{
+                                                height: 36,
+                                                padding: '0 12px',
+                                                borderRadius: 10,
+                                                border: `1px solid ${theme.actionBorder}`,
+                                                background: theme.actionBg,
+                                                color: theme.actionText,
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: 6,
+                                                fontWeight: 900,
+                                                fontSize: 12,
+                                                boxShadow: theme.blueShadow,
+                                              }}
+                                            >
+                                              <ExternalLink size={15} />
+                                              Ouvrir
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
                                         <div
                                           key={doc._id}
                                           style={{
@@ -728,14 +1007,14 @@ const DossierPage: React.FC = () => {
                                             alignItems: 'center',
                                             padding: '10px 10px',
                                             borderRadius: 12,
-                                            border: '1px solid rgba(255,255,255,0.06)',
-                                            background: 'rgba(255,255,255,0.02)',
+                                            border: `1px solid ${theme.borderSoft}`,
+                                            background: theme.softBg,
                                           }}
                                         >
                                         <div style={{ minWidth: 0 }}>
                                           <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
-                                            <div style={{ width: 34, height: 34, borderRadius: 12, background: 'rgba(56,189,248,0.10)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                              <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.6, color: '#7dd3fc' }}>{badge}</span>
+                                            <div style={{ width: 34, height: 34, borderRadius: 12, background: visual.bg, border: `1px solid ${visual.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                              <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.6, color: visual.color }}>{badge}</span>
                                             </div>
                                             <div style={{ minWidth: 0 }}>
                                               <div
@@ -748,13 +1027,13 @@ const DossierPage: React.FC = () => {
                                                 }}
                                                 role="button"
                                                 tabIndex={0}
-                                                style={{ color: 'white', fontWeight: 800, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                                                style={{ color: theme.pageTitle, fontWeight: 800, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
                                                 title="Double clic pour ouvrir"
                                                 aria-label={`Ouvrir ${doc.originalName}`}
                                               >
                                                 {doc.originalName}
                                               </div>
-                                              <div style={{ color: '#64748b', fontSize: 12, marginTop: 3 }}>
+                                              <div style={{ color: theme.bodyText, fontSize: 12, marginTop: 3 }}>
                                                 {formatSize(doc.size)} | {formatDate(doc.storageDate)}
                                               </div>
                                             </div>
@@ -762,28 +1041,60 @@ const DossierPage: React.FC = () => {
                                         </div>
 
                                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
-                                          <button
-                                            onClick={() => openDocument(doc)}
-                                            style={{
-                                              height: 34,
-                                              padding: '0 12px',
-                                              borderRadius: 10,
-                                              border: '1px solid rgba(56,189,248,0.24)',
-                                              background: 'rgba(56,189,248,0.10)',
-                                              color: '#7dd3fc',
-                                              cursor: 'pointer',
-                                              display: 'inline-flex',
-                                              alignItems: 'center',
-                                              gap: 6,
-                                              fontWeight: 900,
-                                              fontSize: 12,
-                                            }}
-                                            title="Ouvrir dans une autre fenetre"
-                                            aria-label={`Ouvrir ${doc.originalName}`}
-                                          >
-                                            <ExternalLink size={15} />
-                                            Ouvrir
-                                          </button>
+                                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                            {showAddPieceActions && onAddPieceFromDossier && (
+                                              <button
+                                                type="button"
+                                                onClick={() => onAddPieceFromDossier({
+                                                  clientLabel: c.label,
+                                                  projectLabel: p.label,
+                                                  pieceLabel: pi.label,
+                                                  docs: pi.docs,
+                                                  sourceDoc: doc,
+                                                })}
+                                                style={{
+                                                  height: 34,
+                                                  padding: '0 12px',
+                                                  borderRadius: 10,
+                                                  border: `1px solid ${theme.buttonBorder}`,
+                                                  background: theme.buttonBg,
+                                                  color: theme.buttonText,
+                                                  cursor: 'pointer',
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: 6,
+                                                  fontWeight: 800,
+                                                  fontSize: 12,
+                                                }}
+                                                title={`Ajouter une piece depuis ${doc.originalName}`}
+                                              >
+                                                Ajouter
+                                              </button>
+                                            )}
+                                            <button
+                                              onClick={() => openDocument(doc)}
+                                              style={{
+                                                height: 34,
+                                                padding: '0 12px',
+                                                borderRadius: 10,
+                                                border: `1px solid ${theme.actionBorder}`,
+                                                background: theme.actionBg,
+                                                color: theme.actionText,
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: 6,
+                                                fontWeight: 900,
+                                                fontSize: 12,
+                                                boxShadow: theme.blueShadow,
+                                              }}
+                                              title="Ouvrir dans une autre fenetre"
+                                              aria-label={`Ouvrir ${doc.originalName}`}
+                                            >
+                                              <ExternalLink size={15} />
+                                              Ouvrir
+                                            </button>
+                                          </div>
                                         </div>
                                       </div>
                                       );

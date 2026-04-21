@@ -400,7 +400,7 @@ const MachinesPage: React.FC = () => {
             <button
               onClick={openAddMachineModal}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
-              style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)' }}
+              style={{ background: 'linear-gradient(135deg,#0f766e,#0891b2)' }}
             >
               <Plus size={14} /> Ajouter une machine
             </button>
@@ -488,12 +488,12 @@ const MachinesPage: React.FC = () => {
                   ? [
                       { label: 'Pression', value: `${(machine.pression ?? 0).toFixed(1)} bar`, color: '#06b6d4' },
                       { label: 'Courant', value: `${machine.courant.toFixed(1)}A`, color: '#3b82f6' },
-                      { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#a855f7' },
+                      { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#475569' },
                     ]
                   : [
                       { label: 'Production', value: machine.hasProductionData ? `${formatMachineNumber(machine.production)} pièces` : pendingMetric, color: '#3b82f6' },
                       { label: 'Efficacité', value: machine.hasEfficiencyData ? `${formatMachineNumber(machine.efficacite, 1)}%` : pendingMetric, color: '#00d4ff' },
-                      { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#a855f7' },
+                      { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#475569' },
                     ]
                 ).map((stat) => (
                   <div
@@ -523,7 +523,7 @@ const MachinesPage: React.FC = () => {
                       <Zap size={11} color="#3b82f6" /> {machine.courant.toFixed(1)}A
                     </span>
                     <span className="flex items-center gap-1 text-[11px] text-slate-400">
-                      <Activity size={11} color="#a855f7" /> {machine.vibration.toFixed(2)} mm/s
+                      <Activity size={11} color="#475569" /> {machine.vibration.toFixed(2)} mm/s
                     </span>
                   </>
                 ) : null}
@@ -634,7 +634,7 @@ const MachinesPage: React.FC = () => {
                 onClick={handleSaveMachine}
                 disabled={savingMachine || !machineForm.name.trim()}
                 className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer disabled:opacity-50 border-none"
-                style={{ background: 'linear-gradient(135deg,#7c3aed,#a855f7)', color: 'white' }}
+                style={{ background: 'linear-gradient(135deg,#0f766e,#0891b2)', color: 'white' }}
               >
                 {savingMachine ? 'Enregistrement...' : editingMachine ? 'Modifier' : 'Ajouter'}
               </button>

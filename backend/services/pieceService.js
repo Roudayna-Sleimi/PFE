@@ -104,7 +104,7 @@ const createPieceService = (deps) => {
       employe: employe || '',
       quantite: Number(quantite) || 0,
       prix: Number(prix) || 0,
-      status: status || 'En cours',
+      status: status || 'Arrêté',
       matiere: typeof matiere === 'boolean' ? matiere : matiere !== 'false',
       dimension: dimension || '',
       matiereType: matiereType || '',

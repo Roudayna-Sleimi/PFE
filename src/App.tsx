@@ -4,8 +4,10 @@ import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
 import EmployePage from "./components/EmployePage";
 import ProductionPage from "./components/ProductionPage";
+import { useTheme } from "./hooks/useTheme";
 
 function App() {
+  useTheme();
   const [isLoggedIn, setIsLoggedIn] = useState(Boolean(localStorage.getItem('token')));
 
   return (

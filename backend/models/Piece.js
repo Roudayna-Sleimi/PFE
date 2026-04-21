@@ -27,7 +27,11 @@ const pieceSchema = new mongoose.Schema({
   quantite: { type: Number, default: 0 },
   quantiteProduite: { type: Number, default: 0 },
   prix: { type: Number, default: 0 },
-  status: { type: String, enum: ['Terminé', 'Termine', 'En cours', 'Contrôle', 'Controle', 'TerminÃ©', 'ContrÃ´le'], default: 'En cours' },
+  status: {
+    type: String,
+    enum: ['Arrêté', 'Arrete', 'Terminé', 'Termine', 'En cours', 'Contrôle', 'Controle', 'TerminÃ©', 'ContrÃ´le', 'TerminÃƒÂ©', 'ContrÃƒÂ´le'],
+    default: 'Arrêté',
+  },
   matiere: { type: Boolean, default: true },
   dimension: { type: String, default: '' },
   matiereType: { type: String, default: '' },

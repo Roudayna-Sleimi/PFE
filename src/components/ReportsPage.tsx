@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BarChart2, Clock, Package, Zap, Users, AlertTriangle } from 'lucide-react';
+import { BarChart2, Clock, Package, Zap, Users, AlertTriangle, Search } from 'lucide-react';
 
 interface ReportRowMachine {
   machine: string;
@@ -37,11 +37,9 @@ interface ReportsOverview {
   reportByEmployee: ReportRowEmployee[];
   logs: ReportLog[];
 }
-
 interface Props {
   darkMode?: boolean;
 }
-
 const normalizeReportsOverview = (payload: Partial<ReportsOverview> | null | undefined): ReportsOverview => ({
   piecesTraitees: Number(payload?.piecesTraitees || 0),
   pauses: Number(payload?.pauses || 0),
@@ -67,6 +65,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
   const [data, setData] = useState<ReportsOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
 
   const role = localStorage.getItem('role');
   const token = localStorage.getItem('token') || '';
@@ -111,11 +110,30 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
   }), [darkMode]);
 
   const summary = data ? [
-    { label: 'Consommation énergie', value: `${data.totalEnergyKwh.toLocaleString('fr-FR')} kWh`, icon: <Zap size={18} color="#f59e0b" /> },
+    { label: 'Consommation énergie', value: `${data.totalEnergyKwh.toLocaleString('fr-FR')} kWh`, icon: <Zap size={18} color="#475569" /> },
     { label: 'Pièces produites', value: `${data.totalPiecesProduced.toLocaleString('fr-FR')} pcs`, icon: <Package size={18} color="#3b82f6" /> },
     { label: "Temps d'usinage", value: fmtDuration(data.totalMachiningSeconds), icon: <Clock size={18} color="#22c55e" /> },
     { label: 'Anomalies', value: `${data.anomalies}`, icon: <AlertTriangle size={18} color="#ef4444" /> },
   ] : [];
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!data || !q) {
+      return {
+        machines: data?.reportByMachine || [],
+        employees: data?.reportByEmployee || [],
+        logs: data?.logs || [],
+      };
+    }
+
+    return {
+      machines: data.reportByMachine.filter(row => row.machine.toLowerCase().includes(q)),
+      employees: data.reportByEmployee.filter(row => [row.username, row.assignedMachine]
+        .some(value => String(value || '').toLowerCase().includes(q))),
+      logs: data.logs.filter(log => [log.machine, log.username, log.action, log.pieceName]
+        .some(value => String(value || '').toLowerCase().includes(q))),
+    };
+  }, [data, search]);
 
   return (
     <div className={`flex-1 p-6 overflow-y-auto ${theme.page}`}>
@@ -131,6 +149,15 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
             Énergie estimée selon temps machine
           </div>
         )}
+        <div className={`flex h-10 min-w-[300px] items-center gap-2 rounded-lg border px-3 ${theme.card}`}>
+          <Search size={15} className={theme.muted} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Rechercher machine, employé, action..."
+            className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+          />
+        </div>
       </div>
 
       {loading && (
@@ -164,7 +191,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
                 <h3 className="text-base font-bold">Rapport par machine</h3>
               </div>
 
-              {data.reportByMachine.length === 0 ? (
+              {filtered.machines.length === 0 ? (
                 <div className={`text-sm ${theme.muted}`}>Aucune donnée machine.</div>
               ) : (
                 <div className="overflow-hidden rounded-lg border border-white/[0.06]">
@@ -174,7 +201,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
                     <span>Usinage</span>
                     <span>Énergie</span>
                   </div>
-                  {data.reportByMachine.map((row) => (
+                  {filtered.machines.map((row) => (
                     <div key={row.machine} className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 px-4 py-3 text-sm border-t ${theme.rowBorder}`}>
                       <span className="font-semibold">{row.machine}</span>
                       <span>{row.piecesProduced}</span>
@@ -192,7 +219,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
                 <h3 className="text-base font-bold">Rapport par employé</h3>
               </div>
 
-              {data.reportByEmployee.length === 0 ? (
+              {filtered.employees.length === 0 ? (
                 <div className={`text-sm ${theme.muted}`}>Aucune donnée employé.</div>
               ) : (
                 <div className="overflow-hidden rounded-lg border border-white/[0.06]">
@@ -202,7 +229,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
                     <span>Usinage</span>
                     <span>Énergie</span>
                   </div>
-                  {data.reportByEmployee.map((row) => (
+                  {filtered.employees.map((row) => (
                     <div key={row.username} className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 px-4 py-3 text-sm border-t ${theme.rowBorder}`}>
                       <div>
                         <div className="font-semibold">{row.username}</div>
@@ -225,11 +252,11 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
                 <p className={`text-xs ${theme.muted}`}>Dernières opérations machine et production.</p>
               </div>
               <div className={`text-xs ${theme.subtle}`}>
-                {data.logs.length} ligne(s)
+                {filtered.logs.length} ligne(s)
               </div>
             </div>
 
-            {data.logs.length === 0 ? (
+            {filtered.logs.length === 0 ? (
               <div className={`text-sm ${theme.muted}`}>Aucun log disponible.</div>
             ) : (
               <div className="overflow-hidden rounded-lg border border-white/[0.06]">
@@ -240,7 +267,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
                   <span>Pièces</span>
                   <span>Date</span>
                 </div>
-                {data.logs.slice(0, 12).map((log, index) => (
+                {filtered.logs.slice(0, 12).map((log, index) => (
                   <div key={`${log.machine}-${log.at}-${index}`} className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 px-4 py-3 text-sm border-t ${theme.rowBorder}`}>
                     <span>{log.machine}</span>
                     <span>{log.username}</span>

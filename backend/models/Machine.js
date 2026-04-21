@@ -31,7 +31,7 @@ const machineSchema = new mongoose.Schema({
   machId: { type: String, default: null },
   problems: {
     type: [{
-      severity: { type: String, enum: ['critical', 'warning'], default: 'warning' },
+      severity: { type: String, enum: ['critique', 'avertissement'], default: 'avertissement' },
       title: { type: String, default: '' },
       desc: { type: String, default: '' },
       time: { type: String, default: '' },

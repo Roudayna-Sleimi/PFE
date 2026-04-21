@@ -169,7 +169,7 @@ const DemandesPage: React.FC = () => {
       </span>
     );
     return (
-      <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-yellow-500/10 border border-yellow-500/30 text-yellow-400">
+      <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-500/10 border border-slate-500/25 text-slate-500">
         <Clock size={11} /> En attente
       </span>
     );
@@ -188,7 +188,7 @@ const DemandesPage: React.FC = () => {
           <p className="text-slate-400 text-xs mt-0.5">Gérez les demandes d'accès des employés</p>
         </div>
         <div className="ml-auto flex gap-3">
-          <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold">
+          <div className="px-3 py-2 rounded-lg bg-slate-500/10 border border-slate-500/20 text-slate-600 text-xs font-semibold">
             {enAttente.length} en attente
           </div>
           <div className="px-3 py-2 rounded-lg bg-slate-800/50 border border-white/[0.08] text-slate-400 text-xs font-semibold">
@@ -207,7 +207,7 @@ const DemandesPage: React.FC = () => {
       {/* En attente */}
       {enAttente.length > 0 && (
         <div className="mb-8">
-          <h2 className="text-sm font-semibold text-yellow-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
             <Clock size={14} /> En attente ({enAttente.length})
           </h2>
           <div className="flex flex-col gap-3">

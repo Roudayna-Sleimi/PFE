@@ -78,10 +78,29 @@ const getMachineStatusStyle = (s: Machine['status']) => {
 
 const santeColor = (v: number) => v >= 70 ? '#22c55e' : v >= 40 ? '#f97316' : '#ef4444';
 
+const fallbackPieceStatusConfig = {
+  color: '#2563eb',
+  bg: 'rgba(37,99,235,0.12)',
+  label: 'En cours',
+};
+
 const statusPieceConfig = {
   'Terminé':  { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  label: 'Termine' },
   'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', label: 'En cours' },
   'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', label: 'Controle' },
+};
+
+const resolvePieceStatusConfig = (status: unknown) => {
+  const normalized = String(status || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z]/g, '');
+
+  if (normalized.includes('termin')) return statusPieceConfig['Terminé'] || fallbackPieceStatusConfig;
+  if (normalized.includes('control') || normalized.includes('contr')) return statusPieceConfig['Contrôle'] || fallbackPieceStatusConfig;
+  if (normalized.includes('encours')) return statusPieceConfig['En cours'] || fallbackPieceStatusConfig;
+  return fallbackPieceStatusConfig;
 };
 
 interface LiveData { vibration: number; courant: number; rpm: number; pression: number; isLive: boolean; }
@@ -391,7 +410,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
           ) : (
             <div className="grid grid-cols-2 gap-4">
               {pieces.map(piece => {
-                const sc = statusPieceConfig[piece.status];
+                const sc = resolvePieceStatusConfig(piece.status);
                 return (
                   <div key={piece._id}
                     className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-4 hover:border-[rgba(0,212,255,0.2)] transition-all">

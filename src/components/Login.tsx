@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BadgeCheck, BarChart3, Building2, Eye, EyeOff, FileText, KeyRound, Mail, Moon, Phone, ShieldCheck, Sun, User } from "lucide-react";
+import { useTheme } from "../hooks/useTheme";
 
 interface LoginProps {
   onLogin: () => void;
@@ -10,12 +11,12 @@ type View = "login" | "demande" | "success";
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const navigate = useNavigate();
+  const { darkMode, toggleTheme: toggleDarkMode } = useTheme();
 
   const [view, setView] = useState<View>("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("loginMode") === "dark");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -84,14 +85,6 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     { label: "Supervision", value: "Temps, production et anomalies", icon: BarChart3 },
     { label: "Acces", value: "Parcours admin et employe", icon: ShieldCheck },
   ];
-
-  const toggleDarkMode = () => {
-    setDarkMode((current) => {
-      const next = !current;
-      localStorage.setItem("loginMode", next ? "dark" : "light");
-      return next;
-    });
-  };
 
   const theme = darkMode ? {
     root: "bg-[#07111f] text-slate-100",

@@ -1,6 +1,7 @@
 ﻿import React, { useMemo, useState, useEffect } from 'react';
-import { Package, Plus, X, AlertTriangle, CheckCircle, Clock, User, Wrench, TrendingUp } from 'lucide-react';
+import { Package, X, AlertTriangle, CheckCircle, Clock, User, Wrench, TrendingUp, Search } from 'lucide-react';
 import DossierPage from './DossierPage';
+import type { DossierPieceContext } from './DossierPage';
 import { io } from 'socket.io-client';
 
 const APP_BASE = 'http://localhost:5000';
@@ -25,7 +26,7 @@ interface Piece {
   quantite: number;
   quantiteProduite?: number;
   prix: number;
-  status: 'Terminé' | 'En cours' | 'Contrôle';
+  status: 'Arrêté' | 'En cours' | 'Terminé' | 'Contrôle';
   matiere: boolean;
   dimension?: string;
   matiereType?: string;
@@ -36,6 +37,14 @@ interface Piece {
   planName?: string;
   planMimeType?: string;
 }
+
+interface DimensionFields {
+  largeur: string;
+  longueur: string;
+  hauteur: string;
+}
+
+interface PieceFormState extends Partial<Piece>, DimensionFields {}
 
 interface MachineApi {
   id: string;
@@ -56,9 +65,10 @@ interface DossierDocument {
 }
 
 const statusConfig = {
+  'Arrêté': { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.24)', label: 'Arrêté' },
   'Terminé': { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: 'Termine' },
   'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: 'En cours' },
-  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: 'Controle' },
+  'Contrôle': { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.24)', label: 'Arrêté' },
 };
 
 const materialOptions: Record<string, string[]> = {
@@ -76,7 +86,7 @@ const PieceIcon = ({ nom }: { nom: string }) => {
     'connecteur': 'CON', 'axe': 'AXE',
   };
   const key = Object.keys(icons).find(k => String(nom || '').toLowerCase().includes(k));
-  return <span style={{ fontSize: 24, letterSpacing: 0 }}>{key ? icons[key] : 'PCE'}</span>;
+  return <span style={{ fontSize: 24, letterSpacing: 0, color: '#0f766e', fontWeight: 800 }}>{key ? icons[key] : 'PCE'}</span>;
 };
 
 const normalizeKey = (value: string) => String(value || '').trim().toLowerCase();
@@ -112,6 +122,17 @@ const getDisplayMimeType = (doc: DossierDocument) => {
   if (displayMimeByExt[ext]) return displayMimeByExt[ext];
   if (doc.mimeType && doc.mimeType !== 'application/octet-stream') return doc.mimeType;
   return 'application/octet-stream';
+};
+
+const getDocTypeBadge = (doc: DossierDocument | null) => {
+  if (!doc) return '';
+  const ext = getFileExtension(doc.originalName);
+  const mime = String(doc.mimeType || '');
+  if (ext === 'pdf' || mime === 'application/pdf') return 'PDF';
+  if (displayMimeByExt[ext]?.startsWith('image/') || mime.startsWith('image/')) return 'IMG';
+  if (ext === 'sldprt' || ext === 'sldasm' || ext === 'slddrw') return 'SLD';
+  if (cadExtensions.has(ext)) return 'CAD';
+  return (ext || 'FILE').slice(0, 4).toUpperCase();
 };
 
 const readJsonMaybe = async (res: Response) => {
@@ -265,6 +286,7 @@ const toNumber = (value: unknown) => {
 const normalizePieceStatus = (status: unknown): Piece['status'] => {
   const raw = normalizeKey(String(status || ''));
   if (raw.includes('termin')) return 'Terminé';
+  if (raw.includes('arret') || raw.includes('stop')) return 'Arrêté';
   if (raw.includes('control') || raw.includes('contr')) return 'Contrôle';
   return 'En cours';
 };
@@ -272,6 +294,40 @@ const normalizePieceStatus = (status: unknown): Piece['status'] => {
 const getPieceStatusConfig = (status: unknown) => statusConfig[normalizePieceStatus(status)];
 const getMachineChain = (piece: Partial<Piece> | null | undefined) => (
   Array.isArray(piece?.machineChain) ? piece.machineChain.filter(Boolean) : []
+);
+
+const emptyDimensions = (): DimensionFields => ({
+  largeur: '',
+  longueur: '',
+  hauteur: '',
+});
+
+const parseDimension = (value: string | undefined): DimensionFields => {
+  const raw = String(value || '').trim();
+  if (!raw) return emptyDimensions();
+
+  const labelled = {
+    largeur: raw.match(/largeur\s*:\s*([^|]+)/i)?.[1]?.trim() || '',
+    longueur: raw.match(/longueur\s*:\s*([^|]+)/i)?.[1]?.trim() || '',
+    hauteur: raw.match(/hauteur\s*:\s*([^|]+)/i)?.[1]?.trim() || '',
+  };
+
+  if (labelled.largeur || labelled.longueur || labelled.hauteur) return labelled;
+
+  const parts = raw.split(/x|×|\||,/i).map((part) => part.trim()).filter(Boolean);
+  return {
+    largeur: parts[0] || '',
+    longueur: parts[1] || '',
+    hauteur: parts[2] || '',
+  };
+};
+
+const formatDimension = ({ largeur, longueur, hauteur }: DimensionFields) => (
+  [
+    largeur.trim() ? `Largeur: ${largeur.trim()}` : '',
+    longueur.trim() ? `Longueur: ${longueur.trim()}` : '',
+    hauteur.trim() ? `Hauteur: ${hauteur.trim()}` : '',
+  ].filter(Boolean).join(' | ')
 );
 
 const ProductionPage: React.FC = () => {
@@ -282,16 +338,18 @@ const ProductionPage: React.FC = () => {
   const [machines, setMachines] = useState<MachineApi[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtre, setFiltre] = useState('Toutes');
+  const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [selectedPiece, setSelectedPiece] = useState<Piece | null>(null);
   const [editingPieceInfo, setEditingPieceInfo] = useState(false);
   const [pieceInfoDraft, setPieceInfoDraft] = useState({
-    dimension: '',
+    ...emptyDimensions(),
     matiereType: '',
     matiereReference: '',
   });
-  const [newPiece, setNewPiece] = useState<Partial<Piece>>({ matiere: true, status: 'En cours' });
+  const [newPiece, setNewPiece] = useState<PieceFormState>({ ...emptyDimensions(), matiere: false, status: 'Arrêté' });
   const [dossiers, setDossiers] = useState<DossierDocument[]>([]);
+  const [creationContext, setCreationContext] = useState<DossierPieceContext | null>(null);
   const [selectedDossierClient, setSelectedDossierClient] = useState('');
   const [selectedDossierProject, setSelectedDossierProject] = useState('');
   const [chainSteps, setChainSteps] = useState<string[]>([]);
@@ -392,7 +450,28 @@ const ProductionPage: React.FC = () => {
   const enCours = pieces.filter(p => normalizePieceStatus(p.status) === 'En cours').length;
   const terminees = pieces.filter(p => normalizePieceStatus(p.status) === 'Terminé').length;
   const alertes = pieces.filter(p => !p.matiere);
-  const filtrees = filtre === 'Toutes' ? pieces : pieces.filter(p => normalizePieceStatus(p.status) === filtre);
+  const filtrees = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return pieces.filter((piece) => {
+      const statusMatches = filtre === 'Toutes' || normalizePieceStatus(piece.status) === filtre;
+      if (!statusMatches) return false;
+      if (!q) return true;
+
+      const searchable = [
+        piece.nom,
+        piece.machine,
+        piece.currentMachine,
+        piece.employe,
+        piece.dimension,
+        piece.matiereType,
+        piece.matiereReference,
+        piece.status,
+        ...(piece.machineChain || []),
+      ].join(' ').toLowerCase();
+
+      return searchable.includes(q);
+    });
+  }, [filtre, pieces, search]);
 
   const dossiersByPiece = useMemo(() => {
     return dossiers.reduce<Record<string, DossierDocument[]>>((acc, doc) => {
@@ -403,10 +482,6 @@ const ProductionPage: React.FC = () => {
       return acc;
     }, {});
   }, [dossiers]);
-
-  const dossierClients = useMemo(() => (
-    Array.from(new Set(dossiers.map((doc) => getClientLabel(doc)).filter(Boolean))).sort((a, b) => a.localeCompare(b))
-  ), [dossiers]);
 
   const dossierProjects = useMemo(() => (
     Array.from(new Set(
@@ -445,10 +520,39 @@ const ProductionPage: React.FC = () => {
     pieceInfoDraft.matiereType ? materialOptions[pieceInfoDraft.matiereType] || [] : []
   ), [pieceInfoDraft.matiereType]);
 
+  const openCreatePieceFromDossier = (context: DossierPieceContext) => {
+    const cadDoc = context.docs.find((doc) => isCadDoc(doc));
+    const planDoc = context.sourceDoc || context.docs.find((doc) => isImageDoc(doc)) || context.docs.find((doc) => isPdfDoc(doc)) || cadDoc || null;
+
+    setCreationContext(context);
+    setSelectedDossierClient(context.clientLabel);
+    setSelectedDossierProject(context.projectLabel);
+    setSelectedDossierPiece(context.pieceLabel);
+    setChainSteps([]);
+    setChainNext('');
+    setNewPiece({
+      ...emptyDimensions(),
+      nom: context.pieceLabel,
+      employe: '',
+      quantite: 0,
+      matiere: false,
+      status: 'Arrêté',
+      machine: '',
+      matiereType: '',
+      matiereReference: '',
+      solidworksPath: cadDoc?.publicPath || '',
+      planDocumentId: planDoc?._id || '',
+      planPath: planDoc?.publicPath || '',
+      planName: planDoc?.originalName || '',
+      planMimeType: planDoc ? getDisplayMimeType(planDoc) : '',
+    });
+    setShowForm(true);
+  };
+
 
   // ── Ajouter pièce ──
   const ajouterPiece = async () => {
-    if (!newPiece.nom || !newPiece.machine || !newPiece.employe) return;
+    if (!newPiece.nom || !newPiece.employe) return;
     try {
       const effectiveChain = [newPiece.machine, ...chainSteps.filter((m) => m !== newPiece.machine)].filter(Boolean);
 
@@ -461,9 +565,9 @@ const ProductionPage: React.FC = () => {
           employe: newPiece.employe,
           quantite: Number(newPiece.quantite) || 0,
           prix: 0,
-          status: 'En cours',
-          matiere: newPiece.matiere !== false,
-          dimension: newPiece.dimension || '',
+          status: 'Arrêté',
+          matiere: false,
+          dimension: formatDimension(newPiece),
           solidworksPath: newPiece.solidworksPath || null,
           matiereType: newPiece.matiereType || '',
           matiereReference: newPiece.matiereReference || '',
@@ -477,13 +581,14 @@ const ProductionPage: React.FC = () => {
       if (res.ok) {
         const createdPiece = {
           ...data,
-          dimension: data.dimension || newPiece.dimension || '',
+          dimension: data.dimension || formatDimension(newPiece),
           matiereType: data.matiereType || newPiece.matiereType || '',
           matiereReference: data.matiereReference || newPiece.matiereReference || '',
         };
         setPieces(prev => [createdPiece, ...prev]);
         setShowForm(false);
-        setNewPiece({ matiere: true, status: 'En cours' });
+        setCreationContext(null);
+        setNewPiece({ ...emptyDimensions(), matiere: false, status: 'Arrêté' });
         setChainSteps([]);
         setChainNext('');
         setSelectedDossierClient('');
@@ -528,7 +633,7 @@ const ProductionPage: React.FC = () => {
   const savePieceInfo = async () => {
     if (!selectedPiece) return;
     const payload = {
-      dimension: pieceInfoDraft.dimension.trim(),
+      dimension: formatDimension(pieceInfoDraft),
       matiereType: pieceInfoDraft.matiereType,
       matiereReference: pieceInfoDraft.matiereReference,
     };
@@ -556,8 +661,9 @@ const ProductionPage: React.FC = () => {
       setEditingPieceInfo(false);
       return;
     }
+    const dimensions = parseDimension(selectedPiece.dimension);
     setPieceInfoDraft({
-      dimension: selectedPiece.dimension || '',
+      ...dimensions,
       matiereType: selectedPiece.matiereType || '',
       matiereReference: selectedPiece.matiereReference || '',
     });
@@ -629,30 +735,44 @@ const ProductionPage: React.FC = () => {
   };
 
   const openDocumentInBrowser = async (doc: DossierDocument) => {
-    const popup = window.open('about:blank', '_blank');
-    if (!popup) return;
-    popup.opener = null;
-    popup.document.title = doc.originalName;
-    popup.document.body.style.margin = '0';
-    popup.document.body.style.minHeight = '100vh';
-    popup.document.body.style.display = 'grid';
-    popup.document.body.style.placeItems = 'center';
-    popup.document.body.style.background = '#0f172a';
-    popup.document.body.style.color = '#e2e8f0';
-    popup.document.body.style.fontFamily = 'Arial, sans-serif';
-    popup.document.body.textContent = `Ouverture de ${doc.originalName}...`;
-
-    if (doc.publicPath) {
-      renderDocumentWindow(popup, doc, canPreviewInBrowser(doc) ? resolvePublicPathUrl(doc.publicPath) : null);
-      return;
-    }
-
-    if (!canPreviewInBrowser(doc)) {
-      renderDocumentWindow(popup, doc, null);
-      return;
-    }
-
     try {
+      if (!canPreviewInBrowser(doc)) {
+        const res = await fetch(`${API}/dossiers/${doc._id}/download`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const data = await readJsonMaybe(res);
+          throw new Error(data.message || 'Ouverture impossible');
+        }
+
+        const rawBlob = await res.blob();
+        const mimeType = getDisplayMimeType(doc);
+        const blob = rawBlob.type === mimeType ? rawBlob : new Blob([rawBlob], { type: mimeType });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = doc.originalName || 'document';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+        return;
+      }
+
+      const popup = window.open('about:blank', '_blank');
+      if (!popup) return;
+      popup.opener = null;
+      popup.document.title = doc.originalName;
+      popup.document.body.style.margin = '0';
+      popup.document.body.style.minHeight = '100vh';
+      popup.document.body.style.display = 'grid';
+      popup.document.body.style.placeItems = 'center';
+      popup.document.body.style.background = '#0f172a';
+      popup.document.body.style.color = '#e2e8f0';
+      popup.document.body.style.fontFamily = 'Arial, sans-serif';
+      popup.document.body.textContent = `Ouverture de ${doc.originalName}...`;
+
       const res = await fetch(`${API}/dossiers/${doc._id}/download`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -668,17 +788,13 @@ const ProductionPage: React.FC = () => {
       renderDocumentWindow(popup, doc, url);
       window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
     } catch {
-      popup.close();
+      // Keep the current page stable if the document can't be opened.
     }
   };
 
   const openDocumentPreview = (doc: DossierDocument | null) => {
     if (!doc) return;
-    if (doc.publicPath && (isImageDoc(doc) || isPdfDoc(doc))) {
-      setPreviewDoc(doc);
-      return;
-    }
-    openDocumentInBrowser(doc);
+    setPreviewDoc(doc);
   };
 
   const card: React.CSSProperties = { background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 };
@@ -703,7 +819,12 @@ const ProductionPage: React.FC = () => {
       </div>
 
       {/* ── Clients Tab ── */}
-      {mainTab === 'clients' && <DossierPage />}
+      {mainTab === 'clients' && (
+        <DossierPage
+          showAddPieceActions
+          onAddPieceFromDossier={openCreatePieceFromDossier}
+        />
+      )}
 
       {/* ── Production Tab ── */}
       {mainTab === 'production' && <>
@@ -714,32 +835,18 @@ const ProductionPage: React.FC = () => {
             <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'white' }}>Les pièces</h2>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>Gestion des pièces de l'usine</p>
           </div>
-          <button onClick={() => {
-            setSelectedDossierClient('');
-            setSelectedDossierProject('');
-            setSelectedDossierPiece('');
-            setNewPiece({ matiere: true, status: 'En cours' });
-            setShowForm(true);
-          }} style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white',
-            fontSize: 13, fontWeight: 700,
-          }}>
-            <Plus size={16} /> Ajouter depuis dossier
-          </button>
         </div>
 
         {/* ── Stats ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 20 }}>
           {[
-            { label: 'Requis Total', value: `${totalProduction.toLocaleString()} pcs`, icon: <Package size={20} color="#3b82f6" />, color: '#3b82f6' },
-            { label: 'Produit', value: `${totalProduit.toLocaleString()} pcs`, icon: <CheckCircle size={20} color="#22c55e" />, color: '#22c55e' },
-            { label: 'Terminées', value: `${terminees} pièces`, icon: <TrendingUp size={20} color="#10b981" />, color: '#10b981' },
-            { label: 'En cours', value: `${enCours} pièces`, icon: <Clock size={20} color="#f59e0b" />, color: '#f59e0b' },
+            { label: 'Requis Total', value: `${totalProduction.toLocaleString()} pcs`, icon: <Package size={20} color="#2563eb" />, color: '#2563eb' },
+            { label: 'Produit', value: `${totalProduit.toLocaleString()} pcs`, icon: <CheckCircle size={20} color="#0f766e" />, color: '#0f766e' },
+            { label: 'Terminées', value: `${terminees} pièces`, icon: <TrendingUp size={20} color="#475569" />, color: '#475569' },
+            { label: 'En cours', value: `${enCours} pièces`, icon: <Clock size={20} color="#475569" />, color: '#475569' },
           ].map(s => (
             <div key={s.label} style={{ ...card, padding: '18px 20px' }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: s.color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: s.color + '15', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
                 {s.icon}
               </div>
               <div style={{ fontSize: 22, fontWeight: 700, color: s.color, marginBottom: 4 }}>{s.value}</div>
@@ -773,12 +880,21 @@ const ProductionPage: React.FC = () => {
         )}
 
         {/* ── Filtres ── */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
-          {['Toutes', 'Terminé', 'En cours', 'Contrôle'].map(f => (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ ...inputStyle, width: 320, maxWidth: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
+            <Search size={15} color="#64748b" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Rechercher pièce, projet, machine..."
+              style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: 'inherit', outline: 'none', fontSize: 13 }}
+            />
+          </div>
+          {['Toutes', 'Arrêté', 'En cours', 'Terminé'].map(f => (
             <button key={f} onClick={() => setFiltre(f)} style={{
               padding: '7px 18px', borderRadius: 20, border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: 600, transition: 'all 0.15s',
-              background: filtre === f ? 'linear-gradient(135deg,#0066ff,#00d4ff)' : 'rgba(30,41,59,0.6)',
+              background: filtre === f ? 'linear-gradient(135deg,#0f766e,#2563eb)' : 'rgba(30,41,59,0.6)',
               color: filtre === f ? 'white' : '#64748b',
             }}>{f}</button>
           ))}
@@ -805,11 +921,20 @@ const ProductionPage: React.FC = () => {
             const machineChain = getMachineChain(piece);
             const pieceDocs = getPieceDocuments(piece.nom);
             const previewDoc = getPiecePreviewDoc(piece);
+            const previewBadge = getDocTypeBadge(previewDoc);
             return (
               <div key={piece._id} onClick={() => { setSelectedPiece(piece); }}
-                style={{ ...card, cursor: 'pointer', overflow: 'hidden', transition: 'all 0.2s' }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(0,212,255,0.4)')}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}>
+                style={{
+                  ...card,
+                  cursor: 'pointer',
+                  overflow: 'hidden',
+                  transition: 'all 0.2s',
+                  borderColor: selectedPiece?._id === piece._id ? 'rgba(15,118,110,0.55)' : 'rgba(255,255,255,0.08)',
+                  boxShadow: selectedPiece?._id === piece._id ? '0 18px 40px -28px rgba(15,118,110,0.45)' : 'none',
+                  background: selectedPiece?._id === piece._id ? 'rgba(255,255,255,0.05)' : card.background,
+                }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(15,118,110,0.45)')}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = selectedPiece?._id === piece._id ? 'rgba(15,118,110,0.55)' : 'rgba(255,255,255,0.08)')}>
                 <div
                   onClick={(e) => {
                     e.stopPropagation();
@@ -818,7 +943,7 @@ const ProductionPage: React.FC = () => {
                     e.stopPropagation();
                     openDocumentPreview(previewDoc);
                   }}
-                  style={{ height: 130, background: 'rgba(15,23,42,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                  style={{ height: 130, background: 'rgba(15,23,42,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', position: 'relative' }}
                   title={previewDoc ? 'Double clic pour ouvrir' : undefined}
                 >
                   {previewDoc && isImageDoc(previewDoc) && previewDoc.publicPath ? (
@@ -834,19 +959,24 @@ const ProductionPage: React.FC = () => {
                       style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
                     />
                   ) : (
-                    <div style={{ display: 'grid', justifyItems: 'center', gap: 8 }}>
+                    <div style={{ display: 'grid', justifyItems: 'center', gap: 8, color: '#0f766e' }}>
                       <PieceIcon nom={piece.nom} />
-                      {previewDoc && isCadDoc(previewDoc) && (
-                        <span style={{ fontSize: 10, fontWeight: 800, color: '#7dd3fc', letterSpacing: 1 }}>CAD</span>
+                      {previewBadge && (
+                        <span style={{ fontSize: 10, fontWeight: 800, color: '#0f766e', letterSpacing: 1 }}>{previewBadge}</span>
                       )}
+                    </div>
+                  )}
+                  {previewBadge && (
+                    <div style={{ position: 'absolute', top: 10, right: 10, padding: '4px 8px', borderRadius: 999, background: 'rgba(2,6,23,0.72)', color: '#dbeafe', fontSize: 10, fontWeight: 800, letterSpacing: 0.4 }}>
+                      {previewBadge}
                     </div>
                   )}
                 </div>
                 <div style={{ padding: '12px 14px' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: 'white', marginBottom: 3 }}>{piece.nom}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: selectedPiece?._id === piece._id ? '#0f172a' : 'white', marginBottom: 3 }}>{piece.nom}</div>
                   <div style={{ fontSize: 11, color: '#475569', marginBottom: 10 }}>{piece.machine}</div>
                   <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
-                    Machine actuelle: <span style={{ color: '#22d3ee' }}>{piece.currentMachine || piece.machine}</span>
+                    Machine actuelle: <span style={{ color: '#0f766e' }}>{piece.currentMachine || piece.machine}</span>
                   </div>
                   <div style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
                     <div style={{ fontSize: 11, color: '#cbd5e1' }}>
@@ -872,18 +1002,18 @@ const ProductionPage: React.FC = () => {
                     <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: st.bg, border: `1px solid ${st.border}`, color: st.color, fontWeight: 600 }}>
                       {st.label}
                     </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#00d4ff' }}>{producedQty}/{requiredQty} pcs</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#0f766e' }}>{producedQty}/{requiredQty} pcs</span>
                   </div>
                   {/* Progress bar */}
                   {requiredQty > 0 && (
                     <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', borderRadius: 2, background: pieceStatus === 'Terminé' ? '#22c55e' : '#3b82f6', width: `${Math.min(100, (producedQty / requiredQty) * 100)}%`, transition: 'width 0.5s' }} />
+                      <div style={{ height: '100%', borderRadius: 2, background: pieceStatus === 'Terminé' ? '#0f766e' : '#2563eb', width: `${Math.min(100, (producedQty / requiredQty) * 100)}%`, transition: 'width 0.5s' }} />
                     </div>
                   )}
                   {machineChain.length > 1 && pieceStatus !== 'Terminé' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); progresserPiece(piece._id); }}
-                      style={{ marginTop: 8, width: '100%', border: 'none', borderRadius: 7, background: '#1e40af', color: 'white', padding: '6px 8px', fontSize: 11, cursor: 'pointer' }}
+                      style={{ marginTop: 8, width: '100%', border: 'none', borderRadius: 7, background: '#0f766e', color: 'white', padding: '6px 8px', fontSize: 11, cursor: 'pointer' }}
                     >
                       Avancer dans la chaine
                     </button>
@@ -896,21 +1026,21 @@ const ProductionPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); markMaterialAvailable(piece._id); }}
-                        style={{ width: '100%', border: 'none', borderRadius: 7, background: 'rgba(34,197,94,0.18)', color: '#bbf7d0', padding: '6px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
+                        style={{ width: '100%', border: 'none', borderRadius: 7, background: 'rgba(15,118,110,0.14)', color: '#0f766e', padding: '6px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
                       >
                         Confirmer réception matière
                       </button>
                     </div>
                   )}
                   {piece.matiere && (
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#0f766e', display: 'flex', alignItems: 'center', gap: 4 }}>
                       <CheckCircle size={11} /> Matière disponible
                     </div>
                   )}
                   <div style={{ marginTop: 8, fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <User size={11} /> {piece.employe}
                   </div>
-                  <div style={{ marginTop: 4, fontSize: 11, color: pieceDocs.length > 0 ? '#7dd3fc' : '#64748b' }}>
+                  <div style={{ marginTop: 4, fontSize: 11, color: pieceDocs.length > 0 ? '#0f766e' : '#64748b' }}>
                     {pieceDocs.length > 0 ? `${pieceDocs.length} document(s) liés` : 'Aucun document lié'}
                   </div>
                 </div>
@@ -931,7 +1061,9 @@ const ProductionPage: React.FC = () => {
                   <span style={{ fontSize: 24 }}><PieceIcon nom={selectedPiece.nom} /></span>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>{selectedPiece.nom}</div>
-                    <div style={{ fontSize: 12, color: '#475569' }}>{selectedPiece.machine}</div>
+                    <div style={{ fontSize: 12, color: '#475569' }}>
+                      {selectedPiece.currentMachine || selectedPiece.machine} · {getPieceStatusConfig(selectedPiece.status).label}
+                    </div>
                   </div>
                 </div>
                 <button onClick={() => setSelectedPiece(null)} aria-label="Fermer" title="Fermer"
@@ -991,10 +1123,23 @@ const ProductionPage: React.FC = () => {
                       );
                     })()}
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-                      {[
-                        { label: 'Machine', value: selectedPiece.machine, icon: <Wrench size={13} /> },
-                        { label: 'Machine actuelle', value: selectedPiece.currentMachine || selectedPiece.machine, icon: <Wrench size={13} /> },
+                    {(() => {
+                      const chain = getMachineChain(selectedPiece);
+                      const currentMachine = selectedPiece.currentMachine || chain[0] || selectedPiece.machine || 'Non définie';
+                      const currentIndex = Math.max(0, chain.findIndex((machine) => machine === currentMachine));
+                      const safeIndex = chain.length > 0 ? currentIndex : 0;
+                      const nextMachine = chain[safeIndex + 1] || (normalizePieceStatus(selectedPiece.status) === 'Terminé' ? 'Terminée' : 'Aucune');
+
+                      const topRows = [
+                        { label: 'Machine actuelle', value: currentMachine, icon: <Wrench size={13} /> },
+                        { label: 'Position actuelle', value: chain.length > 0 ? `Étape ${safeIndex + 1} / ${chain.length}` : 'Étape 1 / 1', icon: <Clock size={13} /> },
+                        { label: 'Machine suivante', value: nextMachine, icon: <TrendingUp size={13} /> },
+                        { label: 'Status', value: getPieceStatusConfig(selectedPiece.status).label, icon: <CheckCircle size={13} /> },
+                        { label: 'Ordre des machines', value: chain.length > 0 ? chain.join(' -> ') : selectedPiece.machine || 'Non renseigné', icon: <Wrench size={13} />, full: true },
+                      ];
+
+                      const detailRows = [
+                        { label: 'Première machine', value: selectedPiece.machine || 'Non renseignée', icon: <Wrench size={13} /> },
                         { label: 'Employé', value: selectedPiece.employe, icon: <User size={13} /> },
                         { label: 'Qté requise', value: `${toNumber(selectedPiece.quantite)} pcs`, icon: <Package size={13} /> },
                         { label: 'Qté produite', value: `${toNumber(selectedPiece.quantiteProduite)} pcs`, icon: <CheckCircle size={13} /> },
@@ -1002,19 +1147,34 @@ const ProductionPage: React.FC = () => {
                         { label: 'Type matière', value: selectedPiece.matiereType || 'Non renseigné', icon: <Package size={13} /> },
                         { label: 'Référence matière', value: selectedPiece.matiereReference || 'Non renseignée', icon: <Package size={13} /> },
                         { label: 'Matière disponible', value: selectedPiece.matiere ? 'Oui' : 'Non', icon: <CheckCircle size={13} /> },
-                        { label: 'Status', value: getPieceStatusConfig(selectedPiece.status).label, icon: <CheckCircle size={13} /> },
-                        ...(getMachineChain(selectedPiece).length > 1
-                          ? [{ label: 'Enchainement', value: getMachineChain(selectedPiece).join(' -> '), icon: <Clock size={13} /> }]
-                          : []),
-                      ].map(row => (
-                        <div key={row.label} style={{ background: 'rgba(30,41,59,0.6)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                          <div style={{ fontSize: 11, color: '#475569', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
-                            {row.icon} {row.label}
+                      ];
+
+                      return (
+                        <>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                            {topRows.map((row) => (
+                              <div key={row.label} style={{ background: 'rgba(15,23,42,0.72)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,189,248,0.12)', gridColumn: row.full ? '1 / -1' : undefined }}>
+                                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  {row.icon} {row.label}
+                                </div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: 'white' }}>{row.value}</div>
+                              </div>
+                            ))}
                           </div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: 'white' }}>{row.value}</div>
-                        </div>
-                      ))}
-                    </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                            {detailRows.map(row => (
+                              <div key={row.label} style={{ background: 'rgba(30,41,59,0.6)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                <div style={{ fontSize: 11, color: '#475569', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  {row.icon} {row.label}
+                                </div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: 'white' }}>{row.value}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
                     <div style={{ background: 'rgba(30,41,59,0.42)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: '14px', marginBottom: 14 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: editingPieceInfo ? 12 : 0 }}>
                         <div>
@@ -1032,15 +1192,37 @@ const ProductionPage: React.FC = () => {
 
                       {editingPieceInfo && (
                         <div style={{ display: 'grid', gap: 12 }}>
-                          <div>
-                            <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Dimension</label>
-                            <input
-                              type="text"
-                              value={pieceInfoDraft.dimension}
-                              onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, dimension: event.target.value }))}
-                              placeholder="ex: 120 x 40 x 12 mm"
-                              style={inputStyle}
-                            />
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Largeur</label>
+                              <input
+                                type="text"
+                                value={pieceInfoDraft.largeur}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, largeur: event.target.value }))}
+                                placeholder="ex: 120 mm"
+                                style={inputStyle}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Longueur</label>
+                              <input
+                                type="text"
+                                value={pieceInfoDraft.longueur}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, longueur: event.target.value }))}
+                                placeholder="ex: 40 mm"
+                                style={inputStyle}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Hauteur</label>
+                              <input
+                                type="text"
+                                value={pieceInfoDraft.hauteur}
+                                onChange={(event) => setPieceInfoDraft(prev => ({ ...prev, hauteur: event.target.value }))}
+                                placeholder="ex: 12 mm"
+                                style={inputStyle}
+                              />
+                            </div>
                           </div>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                             <div>
@@ -1191,8 +1373,8 @@ const ProductionPage: React.FC = () => {
                 ) : isPdfDoc(previewDoc) && previewDoc.publicPath ? (
                   <iframe title={previewDoc.originalName} src={`${resolvePublicPathUrl(previewDoc.publicPath)}#toolbar=0&navpanes=0&scrollbar=0`} style={{ width: '100%', height: '100%', border: 'none' }} />
                 ) : (
-                  <button type="button" onClick={() => openDocumentInBrowser(previewDoc)} style={{ padding: '10px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 12, fontWeight: 700 }}>
-                    Ouvrir dans le navigateur
+                  <button type="button" onClick={() => openDocumentInBrowser(previewDoc)} style={{ padding: '10px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(15,118,110,0.14)', color: '#0f766e', fontSize: 12, fontWeight: 700 }}>
+                    Télécharger le fichier
                   </button>
                 )}
               </div>
@@ -1200,272 +1382,274 @@ const ProductionPage: React.FC = () => {
           </div>
         )}
 
-        {/* ══════════════════════════════════════
-          MODAL — Ajouter Pièce
-      ══════════════════════════════════════ */}
-        {showForm && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
-            <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '88vh', overflowY: 'auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>+ Ajouter une pièce depuis le dossier</div>
-                <button onClick={() => setShowForm(false)} aria-label="Fermer" title="Fermer"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <X size={16} />
-                </button>
-              </div>
+      </>}
 
-              <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={{ background: 'rgba(30,41,59,0.45)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: 14 }}>
-                  <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Sélection depuis le dossier</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Client</label>
-                      <select value={selectedDossierClient} onChange={(e) => setSelectedDossierClient(e.target.value)} style={selectStyle} title="Client dossier">
-                        <option value="">Choisir un client</option>
-                        {dossierClients.map((clientName) => (
-                          <option key={clientName} value={clientName}>{clientName}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Projet</label>
-                      <select value={selectedDossierProject} onChange={(e) => setSelectedDossierProject(e.target.value)} style={selectStyle} title="Projet dossier" disabled={!selectedDossierClient}>
-                        <option value="">Choisir un projet</option>
-                        {dossierProjects.map((projectName) => (
-                          <option key={projectName} value={projectName}>{projectName}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Pièce</label>
-                      <select value={selectedDossierPiece} onChange={(e) => setSelectedDossierPiece(e.target.value)} style={selectStyle} title="Pièce dossier" disabled={!selectedDossierProject}>
-                        <option value="">Choisir une pièce</option>
-                        {dossierPieceGroups.map((group) => (
-                          <option key={group.label} value={group.label}>{group.label}</option>
-                        ))}
-                      </select>
-                    </div>
+      {/* ══════════════════════════════════════
+        MODAL — Ajouter Pièce
+    ══════════════════════════════════════ */}
+      {showForm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
+          <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '88vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>+ Ajouter une pièce depuis le dossier</div>
+              <button onClick={() => { setShowForm(false); setCreationContext(null); }} aria-label="Fermer" title="Fermer"
+                style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ background: 'rgba(30,41,59,0.45)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: 14 }}>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Contexte dossier</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Client</div>
+                    <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>{creationContext?.clientLabel || selectedDossierClient || '-'}</div>
                   </div>
-
-                  {selectedDossierDocs.length > 0 && (
-                    <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
-                      {selectedDossierDocs.map((doc) => (
-                        <div
-                          key={doc._id}
-                          onDoubleClick={() => openDocumentPreview(doc)}
-                          title="Double clic pour ouvrir"
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            gap: 10,
-                            padding: '10px 12px',
-                            borderRadius: 10,
-                            background: 'rgba(255,255,255,0.03)',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <div>
-                            <div style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>{doc.originalName}</div>
-                            <div style={{ color: '#64748b', fontSize: 11 }}>
-                              {isImageDoc(doc) ? 'Image' : isPdfDoc(doc) ? 'PDF / Plan' : isCadDoc(doc) ? 'Fichier CAD' : 'Document'}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openDocumentPreview(doc);
-                            }}
-                            style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}
-                          >
-                            Ouvrir
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Nom de la pièce *</label>
-                  <input
-                    list="dossier-piece-names"
-                    placeholder="ex: Engrenage 50mm"
-                    value={newPiece.nom || ''}
-                    onChange={e => setNewPiece(p => ({ ...p, nom: e.target.value }))}
-                    style={inputStyle} />
-                  <datalist id="dossier-piece-names">
-                    {dossierPieceNames.map((pieceName) => (
-                      <option key={pieceName} value={pieceName} />
-                    ))}
-                  </datalist>
-                </div>
-
-
-                <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité</label>
-                    <input type="number" placeholder="0"
-                      value={newPiece.quantite || ''}
-                      onChange={e => setNewPiece(p => ({ ...p, quantite: Number(e.target.value) }))}
-                      style={inputStyle} />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>
-                  <div>
-                    <label htmlFor="select-machine" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Machine principale *</label>
-                    <select
-                      id="select-machine"
-                      title="Machine principale"
-                      value={newPiece.machine || ''}
-                      onChange={e => {
-                        const value = e.target.value;
-                        setNewPiece(p => ({ ...p, machine: value }));
-                        setChainSteps(prev => prev.filter((name) => name !== value));
-                      }}
-                      style={selectStyle}
-                    >
-                      <option value="">Choisir une machine</option>
-                      {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                    </select>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Projet</div>
+                    <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>{creationContext?.projectLabel || selectedDossierProject || '-'}</div>
                   </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Pièce dossier</div>
+                    <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>{creationContext?.pieceLabel || selectedDossierPiece || '-'}</div>
+                  </div>
+                </div>
 
-                  <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Ajouter une autre machine</label>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                      <select
-                        value={chainNext}
-                        onChange={(e) => setChainNext(e.target.value)}
-                        style={selectStyle}
-                        title="Ajouter une machine"
-                      >
-                        <option value="">Choisir une machine</option>
-                        {machines
-                          .map((m) => m.name)
-                          .filter(Boolean)
-                          .filter((name) => name !== 'Compresseur ABAC')
-                          .filter((name) => name !== newPiece.machine)
-                          .filter((name) => !chainSteps.includes(name))
-                          .map((name) => (
-                            <option key={name} value={name}>{name}</option>
-                          ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!chainNext) return;
-                          setChainSteps((prev) => [...prev, chainNext]);
-                          setChainNext('');
+                {(creationContext?.docs || selectedDossierDocs).length > 0 && (
+                  <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+                    {(creationContext?.docs || selectedDossierDocs).map((doc) => (
+                      <div
+                        key={doc._id}
+                        onDoubleClick={() => openDocumentPreview(doc)}
+                        title="Double clic pour ouvrir"
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '10px 12px',
+                          borderRadius: 10,
+                          background: 'rgba(255,255,255,0.03)',
+                          cursor: 'pointer',
                         }}
-                        style={{ padding: '10px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontWeight: 700, whiteSpace: 'nowrap' }}
                       >
-                        + Ajouter
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {(newPiece.machine || chainSteps.length > 0) && (
-                  <div style={{ background: 'rgba(15,23,42,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: '12px 14px' }}>
-                    <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Ordre des machines</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      {newPiece.machine && (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 999, background: 'rgba(34,197,94,0.16)', color: '#bbf7d0', fontSize: 12, fontWeight: 700 }}>
-                          1. {newPiece.machine}
-                        </span>
-                      )}
-                      {chainSteps.map((machineName, index) => (
-                        <span key={machineName} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 999, background: 'rgba(59,130,246,0.16)', color: '#bfdbfe', fontSize: 12, fontWeight: 700 }}>
-                          {index + 2}. {machineName}
-                          <button
-                            type="button"
-                            onClick={() => setChainSteps(prev => prev.filter((name) => name !== machineName))}
-                            style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.16)', color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
-                            title={`Retirer ${machineName}`}
-                          >
-                            <X size={11} />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
+                        <div>
+                          <div style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>{doc.originalName}</div>
+                          <div style={{ color: '#64748b', fontSize: 11 }}>
+                            {isImageDoc(doc) ? 'Image' : isPdfDoc(doc) ? 'PDF / Plan' : isCadDoc(doc) ? 'Fichier CAD' : 'Document'}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openDocumentPreview(doc);
+                          }}
+                          style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}
+                        >
+                          Ouvrir
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
+              </div>
 
+              <div>
+                <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Nom de la pièce</label>
+                <input
+                  list="dossier-piece-names"
+                  placeholder="ex: Engrenage 50mm"
+                  value={newPiece.nom || ''}
+                  onChange={e => setNewPiece(p => ({ ...p, nom: e.target.value }))}
+                  style={inputStyle} />
+                <datalist id="dossier-piece-names">
+                  {dossierPieceNames.map((pieceName) => (
+                    <option key={pieceName} value={pieceName} />
+                  ))}
+                </datalist>
+              </div>
+
+
+              <div>
+                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité</label>
+                  <input type="number" placeholder="0"
+                    value={newPiece.quantite || ''}
+                    onChange={e => setNewPiece(p => ({ ...p, quantite: Number(e.target.value) }))}
+                    style={inputStyle} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>
                 <div>
-                  <label htmlFor="select-employe" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>
-                    Employe responsable *
-                  </label>
+                  <label htmlFor="select-machine" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Machine principale</label>
                   <select
-                    id="select-employe"
-                    title="Employe responsable"
-                    value={newPiece.employe || ''}
-                    onChange={e => setNewPiece(p => ({ ...p, employe: e.target.value }))}
+                    id="select-machine"
+                    title="Machine principale"
+                    value={newPiece.machine || ''}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setNewPiece(p => ({ ...p, machine: value }));
+                      setChainSteps(prev => prev.filter((name) => name !== value));
+                    }}
                     style={selectStyle}
                   >
-                    <option value="">
-                      {employes.length === 0 ? 'Aucun employe trouve' : 'Choisir un employe'}
-                    </option>
-                    {employes.map(e => <option key={e} value={e}>{e}</option>)}
+                    <option value="">Choisir une machine</option>
+                    {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Ajouter une autre machine</label>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <select
+                      value={chainNext}
+                      onChange={(e) => setChainNext(e.target.value)}
+                      style={selectStyle}
+                      title="Ajouter une machine"
+                    >
+                      <option value="">Laisser vide</option>
+                      {machines
+                        .map((m) => m.name)
+                        .filter(Boolean)
+                        .filter((name) => name !== 'Compresseur ABAC')
+                        .filter((name) => name !== newPiece.machine)
+                        .filter((name) => !chainSteps.includes(name))
+                        .map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!chainNext) return;
+                        setChainSteps((prev) => [...prev, chainNext]);
+                        setChainNext('');
+                      }}
+                      style={{ padding: '10px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontWeight: 700, whiteSpace: 'nowrap' }}
+                    >
+                      + Ajouter
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {(newPiece.machine || chainSteps.length > 0) && (
+                <div style={{ background: 'rgba(15,23,42,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Ordre des machines</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {newPiece.machine && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 999, background: 'rgba(34,197,94,0.16)', color: '#bbf7d0', fontSize: 12, fontWeight: 700 }}>
+                        1. {newPiece.machine}
+                      </span>
+                    )}
+                    {chainSteps.map((machineName, index) => (
+                      <span key={machineName} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 999, background: 'rgba(59,130,246,0.16)', color: '#bfdbfe', fontSize: 12, fontWeight: 700 }}>
+                        {index + 2}. {machineName}
+                        <button
+                          type="button"
+                          onClick={() => setChainSteps(prev => prev.filter((name) => name !== machineName))}
+                          style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.16)', color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                          title={`Retirer ${machineName}`}
+                        >
+                          <X size={11} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label htmlFor="select-employe" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>
+                  Employe responsable *
+                </label>
+                <select
+                  id="select-employe"
+                  title="Employe responsable"
+                  value={newPiece.employe || ''}
+                  onChange={e => setNewPiece(p => ({ ...p, employe: e.target.value }))}
+                  style={selectStyle}
+                >
+                  <option value="">
+                    {employes.length === 0 ? 'Aucun employe trouve' : 'Choisir un employe'}
+                  </option>
+                  {employes.map(e => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
                   <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Dimension</label>
+                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Largeur</label>
                     <input
                       type="text"
-                      placeholder="ex: 120 x 40 x 12 mm"
-                      value={newPiece.dimension || ''}
-                      onChange={e => setNewPiece(p => ({ ...p, dimension: e.target.value }))}
+                      placeholder="ex: 120 mm"
+                      value={newPiece.largeur || ''}
+                      onChange={e => setNewPiece(p => ({ ...p, largeur: e.target.value }))}
                       style={inputStyle}
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Type de matiere</label>
-                    <select
-                      value={newPiece.matiereType || ''}
-                      onChange={e => setNewPiece(p => ({ ...p, matiereType: e.target.value, matiereReference: '' }))}
-                      style={selectStyle}
-                      title="Type de matiere"
-                    >
-                      <option value="">Choisir une matiere</option>
-                      {Object.keys(materialOptions).map((materialType) => (
-                        <option key={materialType} value={materialType}>{materialType}</option>
-                      ))}
-                    </select>
+                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Longueur</label>
+                    <input
+                      type="text"
+                      placeholder="ex: 40 mm"
+                      value={newPiece.longueur || ''}
+                      onChange={e => setNewPiece(p => ({ ...p, longueur: e.target.value }))}
+                      style={inputStyle}
+                    />
                   </div>
                   <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Reference matiere</label>
-                    <select
-                      value={newPiece.matiereReference || ''}
-                      onChange={e => setNewPiece(p => ({ ...p, matiereReference: e.target.value }))}
-                      style={selectStyle}
-                      title="Reference matiere"
-                      disabled={!newPiece.matiereType}
-                    >
-                      <option value="">Choisir une reference</option>
-                      {selectedMaterialReferences.map((ref) => (
-                        <option key={ref} value={ref}>{ref}</option>
-                      ))}
-                    </select>
+                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Hauteur</label>
+                    <input
+                      type="text"
+                      placeholder="ex: 12 mm"
+                      value={newPiece.hauteur || ''}
+                      onChange={e => setNewPiece(p => ({ ...p, hauteur: e.target.value }))}
+                      style={inputStyle}
+                    />
+                  </div>
                 </div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Type de matiere</label>
+                  <select
+                    value={newPiece.matiereType || ''}
+                    onChange={e => setNewPiece(p => ({ ...p, matiereType: e.target.value, matiereReference: '' }))}
+                    style={selectStyle}
+                    title="Type de matiere"
+                  >
+                    <option value="">Choisir une matiere</option>
+                    {Object.keys(materialOptions).map((materialType) => (
+                      <option key={materialType} value={materialType}>{materialType}</option>
+                    ))}
+                  </select>
                 </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <input type="checkbox" id="matiere" checked={newPiece.matiere !== false}
-                    onChange={e => setNewPiece(p => ({ ...p, matiere: e.target.checked }))}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                  <label htmlFor="matiere" style={{ fontSize: 13, color: '#94a3b8', cursor: 'pointer' }}>Matière disponible</label>
-                </div>
-
-                <button onClick={ajouterPiece}
-                  style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
-                  Ajouter la piece
-                </button>
+                <div>
+                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Reference matiere</label>
+                  <select
+                    value={newPiece.matiereReference || ''}
+                    onChange={e => setNewPiece(p => ({ ...p, matiereReference: e.target.value }))}
+                    style={selectStyle}
+                    title="Reference matiere"
+                    disabled={!newPiece.matiereType}
+                  >
+                    <option value="">Choisir une reference</option>
+                    {selectedMaterialReferences.map((ref) => (
+                      <option key={ref} value={ref}>{ref}</option>
+                    ))}
+                  </select>
               </div>
+              </div>
+
+              <button onClick={ajouterPiece}
+                disabled={!newPiece.employe}
+                style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: newPiece.employe ? 'pointer' : 'not-allowed', opacity: newPiece.employe ? 1 : 0.65, background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
+                Ajouter la piece
+              </button>
             </div>
           </div>
-        )}
-      </>}
+        </div>
+      )}
     </div>
   );
 };
