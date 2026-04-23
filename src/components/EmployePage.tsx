@@ -228,7 +228,7 @@ const getPieceInfoRows = (piece: Piece, machineName?: string) => [
   { label: "Type matiere", value: piece.matiereType || "Non renseigne" },
   { label: "Reference matiere", value: piece.matiereReference || "Non renseignee" },
   { label: "Disponibilite matiere", value: piece.matiere ? "Disponible" : "Manquante", danger: !piece.matiere },
-  { label: "Machine", value: machineName || piece.currentMachine || piece.machine || "Non renseignee" },
+  { label: "Machine actuelle", value: machineName || piece.currentMachine || piece.machine || "Non renseignee" },
   { label: "Statut", value: normalizeStatus(piece.status) },
 ];
 
@@ -494,21 +494,6 @@ const EmployePage: React.FC = () => {
     fontWeight: 700,
     letterSpacing: 0.2,
   };
-  const stepDescriptions: Record<Step, { title: string; text: string }> = {
-    pieces: {
-      title: "Selection et preparation",
-      text: "Choisissez une piece, completez seulement les informations utiles, puis passez a la machine.",
-    },
-    machines: {
-      title: "Choix machine",
-      text: "Selectionnez la machine de travail puis lancez la production directement depuis cette etape.",
-    },
-    production: {
-      title: "Suivi de production",
-      text: "Saisissez la production de la session, le ruban utilise et enregistrez proprement la fin du cycle.",
-    },
-  };
-
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -706,7 +691,8 @@ const EmployePage: React.FC = () => {
 
   const postMachineAction = async (action: "started" | "paused" | "stopped", pieceId?: string, pieceCount?: number, rubanQuantity?: number) => {
     try {
-      await fetch(`${BASE_URL}/api/employe/machine/action`, {
+      const effectiveMachineName = selectedMachine?.name || session?.machine?.name || selectedPiece?.currentMachine || null;
+      const response = await fetch(`${BASE_URL}/api/employe/machine/action`, {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({
@@ -715,9 +701,13 @@ const EmployePage: React.FC = () => {
           pieceId: pieceId || null,
           pieceCount: pieceCount || null,
           rubanQuantity: rubanQuantity || null,
-          machineName: selectedMachine?.name || null,
+          machineName: effectiveMachineName,
         }),
       });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.message || "Action machine impossible");
+      }
     } catch (error) {
       console.error(error);
     }
@@ -819,7 +809,6 @@ const EmployePage: React.FC = () => {
     { key: "machines", label: "Machines", detail: selectedMachine ? selectedMachine.name : selectedPiece ? "Choisir une machine" : "Choisir une piece" },
     { key: "production", label: "Production", detail: session ? (saved ? "Session enregistree" : "En cours") : "Apres demarrage" },
   ];
-  const currentStepMeta = stepDescriptions[step];
   const getStatusTheme = (statusLabel: string) => {
     if (statusLabel === "En cours") return { bg: theme.accentSoft, text: theme.accent };
     if (statusLabel === "Termine") return { bg: darkMode ? "rgba(52,211,153,0.16)" : "rgba(5,150,105,0.12)", text: theme.success };
@@ -913,30 +902,6 @@ const EmployePage: React.FC = () => {
               Messages
               {unread > 0 && <span style={badge(theme.accentSoft, theme.accent)}>{unread}</span>}
             </button>
-          </div>
-
-          <div style={{ ...sectionCardStyle, marginBottom: 22, display: "grid", gridTemplateColumns: isCompactLayout ? "1fr" : "minmax(320px, 1fr) auto", gap: 18, alignItems: "start" }}>
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", padding: "7px 12px", borderRadius: 999, background: theme.accentSoft, color: theme.accent, fontSize: 11, fontWeight: 800, letterSpacing: 0.4 }}>
-                Etape {workflowSteps.findIndex((item) => item.key === step) + 1}
-                <span style={{ width: 5, height: 5, borderRadius: "50%", background: theme.accent }} />
-                {currentStepMeta.title}
-              </div>
-              <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>{workflowSteps.find((item) => item.key === step)?.label || "Pieces"}</div>
-              <div style={{ color: theme.muted, fontSize: 14, maxWidth: 620, lineHeight: 1.7 }}>
-                {currentStepMeta.text}
-              </div>
-            </div>
-            <div style={{ display: "grid", gap: 10, minWidth: 220 }}>
-              <div style={{ ...subtlePanelStyle, padding: 14 }}>
-                <div style={{ color: theme.subtle, fontSize: 11, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Employe</div>
-                <div style={{ color: theme.text, fontWeight: 800 }}>{username}</div>
-              </div>
-              <div style={{ ...subtlePanelStyle, padding: 14 }}>
-                <div style={{ color: theme.subtle, fontSize: 11, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Pieces assignees</div>
-                <div style={{ color: theme.text, fontWeight: 800 }}>{myPieces.length}</div>
-              </div>
-            </div>
           </div>
 
           {step === "pieces" && (

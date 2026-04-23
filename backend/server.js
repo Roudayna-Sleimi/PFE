@@ -152,7 +152,7 @@ const parseStorageDate = (value) => {
 const normalizeMachineChain = (machine, machineChain) => {
   const normalizedChain = Array.isArray(machineChain) ? machineChain.filter(Boolean) : [];
   if (normalizedChain.length > 0) return normalizedChain;
-  return machine ? [machine] : ['Rectifieuse'];
+  return machine ? [machine] : [];
 };
 
 const computeWorkByMachine = (events = []) => {

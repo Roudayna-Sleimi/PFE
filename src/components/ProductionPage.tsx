@@ -368,8 +368,12 @@ const ProductionPage: React.FC = () => {
   const [chainNext, setChainNext] = useState('');
   const [selectedDossierPiece, setSelectedDossierPiece] = useState('');
   const [previewDoc, setPreviewDoc] = useState<DossierDocument | null>(null);
+  const [createPieceError, setCreatePieceError] = useState('');
+  const [isCreatingPiece, setIsCreatingPiece] = useState(false);
 
   const token = localStorage.getItem('token') || '';
+  const role = localStorage.getItem('role') || 'user';
+  const isAdmin = role === 'admin';
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
   useEffect(() => {
@@ -444,7 +448,9 @@ const ProductionPage: React.FC = () => {
 
   useEffect(() => {
     fetchEmployes();
-    fetchEmployesOverview();
+    if (isAdmin) {
+      fetchEmployesOverview();
+    }
     fetchPieces();
     fetchDossierPieceNames();
     fetchDossiers();
@@ -478,7 +484,7 @@ const ProductionPage: React.FC = () => {
     });
     return () => { socket.disconnect(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAdmin]);
 
   // Stats
   const activePieceIds = useMemo(() => (
@@ -573,9 +579,11 @@ const ProductionPage: React.FC = () => {
   ), [pieceInfoDraft.matiereType]);
 
   const openCreatePieceFromDossier = (context: DossierPieceContext) => {
+    if (!isAdmin) return;
     const cadDoc = context.docs.find((doc) => isCadDoc(doc));
     const planDoc = context.sourceDoc || context.docs.find((doc) => isImageDoc(doc)) || context.docs.find((doc) => isPdfDoc(doc)) || cadDoc || null;
 
+    setCreatePieceError('');
     setCreationContext(context);
     setSelectedDossierClient(context.clientLabel);
     setSelectedDossierProject(context.projectLabel);
@@ -606,18 +614,37 @@ const ProductionPage: React.FC = () => {
 
   // ── Ajouter pièce ──
   const ajouterPiece = async () => {
-    if (!newPiece.nom || !newPiece.employe) return;
+    if (!isAdmin) {
+      setCreatePieceError("Seul l'admin peut ajouter une piece.");
+      return;
+    }
+    const employeName = String(newPiece.employe || '').trim();
+    if (!employeName) {
+      setCreatePieceError("Choisis l'employe responsable.");
+      return;
+    }
+
+    const effectiveChain = Array.from(new Set(
+      [newPiece.machine, ...chainSteps].map((machineName) => String(machineName || '').trim()).filter(Boolean),
+    ));
+    const primaryMachine = effectiveChain[0] || '';
+    const nom = String(newPiece.nom || '').trim()
+      || String(creationContext?.pieceLabel || '').trim()
+      || String(selectedDossierPiece || '').trim()
+      || `Piece-${Date.now()}`;
+
     try {
-      const effectiveChain = [newPiece.machine, ...chainSteps.filter((m) => m !== newPiece.machine)].filter(Boolean);
+      setIsCreatingPiece(true);
+      setCreatePieceError('');
 
       const res = await fetch(`${API}/pieces`, {
         method: 'POST', headers,
         body: JSON.stringify({
-          nom: newPiece.nom,
-          ref: newPiece.ref || '',
-          machine: newPiece.machine,
+          nom,
+          ref: String(newPiece.ref || '').trim(),
+          machine: primaryMachine,
           ...(effectiveChain.length > 1 ? { machineChain: effectiveChain } : {}),
-          employe: newPiece.employe,
+          employe: employeName,
           quantite: Number(newPiece.quantite) || 0,
           quantiteProduite: Number(newPiece.quantiteProduite) || 0,
           prix: 0,
@@ -633,7 +660,11 @@ const ProductionPage: React.FC = () => {
           planMimeType: newPiece.planMimeType || '',
         }),
       });
-      const data = await res.json();
+      const data = await readJsonMaybe(res);
+      if (!res.ok) {
+        setCreatePieceError(data?.message || data?.error || "Impossible d'ajouter la piece.");
+        return;
+      }
       if (res.ok) {
         const createdPiece = {
           ...data,
@@ -650,8 +681,14 @@ const ProductionPage: React.FC = () => {
         setSelectedDossierClient('');
         setSelectedDossierProject('');
         setSelectedDossierPiece('');
+        setCreatePieceError('');
       }
-    } catch (err) { console.error('Erreur ajout pièce:', err); }
+    } catch (err) {
+      console.error('Erreur ajout pièce:', err);
+      setCreatePieceError("Impossible d'ajouter la piece pour le moment.");
+    } finally {
+      setIsCreatingPiece(false);
+    }
   };
 
   const progresserPiece = async (pieceId: string) => {
@@ -842,8 +879,8 @@ const ProductionPage: React.FC = () => {
     setPreviewDoc(doc);
   };
 
-  const card: React.CSSProperties = { background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 };
-  const inputStyle: React.CSSProperties = { width: '100%', background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 12px', color: 'white', fontSize: 13, outline: 'none', boxSizing: 'border-box' };
+  const card: React.CSSProperties = { background: 'var(--app-card)', border: '1px solid var(--app-border)', borderRadius: 12 };
+  const inputStyle: React.CSSProperties = { width: '100%', background: 'var(--app-surface-strong)', border: '1px solid var(--app-border)', borderRadius: 8, padding: '10px 12px', color: 'var(--app-heading)', fontSize: 13, outline: 'none', boxSizing: 'border-box' };
   const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
 
   return (
@@ -865,10 +902,17 @@ const ProductionPage: React.FC = () => {
 
       {/* ── Clients Tab ── */}
       {mainTab === 'clients' && (
-        <DossierPage
-          showAddPieceActions
-          onAddPieceFromDossier={openCreatePieceFromDossier}
-        />
+        <>
+          {!isAdmin && (
+            <div style={{ ...card, padding: '12px 16px', marginBottom: 16, borderColor: 'rgba(245,158,11,0.28)', background: 'rgba(245,158,11,0.08)', color: '#fcd34d', fontSize: 12, fontWeight: 700 }}>
+              L'ajout d'une piece depuis le dossier est reserve a l'admin.
+            </div>
+          )}
+          <DossierPage
+            showAddPieceActions={isAdmin}
+            onAddPieceFromDossier={isAdmin ? openCreatePieceFromDossier : undefined}
+          />
+        </>
       )}
 
       {/* ── Production Tab ── */}
@@ -1024,7 +1068,7 @@ const ProductionPage: React.FC = () => {
                 </div>
                 <div style={{ padding: '12px 14px' }}>
                   <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--app-heading)', marginBottom: 3 }}>{piece.nom}</div>
-                  <div style={{ fontSize: 11, color: '#475569', marginBottom: 10 }}>{piece.machine}</div>
+                  <div style={{ fontSize: 11, color: '#475569', marginBottom: 10 }}>{piece.currentMachine || piece.machine || 'Machine non définie'}</div>
                   <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
                     Machine actuelle: <span style={{ color: '#0f766e' }}>{piece.currentMachine || piece.machine}</span>
                   </div>
@@ -1109,21 +1153,21 @@ const ProductionPage: React.FC = () => {
           MODAL — Détail Pièce
       ══════════════════════════════════════ */}
         {selectedPiece && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
-            <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 580, maxHeight: '88vh', overflowY: 'auto' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
+            <div style={{ background: 'var(--app-card)', border: '1px solid var(--app-border)', borderRadius: 16, width: '100%', maxWidth: 580, maxHeight: '88vh', overflowY: 'auto' }}>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid var(--app-border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: 24 }}><PieceIcon nom={selectedPiece.nom} /></span>
                   <div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>{selectedPiece.nom}</div>
-                    <div style={{ fontSize: 12, color: '#475569' }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-heading)' }}>{selectedPiece.nom}</div>
+                    <div style={{ fontSize: 12, color: 'var(--app-muted)' }}>
                       {selectedPiece.currentMachine || selectedPiece.machine} · {getPieceStatusConfig(getVisiblePieceStatus(selectedPiece)).label}
                     </div>
                   </div>
                 </div>
                 <button onClick={() => setSelectedPiece(null)} aria-label="Fermer" title="Fermer"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: 'var(--app-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <X size={16} />
                 </button>
               </div>
@@ -1141,8 +1185,8 @@ const ProductionPage: React.FC = () => {
                             height: 210,
                             borderRadius: 8,
                             overflow: 'hidden',
-                            border: '1px solid rgba(255,255,255,0.08)',
-                            background: 'rgba(2,6,23,0.72)',
+                            border: '1px solid var(--app-border)',
+                            background: 'var(--app-inset)',
                             display: 'grid',
                             placeItems: 'center',
                             position: 'relative',
@@ -1160,7 +1204,7 @@ const ProductionPage: React.FC = () => {
                                 objectFit: 'contain',
                                 objectPosition: 'center',
                                 display: 'block',
-                                background: '#020617',
+                                background: 'var(--app-surface-strong)',
                                 padding: 12,
                                 boxSizing: 'border-box',
                               }}
@@ -1172,7 +1216,7 @@ const ProductionPage: React.FC = () => {
                               style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
                             />
                           ) : (
-                            <div style={{ display: 'grid', justifyItems: 'center', gap: 8, color: '#94a3b8', textAlign: 'center', padding: 18 }}>
+                            <div style={{ display: 'grid', justifyItems: 'center', gap: 8, color: 'var(--app-muted)', textAlign: 'center', padding: 18 }}>
                               <PieceIcon nom={selectedPiece.nom} />
                               <div style={{ fontSize: 12, fontWeight: 700 }}>
                                 {detailPreviewDoc && isCadDoc(detailPreviewDoc) ? 'Fichier CAD lie' : 'Aucune image ou plan lie'}
@@ -1180,7 +1224,7 @@ const ProductionPage: React.FC = () => {
                             </div>
                           )}
                           {detailPreviewDoc && (
-                            <div style={{ position: 'absolute', left: 10, right: 10, bottom: 10, padding: '7px 9px', borderRadius: 8, background: 'rgba(2,6,23,0.72)', color: '#dbeafe', fontSize: 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <div style={{ position: 'absolute', left: 10, right: 10, bottom: 10, padding: '7px 9px', borderRadius: 8, background: 'var(--app-surface-strong)', border: '1px solid var(--app-border)', color: 'var(--app-heading)', fontSize: 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {detailPreviewDoc.originalName}
                             </div>
                           )}
@@ -1206,7 +1250,9 @@ const ProductionPage: React.FC = () => {
 
                       const detailRows = [
                         { label: 'Référence', value: selectedPiece.ref || 'Non renseignée', icon: <Package size={13} /> },
-                        { label: 'Première machine', value: selectedPiece.machine || 'Non renseignée', icon: <Wrench size={13} /> },
+                        ...(selectedPiece.machine && selectedPiece.machine !== currentMachine
+                          ? [{ label: "Machine d'origine", value: selectedPiece.machine, icon: <Wrench size={13} /> }]
+                          : []),
                         { label: 'Employé', value: selectedPiece.employe, icon: <User size={13} /> },
                         { label: 'Qté requise', value: `${toNumber(selectedPiece.quantite)} pcs`, icon: <Package size={13} /> },
                         { label: 'Qté produite', value: `${toNumber(selectedPiece.quantiteProduite)} pcs`, icon: <CheckCircle size={13} /> },
@@ -1221,38 +1267,38 @@ const ProductionPage: React.FC = () => {
                         <>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                             {topRows.map((row) => (
-                              <div key={row.label} style={{ background: 'rgba(15,23,42,0.72)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(56,189,248,0.12)', gridColumn: row.full ? '1 / -1' : undefined }}>
-                                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <div key={row.label} style={{ background: 'var(--app-card-alt)', borderRadius: 10, padding: '12px 14px', border: '1px solid var(--app-accent-soft-strong)', gridColumn: row.full ? '1 / -1' : undefined }}>
+                                <div style={{ fontSize: 11, color: 'var(--app-muted)', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
                                   {row.icon} {row.label}
                                 </div>
-                                <div style={{ fontSize: 14, fontWeight: 700, color: 'white' }}>{row.value}</div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--app-heading)' }}>{row.value}</div>
                               </div>
                             ))}
                           </div>
 
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                             {detailRows.map(row => (
-                              <div key={row.label} style={{ background: 'rgba(30,41,59,0.6)', borderRadius: 10, padding: '12px 14px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                                <div style={{ fontSize: 11, color: '#475569', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <div key={row.label} style={{ background: 'var(--app-surface)', borderRadius: 10, padding: '12px 14px', border: '1px solid var(--app-border)' }}>
+                                <div style={{ fontSize: 11, color: 'var(--app-muted)', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 5 }}>
                                   {row.icon} {row.label}
                                 </div>
-                                <div style={{ fontSize: 14, fontWeight: 600, color: 'white' }}>{row.value}</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--app-heading)' }}>{row.value}</div>
                               </div>
                             ))}
                           </div>
                         </>
                       );
                     })()}
-                    <div style={{ background: 'rgba(30,41,59,0.42)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: '14px', marginBottom: 14 }}>
+                    <div style={{ background: 'var(--app-surface)', border: '1px solid var(--app-border)', borderRadius: 8, padding: '14px', marginBottom: 14 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: editingPieceInfo ? 12 : 0 }}>
                         <div>
-                          <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 800 }}>Formulaire pièce</div>
-                          <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>Les champs manquants peuvent etre completes par l'employe. La quantite ruban se remplit seulement en production.</div>
+                          <div style={{ color: 'var(--app-heading)', fontSize: 13, fontWeight: 800 }}>Formulaire pièce</div>
+                          <div style={{ color: 'var(--app-muted)', fontSize: 11, marginTop: 3 }}>Les champs manquants peuvent etre completes par l'employe. La quantite ruban se remplit seulement en production.</div>
                         </div>
                         <button
                           type="button"
                           onClick={() => setEditingPieceInfo(prev => !prev)}
-                          style={{ border: '1px solid rgba(125,211,252,0.28)', borderRadius: 8, background: 'rgba(14,165,233,0.12)', color: '#7dd3fc', padding: '8px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+                          style={{ border: '1px solid var(--app-accent-soft-strong)', borderRadius: 8, background: 'var(--app-accent-soft)', color: 'var(--app-accent)', padding: '8px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
                         >
                           {editingPieceInfo ? 'Annuler' : 'Modifier'}
                         </button>
@@ -1382,18 +1428,6 @@ const ProductionPage: React.FC = () => {
                         Avancer la piece dans la chaine
                       </button>
                     )}
-                    <div style={{ background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
-                      <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>Historique de passage</div>
-                      {(selectedPiece.history || []).length === 0 ? (
-                        <div style={{ fontSize: 11, color: '#64748b' }}>Aucun historique.</div>
-                      ) : (
-                        (selectedPiece.history || []).slice().reverse().map((entry, idx) => (
-                          <div key={`${entry.machine}-${idx}`} style={{ fontSize: 11, color: '#cbd5e1', marginBottom: 4 }}>
-                            {entry.action === 'entered' ? 'Entree' : 'Sortie'} · {entry.machine}
-                          </div>
-                        ))
-                      )}
-                    </div>
                     <div style={{ background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: '12px 16px' }}>
                       <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Documents du dossier</div>
                       {getPieceDocuments(selectedPiece.nom).length === 0 ? (
@@ -1491,13 +1525,18 @@ const ProductionPage: React.FC = () => {
           <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '88vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>+ Ajouter une pièce depuis le dossier</div>
-              <button onClick={() => { setShowForm(false); setCreationContext(null); }} aria-label="Fermer" title="Fermer"
+              <button onClick={() => { setShowForm(false); setCreationContext(null); setCreatePieceError(''); }} aria-label="Fermer" title="Fermer"
                 style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <X size={16} />
               </button>
             </div>
 
             <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {createPieceError && (
+                <div style={{ borderRadius: 12, border: '1px solid rgba(239,68,68,0.28)', background: 'rgba(239,68,68,0.1)', color: '#fecaca', padding: '12px 14px', fontSize: 12, fontWeight: 700 }}>
+                  {createPieceError}
+                </div>
+              )}
               <div style={{ background: 'rgba(30,41,59,0.45)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: 14 }}>
                 <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Contexte dossier</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
@@ -1774,9 +1813,10 @@ const ProductionPage: React.FC = () => {
               </div>
 
               <button onClick={ajouterPiece}
-                disabled={!newPiece.nom || !newPiece.employe}
-                style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: newPiece.nom && newPiece.employe ? 'pointer' : 'not-allowed', opacity: newPiece.nom && newPiece.employe ? 1 : 0.65, background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
-                Ajouter la piece
+                type="button"
+                disabled={!newPiece.employe || isCreatingPiece}
+                style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: newPiece.employe && !isCreatingPiece ? 'pointer' : 'not-allowed', opacity: newPiece.employe && !isCreatingPiece ? 1 : 0.65, background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
+                {isCreatingPiece ? 'Ajout en cours...' : 'Ajouter la piece'}
               </button>
             </div>
           </div>

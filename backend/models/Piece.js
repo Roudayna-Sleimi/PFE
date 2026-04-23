@@ -18,7 +18,7 @@ const pieceSchema = new mongoose.Schema({
   ref: { type: String, default: '' },
   fichier: { type: String, default: null },
   nom: { type: String, required: true },
-  machine: { type: String, default: 'Rectifieuse' },
+  machine: { type: String, default: '' },
   machineChain: { type: [String], default: [] },
   currentStep: { type: Number, default: 0 },
   currentMachine: { type: String, default: null },

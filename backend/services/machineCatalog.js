@@ -122,6 +122,7 @@ const BASE_MACHINE_CATALOG = [
     model: 'ABAC FORMULA 7.5 - 270L',
     type: 'Compresseur a vis',
     ip: '192.168.1.105',
+    imageUrl: 'https://www.atlascopco.com/content/dam/brands/ABAC/products/screw-compressors/formula/formula-5%2C5-30kw/formula-5-5-30-kw-abac-0000.png/jcr%3Acontent/renditions/cq5dam.web.800.800.png',
     icon: 'wrench',
     hasSensors: true,
     node: 'compresseur',

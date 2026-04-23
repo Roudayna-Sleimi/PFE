@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   BadgeCheck,
@@ -26,9 +26,6 @@ type View = "login" | "demande" | "success";
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const navigate = useNavigate();
   const { darkMode, toggleTheme } = useTheme();
-  const [wideLayout, setWideLayout] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth >= 1180 : true,
-  );
 
   const [view, setView] = useState<View>("login");
   const [username, setUsername] = useState("");
@@ -41,30 +38,26 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [formError, setFormError] = useState("");
   const [formLoading, setFormLoading] = useState(false);
 
-  useEffect(() => {
-    const updateLayout = () => {
-      setWideLayout(window.innerWidth >= 1180);
-    };
+  const openView = (nextView: View) => {
+    setView(nextView);
+    setError("");
+    setFormError("");
+  };
 
-    updateLayout();
-    window.addEventListener("resize", updateLayout);
-    return () => window.removeEventListener("resize", updateLayout);
-  }, []);
-
-  const highlights = [
+  const academicNotes = [
     {
       label: "Tracabilite",
-      value: "Pieces, plans et passages machine.",
+      value: "Pieces, plans et machines.",
       icon: FileText,
     },
     {
       label: "Supervision",
-      value: "Temps, production et anomalies.",
+      value: "Production, temps et alertes.",
       icon: BarChart3,
     },
     {
       label: "Acces",
-      value: "Parcours admin et employe.",
+      value: "Profils admin et employe.",
       icon: ShieldCheck,
     },
   ];
@@ -72,18 +65,27 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const pageStyle: React.CSSProperties = {
     minHeight: "100vh",
     background:
-      "radial-gradient(circle at top left, var(--app-accent-soft), transparent 28%), var(--app-bg)",
+      "radial-gradient(circle at 14% 16%, var(--app-accent-soft-strong), transparent 24%), radial-gradient(circle at 86% 10%, rgba(15,23,42,0.16), transparent 30%), var(--app-bg)",
     color: "var(--app-text)",
   };
 
+  const shellCardStyle: React.CSSProperties = {
+    border: "1px solid var(--app-border)",
+    background: darkMode
+      ? "linear-gradient(180deg, rgba(16, 28, 47, 0.94), rgba(7, 17, 29, 0.96))"
+      : "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,252,0.96))",
+    boxShadow: "none",
+    backdropFilter: "blur(18px)",
+  };
+
   const cardStyle: React.CSSProperties = {
-    background: "var(--app-card)",
+    background: darkMode ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.9)",
     border: "1px solid var(--app-border)",
     boxShadow: "none",
   };
 
   const softCardStyle: React.CSSProperties = {
-    background: "var(--app-card-alt)",
+    background: darkMode ? "rgba(255,255,255,0.04)" : "var(--app-card-alt)",
     border: "1px solid var(--app-border)",
     boxShadow: "none",
   };
@@ -122,6 +124,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   const inactiveTabStyle: React.CSSProperties = {
+    background: "transparent",
     color: "var(--app-muted)",
   };
 
@@ -181,7 +184,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         return;
       }
 
-      setView("success");
+      openView("success");
     } catch {
       setFormError("Impossible de contacter le serveur.");
     } finally {
@@ -193,7 +196,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     id: string,
     label: string,
     value: string,
-    onChange: (value: string) => void,
+    onChange: (nextValue: string) => void,
     icon: React.ElementType,
     options?: {
       placeholder?: string;
@@ -205,10 +208,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     const Icon = icon;
 
     return (
-      <div>
+      <div className="space-y-2">
         <label
           htmlFor={id}
-          className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em]"
+          className="block text-[11px] font-bold uppercase tracking-[0.2em]"
           style={{ color: "var(--app-muted)" }}
         >
           {label}
@@ -229,7 +232,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             onChange={(event) => onChange(event.target.value)}
             placeholder={options?.placeholder}
             autoComplete={options?.autoComplete}
-            className={`w-full rounded-xl px-4 py-3 text-sm font-medium outline-none transition focus:ring-2 focus:ring-[var(--app-focus)] ${
+            className={`w-full rounded-2xl px-4 py-3 text-sm font-medium outline-none transition focus:ring-2 focus:ring-[var(--app-focus)] ${
               options?.trailing ? "pl-10 pr-10" : "pl-10"
             }`}
             style={fieldStyle}
@@ -259,323 +262,352 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     return {
       title: "Connexion securisee",
-      text: "Supervision industrielle en temps reel.",
+      text: "Acces direct a la plateforme CNC Pulse depuis l'atelier.",
     };
   };
 
   const panelHeader = getPanelHeader();
 
-  const shellLayoutStyle: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: wideLayout ? "minmax(0, 1fr) 420px" : "1fr",
-    alignItems: "center",
-    gap: wideLayout ? "3rem" : "2rem",
-    width: "100%",
-  };
-
-  const leftColumnStyle: React.CSSProperties = {
-    maxWidth: wideLayout ? "760px" : "100%",
-  };
-
-  const highlightsGridStyle: React.CSSProperties = {
-    display: "grid",
-    gap: "1rem",
-    gridTemplateColumns: wideLayout ? "repeat(3, minmax(0, 1fr))" : "1fr",
-    maxWidth: wideLayout ? "720px" : "100%",
-  };
-
-  const sessionCardLayoutStyle: React.CSSProperties = {
-    maxWidth: wideLayout ? "720px" : "100%",
-  };
-
   return (
     <div style={pageStyle}>
-      <div className="mx-auto flex min-h-screen max-w-[1380px] items-center px-4 py-8 sm:px-8 lg:px-12 xl:px-16">
-        <div style={shellLayoutStyle}>
-        <section className="flex min-w-0 flex-col justify-center py-4" style={leftColumnStyle}>
-          <div
-            className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-[0.24em]"
-            style={softCardStyle}
-          >
-            <ShieldCheck size={14} style={{ color: "var(--app-accent)" }} />
-            Projet industriel encadre
-          </div>
-
-          <div className="mt-10 max-w-3xl">
-            <h1
-              className="max-w-[580px] text-4xl font-black leading-[1.04] sm:text-5xl xl:text-[66px]"
-              style={{ color: "var(--app-heading)" }}
-            >
-              Plateforme de suivi CNC.
-            </h1>
-            <p className="mt-6 max-w-[620px] text-[16px] leading-8" style={{ color: "var(--app-muted)" }}>
-              Pilotage de la production, suivi des machines et gestion des validations dans un
-              environnement structure pour l'atelier.
-            </p>
-          </div>
-
-          <div className="mt-10" style={highlightsGridStyle}>
-            {highlights.map((item) => {
-              const Icon = item.icon;
-
-              return (
-                <div key={item.label} className="rounded-[22px] p-5" style={cardStyle}>
-                  <div
-                    className="flex h-11 w-11 items-center justify-center rounded-2xl"
-                    style={{
-                      background: "var(--app-accent-soft)",
-                      color: "var(--app-accent)",
-                    }}
-                  >
-                    <Icon size={18} />
-                  </div>
-
-                  <div className="mt-5 text-base font-bold" style={{ color: "var(--app-heading)" }}>
-                    {item.label}
-                  </div>
-                  <div className="mt-2 text-sm leading-6" style={{ color: "var(--app-muted)" }}>
-                    {item.value}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div
-            className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[22px] p-5"
-            style={{ ...cardStyle, ...sessionCardLayoutStyle }}
-          >
-            <div>
-              <div
-                className="text-[11px] font-bold uppercase tracking-[0.2em]"
-                style={{ color: "var(--app-subtle)" }}
-              >
-                Session securisee
-              </div>
-              <div className="mt-2 text-sm leading-6" style={{ color: "var(--app-muted)" }}>
-                Connexion locale vers le serveur CNC Pulse.
-              </div>
-            </div>
-
+      <div className="mx-auto flex min-h-screen max-w-[1420px] items-center px-4 py-6 sm:px-8 lg:px-12 xl:px-16">
+        <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1.08fr)_minmax(340px,430px)] lg:items-center xl:gap-8">
+          <section className="min-w-0 rounded-[34px] p-6 sm:p-8 xl:p-9" style={shellCardStyle}>
             <div
-              className="rounded-full px-4 py-2 text-xs font-semibold"
-              style={{
-                background: "rgba(34,197,94,0.12)",
-                border: "1px solid rgba(34,197,94,0.18)",
-                color: darkMode ? "#86efac" : "#166534",
-              }}
+              className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-[0.24em]"
+              style={chipStyle}
             >
-              Operationnel
-            </div>
-          </div>
-        </section>
-
-        <section className="w-full max-w-[420px] rounded-[28px] p-6 sm:p-7" style={cardStyle}>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl" style={iconTileStyle}>
-                <ShieldCheck size={20} />
-              </div>
-
-              <div>
-                <div
-                  className="text-[11px] font-bold uppercase tracking-[0.24em]"
-                  style={{ color: "var(--app-subtle)" }}
-                >
-                  Acces plateforme
-                </div>
-                <h2 className="mt-2 text-[32px] font-black leading-tight" style={{ color: "var(--app-heading)" }}>
-                  {panelHeader.title}
-                </h2>
-                <p className="mt-2 text-sm leading-6" style={{ color: "var(--app-muted)" }}>
-                  {panelHeader.text}
-                </p>
-              </div>
+              <ShieldCheck size={14} style={{ color: "var(--app-accent)" }} />
+              Plateforme atelier
             </div>
 
-            <div className="flex gap-2">
-              <div
-                className="hidden items-center rounded-full px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] sm:inline-flex"
-                style={chipStyle}
+            <div className="mt-8 max-w-2xl">
+              <h1
+                className="max-w-[560px] text-4xl font-black leading-[1.04] sm:text-5xl xl:text-[54px]"
+                style={{ color: "var(--app-heading)" }}
               >
-                Acces securise
-              </div>
-
-              <button
-                type="button"
-                onClick={toggleTheme}
-                className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition"
-                style={chipStyle}
-                aria-pressed={darkMode}
-              >
-                {darkMode ? <Sun size={14} /> : <Moon size={14} />}
-                {darkMode ? "Mode clair" : "Mode sombre"}
-              </button>
+                Connexion CNC Pulse.
+              </h1>
+              <p className="mt-4 max-w-[520px] text-sm leading-7 sm:text-[15px]" style={{ color: "var(--app-muted)" }}>
+                Plateforme de suivi de production, de pieces et de machines.
+              </p>
             </div>
-          </div>
 
-          {view !== "success" && (
-            <div className="mt-6 grid grid-cols-2 rounded-2xl p-1" style={softCardStyle}>
-              <button
-                type="button"
-                onClick={() => setView("login")}
-                className="rounded-xl px-3 py-2.5 text-sm font-bold transition"
-                style={view === "login" ? activeTabStyle : inactiveTabStyle}
-              >
-                Connexion
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("demande")}
-                className="rounded-xl px-3 py-2.5 text-sm font-bold transition"
-                style={view === "demande" ? activeTabStyle : inactiveTabStyle}
-              >
-                Demande
-              </button>
-            </div>
-          )}
+            <div className="mt-8 grid gap-3 md:grid-cols-3">
+              {academicNotes.map((item) => {
+                const Icon = item.icon;
 
-          {view === "success" && (
-            <div className="mt-6 space-y-5">
-              <div
-                className="flex items-center gap-3 rounded-2xl px-4 py-4 text-sm"
-                style={{
-                  background: "rgba(34,197,94,0.1)",
-                  border: "1px solid rgba(34,197,94,0.18)",
-                  color: "var(--app-heading)",
-                }}
-              >
-                <BadgeCheck size={18} />
-                Votre demande a ete transmise. Vous recevrez l'acces apres validation.
-              </div>
+                return (
+                  <div key={item.label} className="h-full rounded-[22px] p-4" style={cardStyle}>
+                    <div
+                      className="flex h-10 w-10 items-center justify-center rounded-2xl"
+                      style={{
+                        background: "var(--app-accent-soft)",
+                        color: "var(--app-accent)",
+                      }}
+                    >
+                      <Icon size={18} />
+                    </div>
 
-              <button
-                type="button"
-                onClick={() => setView("login")}
-                className="w-full rounded-xl px-4 py-3 text-sm font-bold transition"
-                style={primaryButtonStyle}
-              >
-                Retour a la connexion
-              </button>
-            </div>
-          )}
-
-          {view === "login" && (
-            <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-              {renderField("username", "Identifiant", username, setUsername, User, {
-                placeholder: "Entrez votre identifiant",
-                autoComplete: "username",
+                    <div className="mt-4 text-[15px] font-bold" style={{ color: "var(--app-heading)" }}>
+                      {item.label}
+                    </div>
+                    <div className="mt-1 text-sm leading-6" style={{ color: "var(--app-muted)" }}>
+                      {item.value}
+                    </div>
+                  </div>
+                );
               })}
+            </div>
 
-              {renderField("password", "Mot de passe", password, setPassword, KeyRound, {
-                placeholder: "Entrez votre mot de passe",
-                type: showPassword ? "text" : "password",
-                autoComplete: "current-password",
-                trailing: (
+          </section>
+
+          <section
+            className="relative w-full max-w-[430px] justify-self-center overflow-hidden rounded-[30px] p-5 sm:p-6"
+            style={shellCardStyle}
+          >
+            <div
+              className="pointer-events-none absolute inset-x-0 top-0 h-32"
+              style={{
+                background:
+                  "linear-gradient(180deg, var(--app-accent-soft-strong), transparent 78%)",
+              }}
+            />
+
+            <div className="relative">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex min-w-0 items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl" style={iconTileStyle}>
+                    <ShieldCheck size={20} />
+                  </div>
+
+                  <div className="min-w-0">
+                    <div
+                      className="text-[11px] font-bold uppercase tracking-[0.24em]"
+                      style={{ color: "var(--app-subtle)" }}
+                    >
+                      Acces plateforme
+                    </div>
+                    <h2 className="mt-2 text-[28px] font-black leading-tight" style={{ color: "var(--app-heading)" }}>
+                      {panelHeader.title}
+                    </h2>
+                    <p className="mt-2 text-sm leading-6" style={{ color: "var(--app-muted)" }}>
+                      {panelHeader.text}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  className="inline-flex items-center justify-center gap-2 self-start rounded-full px-4 py-2 text-xs font-bold transition"
+                  style={chipStyle}
+                  aria-label={darkMode ? "Activer le mode clair" : "Activer le mode sombre"}
+                  title={darkMode ? "Activer le mode clair" : "Activer le mode sombre"}
+                >
+                  {darkMode ? <Sun size={14} /> : <Moon size={14} />}
+                  {darkMode ? "Mode clair" : "Mode sombre"}
+                </button>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[20px] p-3.5" style={softCardStyle}>
+                  <div
+                    className="text-[11px] font-bold uppercase tracking-[0.2em]"
+                    style={{ color: "var(--app-subtle)" }}
+                  >
+                    Acces
+                  </div>
+                  <div className="mt-2 text-sm font-bold" style={{ color: "var(--app-heading)" }}>
+                    Securise par role
+                  </div>
+                </div>
+
+                  <div className="rounded-[20px] p-3.5" style={softCardStyle}>
+                  <div
+                    className="text-[11px] font-bold uppercase tracking-[0.2em]"
+                    style={{ color: "var(--app-subtle)" }}
+                  >
+                    Serveur
+                  </div>
+                  <div className="mt-2 text-sm font-bold" style={{ color: "var(--app-heading)" }}>
+                    Connexion locale
+                  </div>
+                </div>
+              </div>
+
+              {view !== "success" && (
+                <div className="mt-6 grid grid-cols-2 rounded-2xl p-1" style={softCardStyle}>
                   <button
                     type="button"
-                    onClick={() => setShowPassword((current) => !current)}
-                    className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg transition"
-                    style={{ color: "var(--app-subtle)" }}
-                    aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                    onClick={() => openView("login")}
+                    className="rounded-xl px-3 py-2.5 text-sm font-bold transition"
+                    style={view === "login" ? activeTabStyle : inactiveTabStyle}
                   >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    Connexion
                   </button>
-                ),
-              })}
-
-              {error && (
-                <div
-                  className="rounded-xl px-3 py-3 text-xs font-medium"
-                  style={{
-                    background: "rgba(239,68,68,0.1)",
-                    border: "1px solid rgba(239,68,68,0.18)",
-                    color: "var(--app-danger)",
-                  }}
-                >
-                  {error}
+                  <button
+                    type="button"
+                    onClick={() => openView("demande")}
+                    className="rounded-xl px-3 py-2.5 text-sm font-bold transition"
+                    style={view === "demande" ? activeTabStyle : inactiveTabStyle}
+                  >
+                    Demande
+                  </button>
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70"
-                style={primaryButtonStyle}
-              >
-                {loading ? "Connexion..." : "Se connecter"}
-              </button>
+              {view === "success" && (
+                <div className="mt-6 space-y-5">
+                  <div
+                    className="rounded-[24px] p-5"
+                    style={{
+                      background: "rgba(34,197,94,0.1)",
+                      border: "1px solid rgba(34,197,94,0.18)",
+                      color: "var(--app-heading)",
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="flex h-11 w-11 items-center justify-center rounded-2xl"
+                        style={{
+                          background: "rgba(34,197,94,0.18)",
+                          color: darkMode ? "#86efac" : "#166534",
+                        }}
+                      >
+                        <BadgeCheck size={18} />
+                      </div>
+                      <div className="text-sm font-semibold">
+                        Votre demande a bien ete transmise pour validation.
+                      </div>
+                    </div>
 
-              <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
-                Pas encore de compte ?{" "}
-                <button
-                  type="button"
-                  onClick={() => setView("demande")}
-                  className="font-semibold"
-                  style={{ color: "var(--app-accent)" }}
-                >
-                  Demander un acces
-                </button>
-              </p>
-            </form>
-          )}
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-[18px] px-4 py-3" style={softCardStyle}>
+                        <div className="text-xs font-bold" style={{ color: "var(--app-heading)" }}>
+                          Verification admin
+                        </div>
+                        <div className="mt-1 text-xs leading-5" style={{ color: "var(--app-muted)" }}>
+                          Les informations seront relues avant creation du compte.
+                        </div>
+                      </div>
+                      <div className="rounded-[18px] px-4 py-3" style={softCardStyle}>
+                        <div className="text-xs font-bold" style={{ color: "var(--app-heading)" }}>
+                          Retour vers connexion
+                        </div>
+                        <div className="mt-1 text-xs leading-5" style={{ color: "var(--app-muted)" }}>
+                          Revenez ensuite avec vos identifiants actives.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-          {view === "demande" && (
-            <form className="mt-6 space-y-4" onSubmit={handleDemande}>
-              {renderField("nom", "Nom complet", form.nom, (value) => setForm((prev) => ({ ...prev, nom: value })), User, {
-                placeholder: "Nom complet",
-                autoComplete: "name",
-              })}
-              {renderField("email", "Email professionnel", form.email, (value) => setForm((prev) => ({ ...prev, email: value })), Mail, {
-                placeholder: "Email professionnel",
-                type: "email",
-                autoComplete: "email",
-              })}
-              {renderField("poste", "Fonction", form.poste, (value) => setForm((prev) => ({ ...prev, poste: value })), Building2, {
-                placeholder: "Fonction",
-              })}
-              {renderField("telephone", "Telephone", form.telephone, (value) => setForm((prev) => ({ ...prev, telephone: value })), Phone, {
-                placeholder: "Telephone",
-                type: "tel",
-                autoComplete: "tel",
-              })}
-
-              {formError && (
-                <div
-                  className="rounded-xl px-3 py-3 text-xs font-medium"
-                  style={{
-                    background: "rgba(239,68,68,0.1)",
-                    border: "1px solid rgba(239,68,68,0.18)",
-                    color: "var(--app-danger)",
-                  }}
-                >
-                  {formError}
+                  <button
+                    type="button"
+                    onClick={() => openView("login")}
+                    className="w-full rounded-2xl px-4 py-3 text-sm font-bold transition"
+                    style={primaryButtonStyle}
+                  >
+                    Retour a la connexion
+                  </button>
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={formLoading}
-                className="w-full rounded-xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70"
-                style={primaryButtonStyle}
-              >
-                {formLoading ? "Envoi en cours..." : "Envoyer la demande"}
-              </button>
+              {view === "login" && (
+                <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+                  {renderField("username", "Identifiant", username, setUsername, User, {
+                    placeholder: "Entrez votre identifiant",
+                    autoComplete: "username",
+                  })}
 
-              <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
-                Vous avez deja un compte ?{" "}
-                <button
-                  type="button"
-                  onClick={() => setView("login")}
-                  className="font-semibold"
-                  style={{ color: "var(--app-accent)" }}
-                >
-                  Revenir a la connexion
-                </button>
-              </p>
-            </form>
-          )}
-        </section>
+                  {renderField("password", "Mot de passe", password, setPassword, KeyRound, {
+                    placeholder: "Entrez votre mot de passe",
+                    type: showPassword ? "text" : "password",
+                    autoComplete: "current-password",
+                    trailing: (
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((current) => !current)}
+                        className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg transition"
+                        style={{ color: "var(--app-subtle)" }}
+                        aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                      >
+                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    ),
+                  })}
+
+                  {error && (
+                    <div
+                      className="rounded-2xl px-3 py-3 text-xs font-medium"
+                      style={{
+                        background: "rgba(239,68,68,0.1)",
+                        border: "1px solid rgba(239,68,68,0.18)",
+                        color: "var(--app-danger)",
+                      }}
+                    >
+                      {error}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full rounded-2xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70"
+                    style={primaryButtonStyle}
+                  >
+                    {loading ? "Connexion..." : "Se connecter"}
+                  </button>
+
+                  <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
+                    Pas encore de compte ?{" "}
+                    <button
+                      type="button"
+                      onClick={() => openView("demande")}
+                      className="font-semibold"
+                      style={{ color: "var(--app-accent)" }}
+                    >
+                      Demander un acces
+                    </button>
+                  </p>
+                </form>
+              )}
+
+              {view === "demande" && (
+                <form className="mt-6 space-y-4" onSubmit={handleDemande}>
+                  {renderField("nom", "Nom complet", form.nom, (value) => setForm((prev) => ({ ...prev, nom: value })), User, {
+                    placeholder: "Nom complet",
+                    autoComplete: "name",
+                  })}
+                  {renderField(
+                    "email",
+                    "Email professionnel",
+                    form.email,
+                    (value) => setForm((prev) => ({ ...prev, email: value })),
+                    Mail,
+                    {
+                      placeholder: "Email professionnel",
+                      type: "email",
+                      autoComplete: "email",
+                    },
+                  )}
+                  {renderField("poste", "Fonction", form.poste, (value) => setForm((prev) => ({ ...prev, poste: value })), Building2, {
+                    placeholder: "Fonction",
+                  })}
+                  {renderField(
+                    "telephone",
+                    "Telephone",
+                    form.telephone,
+                    (value) => setForm((prev) => ({ ...prev, telephone: value })),
+                    Phone,
+                    {
+                      placeholder: "Telephone",
+                      type: "tel",
+                      autoComplete: "tel",
+                    },
+                  )}
+
+                  {formError && (
+                    <div
+                      className="rounded-2xl px-3 py-3 text-xs font-medium"
+                      style={{
+                        background: "rgba(239,68,68,0.1)",
+                        border: "1px solid rgba(239,68,68,0.18)",
+                        color: "var(--app-danger)",
+                      }}
+                    >
+                      {formError}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={formLoading}
+                    className="w-full rounded-2xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70"
+                    style={primaryButtonStyle}
+                  >
+                    {formLoading ? "Envoi en cours..." : "Envoyer la demande"}
+                  </button>
+
+                  <div className="rounded-[22px] p-4 text-xs leading-6" style={softCardStyle}>
+                    Les demandes sont centralisees pour validation avant creation du compte.
+                  </div>
+
+                  <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
+                    Vous avez deja un compte ?{" "}
+                    <button
+                      type="button"
+                      onClick={() => openView("login")}
+                      className="font-semibold"
+                      style={{ color: "var(--app-accent)" }}
+                    >
+                      Revenir a la connexion
+                    </button>
+                  </p>
+                </form>
+              )}
+            </div>
+          </section>
         </div>
       </div>
     </div>

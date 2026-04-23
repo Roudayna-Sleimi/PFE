@@ -19,6 +19,33 @@ const asPositiveNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const sanitizeMachineName = (value = '') => String(value || '').trim();
+
+const findMachineStepIndex = (chain = [], machineName = '') => {
+  const normalizedMachine = normalizeStatus(machineName);
+  if (!normalizedMachine) return -1;
+  return chain.findIndex((step) => normalizeStatus(step) === normalizedMachine);
+};
+
+const resolvePieceMachineContext = (piece, machineName, normalizeMachineChain) => {
+  const chain = normalizeMachineChain(piece?.machine, piece?.machineChain);
+  const safeCurrentStep = Math.min(
+    Math.max(Number(piece?.currentStep || 0), 0),
+    Math.max(chain.length - 1, 0),
+  );
+  const activeMachine = sanitizeMachineName(machineName)
+    || sanitizeMachineName(piece?.currentMachine)
+    || 'Inconnue';
+  const resolvedStep = findMachineStepIndex(chain, activeMachine);
+
+  return {
+    chain,
+    activeMachine,
+    currentStep: resolvedStep >= 0 ? resolvedStep : safeCurrentStep,
+    isTrackedStep: resolvedStep >= 0,
+  };
+};
+
 const getMachinePowerKw = (machine = '') => {
   const key = normalizeStatus(machine);
   const match = MACHINE_POWER_ESTIMATES.find((row) => key.includes(normalizeStatus(row.key)));
@@ -391,11 +418,18 @@ const createWorkforceService = (deps) => {
       throw error;
     }
 
-    const machine = me.assignedMachine || 'Rectifieuse';
-    const pieces = await Piece.find({
-      $or: [{ currentMachine: machine }, { machine }],
-      status: { $ne: 'Termine' },
-    }).sort({ createdAt: -1 });
+    const machine = sanitizeMachineName(me.assignedMachine) || null;
+    const pieces = await Piece.find(
+      machine
+        ? {
+          $or: [{ currentMachine: machine }, { machine }],
+          status: { $ne: 'Termine' },
+        }
+        : {
+          employe: username,
+          status: { $ne: 'Termine' },
+        },
+    ).sort({ createdAt: -1 });
 
     return { user: me, machine, pieces };
   };
@@ -421,30 +455,46 @@ const createWorkforceService = (deps) => {
       throw error;
     }
 
-    if (machineName && action === 'started') {
-      user.assignedMachine = machineName;
+    const effectivePieceId = pieceId || user.currentPieceId || null;
+    let piece = effectivePieceId ? await Piece.findById(effectivePieceId) : null;
+    const requestedMachine = sanitizeMachineName(machineName);
+    if (action === 'started' && !requestedMachine) {
+      const error = new Error('machineName requis pour demarrer');
+      error.statusCode = 400;
+      throw error;
     }
 
-    const machine = machineName || user.assignedMachine || 'Inconnue';
-    let piece = null;
+    const machine = requestedMachine || sanitizeMachineName(piece?.currentMachine) || sanitizeMachineName(user.assignedMachine);
+    if (!machine) {
+      const error = new Error('Aucune machine active trouvee');
+      error.statusCode = 400;
+      throw error;
+    }
+    if (action === 'started') {
+      user.assignedMachine = machine;
+    }
 
     user.machineStatus = action;
     user.currentActivity = activity;
     user.machineStatusUpdatedAt = new Date();
 
     if (action === 'started' && pieceId) {
-      piece = await Piece.findById(pieceId);
       if (piece) {
         user.currentPieceName = piece.nom;
         user.currentPieceId = String(pieceId);
         if (normalizeStatus(piece.status) !== 'termine') {
-          const chain = normalizeMachineChain(piece.machine, piece.machineChain);
-          const currentStep = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
-          const currentMachine = piece.currentMachine || chain[currentStep] || machine;
+          const { activeMachine, currentStep, isTrackedStep } = resolvePieceMachineContext(piece, machine, normalizeMachineChain);
+          const singleMachineFlow = !Array.isArray(piece.machineChain) || piece.machineChain.filter(Boolean).length <= 1;
           const history = Array.isArray(piece.history) ? piece.history : [];
           const lastHistory = history[history.length - 1];
-          if (!lastHistory || lastHistory.machine !== currentMachine || lastHistory.action !== 'entered') {
-            history.push({ machine: currentMachine, action: 'entered', by: username });
+          if (singleMachineFlow) {
+            piece.machine = activeMachine;
+            piece.machineChain = activeMachine ? [activeMachine] : [];
+          }
+          if (isTrackedStep) piece.currentStep = currentStep;
+          piece.currentMachine = activeMachine;
+          if (!lastHistory || normalizeStatus(lastHistory.machine) !== normalizeStatus(activeMachine) || lastHistory.action !== 'entered') {
+            history.push({ machine: activeMachine, action: 'entered', by: username });
             piece.history = history;
           }
           piece.status = 'En cours';
@@ -462,23 +512,23 @@ const createWorkforceService = (deps) => {
     await user.save();
 
     if (action === 'stopped' && pieceId) {
-      piece = await Piece.findById(pieceId);
       if (!piece) {
         const error = new Error('Piece introuvable');
         error.statusCode = 404;
         throw error;
       }
 
-      const chain = normalizeMachineChain(piece.machine, piece.machineChain);
-      const currentStep = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
-      const currentMachine = chain[currentStep];
-      piece.history = piece.history || [];
-      piece.history.push({ machine: currentMachine, action: 'completed', by: username });
+      const { chain, activeMachine, currentStep, isTrackedStep } = resolvePieceMachineContext(piece, machine, normalizeMachineChain);
+      piece.history = Array.isArray(piece.history) ? piece.history : [];
+      piece.history.push({ machine: activeMachine, action: 'completed', by: username });
 
-      if (currentStep >= chain.length - 1) {
-        piece.currentStep = chain.length - 1;
-        piece.currentMachine = chain[chain.length - 1] || currentMachine || null;
+      if (!isTrackedStep) {
+        piece.currentMachine = activeMachine;
         piece.status = 'Arrêté';
+      } else if (currentStep >= chain.length - 1) {
+        piece.currentStep = chain.length - 1;
+        piece.currentMachine = chain[chain.length - 1] || activeMachine || null;
+        piece.status = 'ArrÃªtÃ©';
       } else {
         const nextStep = currentStep + 1;
         piece.currentStep = nextStep;
@@ -486,6 +536,7 @@ const createWorkforceService = (deps) => {
         piece.status = 'Arrêté';
       }
 
+      piece.status = 'Arrete';
       piece.quantiteProduite = (piece.quantiteProduite || 0) + Number(pieceCount || 0);
       piece.quantiteRuban = (piece.quantiteRuban || 0) + Number(rubanQuantity || 0);
       if (currentStep >= chain.length - 1 && piece.quantite > 0 && piece.quantiteProduite >= piece.quantite) {

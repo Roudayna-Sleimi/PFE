@@ -4,6 +4,8 @@ const path = require('path');
 const createPieceService = (deps) => {
   const { Piece, io, normalizeMachineChain, uploadsDir } = deps;
 
+  const sanitizeMachineName = (value) => String(value || '').trim();
+
   const toNumber = (value, fallback = 0) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
@@ -69,7 +71,12 @@ const createPieceService = (deps) => {
 
     const chain = normalizeMachineChain(piece.machine, piece.machineChain);
     const currentStep = Math.min(Math.max(piece.currentStep || 0, 0), Math.max(chain.length - 1, 0));
-    const currentMachine = chain[currentStep];
+    const currentMachine = chain[currentStep] || sanitizeMachineName(piece.currentMachine) || sanitizeMachineName(piece.machine) || null;
+    if (!currentMachine) {
+      const error = new Error('Aucune machine definie pour cette piece');
+      error.statusCode = 400;
+      throw error;
+    }
     piece.history = piece.history || [];
     piece.history.push({ machine: currentMachine, action: 'completed', by: username });
 
@@ -119,14 +126,16 @@ const createPieceService = (deps) => {
     }
 
     const chain = normalizeMachineChain(machine, machineChain);
+    const primaryMachine = sanitizeMachineName(machine) || sanitizeMachineName(chain[0]);
+    const firstMachine = sanitizeMachineName(chain[0]) || primaryMachine || null;
     const piece = await Piece.create({
       ref: ref || '',
       nom,
-      machine: machine || 'Rectifieuse',
+      machine: primaryMachine,
       machineChain: chain,
       currentStep: 0,
-      currentMachine: chain[0] || machine || 'Rectifieuse',
-      history: [{ machine: chain[0] || machine || 'Rectifieuse', action: 'entered', by: username }],
+      currentMachine: firstMachine,
+      history: firstMachine ? [{ machine: firstMachine, action: 'entered', by: username }] : [],
       employe: employe || '',
       quantite: toNumber(quantite, 0),
       quantiteProduite: toNumber(quantiteProduite, 0),

@@ -40,8 +40,8 @@ const VISUALS_BY_ID: Record<string, MachineVisual> = {
     Icon: Drill,
   },
   compresseur: {
-    image: 'https://commons.wikimedia.org/wiki/Special:FilePath/2016-06-13_21_MV-LISA_1074_Kompressoren.jpg?width=1400',
-    alt: 'Compresseur industriel ABAC',
+    image: 'https://www.atlascopco.com/content/dam/brands/ABAC/products/screw-compressors/formula/formula-5%2C5-30kw/formula-5-5-30-kw-abac-0000.png/jcr%3Acontent/renditions/cq5dam.web.800.800.png',
+    alt: "Compresseur d'air ABAC",
     Icon: Wrench,
   },
   'tour-cnc': {
@@ -69,6 +69,15 @@ const resolveImageUrl = (imageUrl?: string) => {
 };
 
 export const getMachineVisual = (params: { id?: string; name?: string; icon?: MachineIconKind; imageUrl?: string }): MachineVisual => {
+  const isCompresseurAbac = params.id === 'compresseur'
+    || /compresseur|abac/i.test(String(params.name || ''));
+  if (isCompresseurAbac) {
+    return {
+      ...VISUALS_BY_ID.compresseur,
+      Icon: ICON_BY_KIND[params.icon || 'wrench'],
+    };
+  }
+
   const customImage = resolveImageUrl(params.imageUrl);
   if (customImage) {
     return {
