@@ -1,6 +1,16 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
-import { ArrowLeft, Activity, Zap, Bell, CheckCircle, Eye, Clock, Package, History } from 'lucide-react';
+import {
+  Activity,
+  ArrowLeft,
+  Bell,
+  CheckCircle,
+  Clock,
+  Eye,
+  History,
+  Package,
+  Zap,
+} from 'lucide-react';
 import { getMachineVisual } from '../utils/machineVisuals';
 import { getMachineFunctions, type MachineFunction } from '../utils/machineFunctions';
 
@@ -18,15 +28,12 @@ interface Alert {
   sensorSnapshot?: Record<string, number>;
 }
 
-const socket = io('http://localhost:5000', { transports: ['websocket'] });
-
-// ─── Types ───────────────────────────────────────────────
 interface Piece {
   _id: string;
   nom: string;
   quantite: number;
   prix: number;
-  status: 'Terminé' | 'En cours' | 'Contrôle';
+  status: string;
   matiere: boolean;
 }
 
@@ -37,34 +44,111 @@ interface EmployeOverview {
 }
 
 interface Machine {
-  id: string; name: string; model: string; marque?: string; type?: string; node: string; ip: string; imageUrl?: string;
+  id: string;
+  name: string;
+  model: string;
+  marque?: string;
+  type?: string;
+  node: string;
+  ip: string;
+  imageUrl?: string;
   sensors: string[];
   icon: 'gear' | 'wrench' | 'bolt' | 'drill';
   sante: number;
   status: 'En marche' | 'Avertissement' | 'Arr\u00eat' | 'En maintenance';
-  protocol: string; broker: string; latence: string; uptime: string;
-  chipModel: string; machId: string; vibration: number; courant: number; rpm: number;
+  protocol: string;
+  broker: string;
+  latence: string;
+  uptime: string;
+  chipModel: string;
+  machId: string;
+  vibration: number;
+  courant: number;
+  rpm: number;
   fonctions?: MachineFunction[];
 }
-interface Props { machine: Machine; onBack: () => void; }
 
-// Machines avec capteurs live (ESP32 connectés)
+interface Props {
+  machine: Machine;
+  onBack: () => void;
+}
+
+interface LiveData {
+  vibration: number;
+  courant: number;
+  rpm: number;
+  pression: number;
+  isLive: boolean;
+}
+
+const socket = io('http://localhost:5000', { transports: ['websocket'] });
+
 const LIVE_MACHINES = ['rectifieuse', 'compresseur'];
+
+const accentTone = {
+  color: 'var(--app-accent)',
+  bg: 'var(--app-accent-soft)',
+  border: 'var(--app-accent-soft-strong)',
+};
+
+const neutralTone = {
+  color: 'var(--app-muted)',
+  bg: 'var(--app-neutral-soft)',
+  border: 'var(--app-border)',
+};
+
+const successTone = {
+  color: 'var(--app-success)',
+  bg: 'rgba(34,197,94,0.12)',
+  border: 'rgba(34,197,94,0.26)',
+};
+
+const warningTone = {
+  color: 'var(--app-warning)',
+  bg: 'rgba(245,158,11,0.12)',
+  border: 'rgba(245,158,11,0.24)',
+};
+
+const dangerTone = {
+  color: 'var(--app-danger)',
+  bg: 'rgba(239,68,68,0.12)',
+  border: 'rgba(239,68,68,0.24)',
+};
+
+const panelStyle: React.CSSProperties = {
+  background: 'var(--app-card)',
+  border: '1px solid var(--app-border)',
+  boxShadow: 'none',
+};
+
+const softPanelStyle: React.CSSProperties = {
+  background: 'var(--app-card-alt)',
+  border: '1px solid var(--app-border)',
+  boxShadow: 'none',
+};
+
+const insetPanelStyle: React.CSSProperties = {
+  background: 'var(--app-inset)',
+  border: '1px solid var(--app-border)',
+  boxShadow: 'none',
+};
+
 const normalizeAlertText = (value: unknown) => String(value ?? '').toLowerCase();
 
-// ── FIX : compresseur n'a pas de tab "Pièces" ──
+const normalizeText = (value: unknown) => (
+  String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+);
+
 const getTabs = (machineId: string): string[] => {
   if (LIVE_MACHINES.includes(machineId)) {
     const isCompresseur = machineId === 'compresseur';
-    return [
-      'Capteurs',
-      'Fonctions',
-      ...(!isCompresseur ? ['Pièces'] : []),
-      'Alertes',
-      'Historique',
-    ];
+    return ['Capteurs', 'Fonctions', ...(!isCompresseur ? ['Pieces'] : []), 'Alertes', 'Historique'];
   }
-  return ['Fonctions', 'Pièces', 'Historique'];
+  return ['Fonctions', 'Pieces', 'Historique'];
 };
 
 const getTabIcon = (tab: string) => {
@@ -75,77 +159,84 @@ const getTabIcon = (tab: string) => {
   return History;
 };
 
-const getMachineStatusStyle = (s: Machine['status']) => {
-  if (s === 'En marche')     return { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.3)' };
-  if (s === 'Avertissement') return { color: '#f97316', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.3)' };
-  if (s === 'En maintenance') return { color: '#a855f7', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.3)' };
-  return { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)' };
+const getMachineStatusStyle = (status: Machine['status']) => {
+  if (status === 'En marche') return successTone;
+  if (status === 'Avertissement') return warningTone;
+  if (status === 'En maintenance') return accentTone;
+  return dangerTone;
 };
 
-const santeColor = (v: number) => v >= 70 ? '#22c55e' : v >= 40 ? '#f97316' : '#ef4444';
-
-const fallbackPieceStatusConfig = {
-  color: '#94a3b8',
-  bg: 'rgba(148,163,184,0.12)',
-  label: 'Arrêté',
-};
-
-const statusPieceConfig = {
-  'Arrêté':  { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', label: 'Arrêté' },
-  'Terminé':  { color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  label: 'Termine' },
-  'En cours': { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', label: 'En cours' },
-  'Contrôle': { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', label: 'Controle' },
+const santeColor = (value: number) => {
+  if (value >= 70) return successTone.color;
+  if (value >= 40) return warningTone.color;
+  return dangerTone.color;
 };
 
 const resolvePieceStatusConfig = (status: unknown) => {
-  const normalized = String(status || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z]/g, '');
+  const normalized = normalizeText(status);
 
-  if (normalized.includes('termin')) return statusPieceConfig['Terminé'] || fallbackPieceStatusConfig;
-  if (normalized.includes('control') || normalized.includes('contr')) return statusPieceConfig['Contrôle'] || fallbackPieceStatusConfig;
-  if (normalized.includes('arret') || normalized.includes('stop')) return statusPieceConfig['Arrêté'] || fallbackPieceStatusConfig;
-  if (normalized.includes('encours')) return statusPieceConfig['En cours'] || fallbackPieceStatusConfig;
-  return fallbackPieceStatusConfig;
+  if (normalized.includes('termin')) return { ...successTone, label: 'Termine' };
+  if (normalized.includes('control') || normalized.includes('contr')) {
+    return { ...warningTone, label: 'Controle' };
+  }
+  if (normalized.includes('encours')) return { ...accentTone, label: 'En cours' };
+  return { ...neutralTone, label: 'Arrete' };
 };
 
-interface LiveData { vibration: number; courant: number; rpm: number; pression: number; isLive: boolean; }
+const resolveAlertSeverityStyle = (severity: Alert['severity']) => {
+  if (severity === 'critical') return { ...dangerTone, label: 'Critique' };
+  if (severity === 'warning') return { ...warningTone, label: 'Avertissement' };
+  return { ...accentTone, label: 'Info' };
+};
+
+const resolveAlertStatusStyle = (status: Alert['status']) => {
+  if (status === 'new') return { text: 'Nouveau', color: dangerTone.color };
+  if (status === 'seen') return { text: 'Vu', color: warningTone.color };
+  if (status === 'notified') return { text: 'Notifie', color: accentTone.color };
+  return { text: 'Resolu', color: successTone.color };
+};
 
 const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const tabs = getTabs(machine.id);
   const [activeTab, setActiveTab] = useState(tabs[0]);
-  const [pieces, setPieces]       = useState<Piece[]>([]);
+  const [pieces, setPieces] = useState<Piece[]>([]);
   const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
-  const [live, setLive]           = useState<LiveData>({
-    vibration: machine.vibration, courant: machine.courant,
-    rpm: machine.rpm, pression: 0, isLive: false,
-  });
-  const [alerts, setAlerts]           = useState<Alert[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
+  const [live, setLive] = useState<LiveData>({
+    vibration: machine.vibration,
+    courant: machine.courant,
+    rpm: machine.rpm,
+    pression: 0,
+    isLive: false,
+  });
 
-  const hasPieces = tabs.includes('Pièces');
-  const st = getMachineStatusStyle(machine.status);
-  const visual = getMachineVisual({ id: machine.id, name: machine.name, icon: machine.icon, imageUrl: machine.imageUrl });
+  const hasPieces = tabs.includes('Pieces');
+  const statusStyle = getMachineStatusStyle(machine.status);
+  const visual = getMachineVisual({
+    id: machine.id,
+    name: machine.name,
+    icon: machine.icon,
+    imageUrl: machine.imageUrl,
+  });
   const machineFunctions = getMachineFunctions(machine);
-  const activePieceIds = useMemo(() => (
-    new Set(
-      employeesOverview
-        .filter((row) => row.currentPieceId && (row.machineStatus === 'started' || row.machineStatus === 'paused'))
-        .map((row) => String(row.currentPieceId)),
-    )
-  ), [employeesOverview]);
+
+  const activePieceIds = useMemo(
+    () =>
+      new Set(
+        employeesOverview
+          .filter((row) => row.currentPieceId && (row.machineStatus === 'started' || row.machineStatus === 'paused'))
+          .map((row) => String(row.currentPieceId)),
+      ),
+    [employeesOverview],
+  );
 
   const getVisiblePieceStatus = (piece: Piece) => {
-    const normalized = String(piece.status || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-    if (normalized.includes('termin')) return 'TerminÃ©';
-    if (normalized.includes('control') || normalized.includes('contr')) return 'ContrÃ´le';
+    const normalized = normalizeText(piece.status);
+    if (normalized.includes('termin')) return 'Termine';
+    if (normalized.includes('control') || normalized.includes('contr')) return 'Controle';
     if (activePieceIds.has(piece._id)) return 'En cours';
-    return 'Arrêté';
+    return 'Arrete';
   };
 
   const piecesMachineName = (() => {
@@ -164,13 +255,16 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
   const fetchAlerts = useCallback(async () => {
     if (!LIVE_MACHINES.includes(machine.id)) return;
+
     const token = localStorage.getItem('token') || '';
     setAlertsLoading(true);
+
     try {
       const response = await fetch('http://localhost:5000/api/alerts?limit=50', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
+
       if (!response.ok || !Array.isArray(data)) {
         setAlerts([]);
         return;
@@ -179,6 +273,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       const machineId = normalizeAlertText(machine.id);
       const machId = normalizeAlertText(machine.machId);
       const node = normalizeAlertText(machine.node);
+
       const filtered = data.filter((alert: Alert) => {
         const alertMachineId = normalizeAlertText(alert.machineId);
         const alertNode = normalizeAlertText(alert.node);
@@ -188,9 +283,11 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
           alertMachineId === machId ||
           alertNode === node ||
           (machine.id === 'rectifieuse' && (alertMachineId.includes('rectif') || alertNode.includes('esp32'))) ||
-          (machine.id === 'compresseur' && (alertMachineId.includes('compress') || alertNode.includes('compress')))
+          (machine.id === 'compresseur' &&
+            (alertMachineId.includes('compress') || alertNode.includes('compress')))
         );
       });
+
       setAlerts(filtered);
     } catch {
       setAlerts([]);
@@ -206,7 +303,8 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const handleMarkSeen = async (alertId: string) => {
     const token = localStorage.getItem('token') || '';
     await fetch(`http://localhost:5000/api/alerts/${alertId}/seen`, {
-      method: 'PATCH', headers: { Authorization: `Bearer ${token}` }
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}` },
     });
     fetchAlerts();
   };
@@ -214,423 +312,813 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const handleResolve = async (alertId: string) => {
     const token = localStorage.getItem('token') || '';
     await fetch(`http://localhost:5000/api/alerts/${alertId}/resolve`, {
-      method: 'PATCH', headers: { Authorization: `Bearer ${token}` }
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}` },
     });
     fetchAlerts();
   };
 
-  // Fetch pièces — seulement si le tab existe (donc jamais pour compresseur)
   useEffect(() => {
     if (!hasPieces) return;
+
     const token = localStorage.getItem('token') || '';
     fetch(`http://localhost:5000/api/pieces?machine=${encodeURIComponent(piecesMachineName)}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     })
-      .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setPieces(data); })
+      .then((response) => response.json())
+      .then((data) => {
+        if (Array.isArray(data)) setPieces(data);
+      })
       .catch(() => {});
-  }, [piecesMachineName, hasPieces]);
+  }, [hasPieces, piecesMachineName]);
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
     fetch('http://localhost:5000/api/admin/employes-overview', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     })
-      .then(r => r.ok ? r.json() : [])
-      .then(data => { if (Array.isArray(data)) setEmployeesOverview(data); })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) setEmployeesOverview(data);
+      })
       .catch(() => {});
   }, []);
 
-  // Socket live — seulement pour les machines avec capteurs
   useEffect(() => {
     if (!LIVE_MACHINES.includes(machine.id)) return;
-    const handler = (data: { node: string; courant: number; vibX: number; vibY: number; vibZ: number; rpm: number; pression?: number }) => {
+
+    const handler = (data: {
+      node: string;
+      courant: number;
+      vibX: number;
+      vibY: number;
+      vibZ: number;
+      rpm: number;
+      pression?: number;
+    }) => {
       if (data.node !== machine.node) return;
-      const vib = parseFloat(Math.sqrt(data.vibX**2 + data.vibY**2 + data.vibZ**2).toFixed(2));
-      setLive({ vibration: vib, courant: data.courant, rpm: data.rpm, pression: data.pression ?? 0, isLive: true });
+
+      const vibration = parseFloat(
+        Math.sqrt(data.vibX ** 2 + data.vibY ** 2 + data.vibZ ** 2).toFixed(2),
+      );
+
+      setLive({
+        vibration,
+        courant: data.courant,
+        rpm: data.rpm,
+        pression: data.pression ?? 0,
+        isLive: true,
+      });
     };
+
     socket.on('sensor-data', handler);
-    return () => { socket.off('sensor-data', handler); };
-  }, [machine.node, machine.id]);
+    return () => {
+      socket.off('sensor-data', handler);
+    };
+  }, [machine.id, machine.node]);
 
   useEffect(() => {
     const handler = (payload: EmployeOverview) => {
       if (!payload?.username) return;
-      setEmployeesOverview(prev => {
+
+      setEmployeesOverview((prev) => {
         const index = prev.findIndex((row) => row.username === payload.username);
         if (index === -1) return [payload, ...prev];
+
         const next = [...prev];
         next[index] = { ...next[index], ...payload };
         return next;
       });
     };
+
     socket.on('employee-machine-updated', handler);
-    return () => { socket.off('employee-machine-updated', handler); };
+    return () => {
+      socket.off('employee-machine-updated', handler);
+    };
   }, []);
 
-  // Simulation fallback
   useEffect(() => {
     if (!LIVE_MACHINES.includes(machine.id) || live.isLive) return;
-    const interval = setInterval(() => {
+
+    const intervalId = window.setInterval(() => {
       const now = Date.now();
-      const isComp = machine.id === 'compresseur';
-      setLive(prev => {
+      const isCompresseur = machine.id === 'compresseur';
+
+      setLive((prev) => {
         if (prev.isLive) return prev;
+
         return {
           ...prev,
-          vibration: parseFloat(((isComp ? 2.8 : 1.4) + Math.sin(now / 2000) * 0.4 + Math.random() * 0.2).toFixed(2)),
-          courant:   parseFloat(((isComp ? 18.5 : 12.3) + Math.sin(now / 3000) * 2 + Math.random() * 0.5).toFixed(1)),
-          rpm:       isComp ? 1450 : Math.round(3096 + Math.sin(now / 4000) * 80 + Math.random() * 30),
-          pression:  isComp ? parseFloat((7.5 + Math.sin(now / 4000) * 1.5).toFixed(1)) : 0,
-          isLive:    false,
+          vibration: parseFloat(
+            ((isCompresseur ? 2.8 : 1.4) + Math.sin(now / 2000) * 0.4 + Math.random() * 0.2).toFixed(2),
+          ),
+          courant: parseFloat(
+            ((isCompresseur ? 18.5 : 12.3) + Math.sin(now / 3000) * 2 + Math.random() * 0.5).toFixed(1),
+          ),
+          rpm: isCompresseur
+            ? 1450
+            : Math.round(3096 + Math.sin(now / 4000) * 80 + Math.random() * 30),
+          pression: isCompresseur ? parseFloat((7.5 + Math.sin(now / 4000) * 1.5).toFixed(1)) : 0,
+          isLive: false,
         };
       });
     }, 1000);
-    return () => clearInterval(interval);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [live.isLive, machine.id]);
 
-  const vibPct  = Math.min(100, (live.vibration / 5)    * 100);
-  const couPct  = Math.min(100, (live.courant   / 30)   * 100);
-  const rpmPct  = Math.min(100, (live.rpm       / 5000) * 100);
-  const presPct = Math.min(100, (live.pression  / 12)   * 100);
+  const vibPct = Math.min(100, (live.vibration / 5) * 100);
+  const couPct = Math.min(100, (live.courant / 30) * 100);
+  const rpmPct = Math.min(100, (live.rpm / 5000) * 100);
+  const presPct = Math.min(100, (live.pression / 12) * 100);
 
-  const isComp = machine.id === 'compresseur';
+  const isCompresseur = machine.id === 'compresseur';
+  const isLiveMachine = LIVE_MACHINES.includes(machine.id);
+  const activeAlerts = alerts.filter((alert) => alert.status !== 'resolved');
+  const resolvedAlerts = alerts.filter((alert) => alert.status === 'resolved');
+
+  const metrics = [
+    { label: 'Vibration', value: live.vibration, unit: 'mm/s', color: 'var(--app-accent)', pct: vibPct },
+    {
+      label: 'Courant electrique',
+      value: live.courant,
+      unit: 'A',
+      color: 'var(--app-warning)',
+      pct: couPct,
+    },
+    ...(!isCompresseur
+      ? [{ label: 'Vitesse rotation', value: live.rpm, unit: 'tr/min', color: 'var(--app-success)', pct: rpmPct }]
+      : []),
+    ...(isCompresseur
+      ? [{ label: 'Pression', value: live.pression, unit: 'bar', color: 'var(--app-accent)', pct: presPct }]
+      : []),
+  ];
+
+  const metadata = [
+    { label: 'Node', value: machine.node || '-' },
+    { label: 'Adresse IP', value: machine.ip || '-' },
+    { label: 'Protocole', value: machine.protocol || '-' },
+    { label: 'Broker', value: machine.broker || '-' },
+  ];
+
+  const sideFacts = [
+    { label: 'Sante', value: `${machine.sante}%`, color: santeColor(machine.sante) },
+    { label: 'Latence', value: machine.latence || '-', color: 'var(--app-accent)' },
+    { label: 'Uptime', value: machine.uptime || '-', color: 'var(--app-text)' },
+  ];
+
+  const getTabButtonStyle = (isActive: boolean): React.CSSProperties => ({
+    background: isActive ? 'var(--app-accent-soft)' : 'var(--app-surface)',
+    border: `1px solid ${isActive ? 'var(--app-accent-soft-strong)' : 'var(--app-border)'}`,
+    color: isActive ? 'var(--app-accent)' : 'var(--app-muted)',
+    boxShadow: 'none',
+  });
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full">
+    <div
+      className="flex-1 min-w-0 w-full overflow-y-auto p-6"
+      style={{
+        fontFamily: '"Sora", "Manrope", "Segoe UI", system-ui, sans-serif',
+        color: 'var(--app-text)',
+      }}
+    >
+      <div className="mx-auto flex max-w-7xl flex-col gap-5">
+        <button
+          onClick={onBack}
+          className="inline-flex w-fit items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
+          style={{
+            background: 'var(--app-surface)',
+            border: '1px solid var(--app-border)',
+            color: 'var(--app-muted)',
+          }}
+        >
+          <ArrowLeft size={16} />
+          Retour aux machines
+        </button>
 
-      {/* Back */}
-      <button onClick={onBack}
-        className="flex items-center gap-2 px-4 py-2 mb-5 bg-slate-800/50 border border-white/[0.08] rounded-lg text-slate-400 text-sm font-medium cursor-pointer hover:text-[#00d4ff] hover:border-[rgba(0,212,255,0.3)] transition-all">
-        <ArrowLeft size={16} /> Retour aux machines
-      </button>
+        <section className="relative overflow-hidden rounded-[28px]" style={panelStyle}>
+          <div
+            className="absolute inset-0"
+            style={{ background: 'linear-gradient(135deg, var(--app-accent-soft), transparent 62%)' }}
+          />
 
-      {/* Header card */}
-      <div className="relative mb-5 overflow-hidden rounded-xl border border-white/[0.08] bg-slate-800/50">
-        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-blue-500/5" />
-        <div className="relative flex items-start gap-4 p-5 flex-wrap lg:flex-nowrap">
-          <div className="relative h-36 w-full max-w-[260px] overflow-hidden rounded-xl border border-white/10 bg-slate-900/60">
-            <img
-              src={visual.image}
-              alt={visual.alt}
-              loading="lazy"
-              className="h-full w-full object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/10 via-slate-950/20 to-slate-950/75" />
-            <div className="absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-cyan-300/35 bg-slate-950/75 px-2.5 py-1.5">
-              <visual.Icon size={14} className="text-cyan-300" />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-cyan-100">Machine</span>
-            </div>
-          </div>
+          <div className="relative grid gap-5 p-5 lg:grid-cols-[280px,1fr,220px]">
+            <div
+              className="relative flex min-h-[220px] items-center justify-center overflow-hidden rounded-[24px]"
+              style={{
+                background: 'linear-gradient(180deg, var(--app-card-alt), var(--app-inset))',
+                border: '1px solid var(--app-border)',
+              }}
+            >
+              <img
+                src={visual.image}
+                alt={visual.alt}
+                loading="lazy"
+                className="h-full w-full object-contain object-center p-4"
+              />
 
-          <div className="flex-1 min-w-[220px]">
-            <div className="text-[17px] font-bold text-white mb-0.5">{machine.name}</div>
-            <div className="text-xs text-slate-500 mb-2">
-              {[machine.marque, machine.model].filter(Boolean).join(' - ') || 'Modèle non renseigné'}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <span className="text-[10px] px-2 py-0.5 rounded-md font-medium bg-slate-700/60 border border-white/[0.08] text-slate-400">{machine.machId}</span>
-              {LIVE_MACHINES.includes(machine.id) && (
-                <span className="text-[10px] px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1.5"
-                  style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e' }}>
-                  <Activity size={11} />
-                  Capteurs actifs
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex min-w-[180px] flex-col items-end gap-2">
-            <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold"
-              style={{ background: st.bg, border: `1px solid ${st.border}`, color: st.color }}>
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.color }} />
-              {machine.status}
-            </span>
-            <span className="text-[20px] font-bold" style={{ color: santeColor(machine.sante) }}>
-              {machine.sante}% santé
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-2 mb-5 flex-wrap">
-        {tabs.map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all border
-              ${activeTab === tab
-                ? 'text-[#00d4ff] border-[rgba(0,212,255,0.3)]'
-                : 'text-slate-400 border-white/[0.08] bg-slate-800/50 hover:text-[#00d4ff] hover:border-[rgba(0,212,255,0.2)]'}`}
-            style={activeTab === tab ? { background: 'linear-gradient(135deg,rgba(0,102,255,0.15),rgba(0,212,255,0.15))' } : {}}>
-            {React.createElement(getTabIcon(tab), { size: 14 })} {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* ── CAPTEURS ── */}
-      {activeTab === 'Capteurs' && LIVE_MACHINES.includes(machine.id) && (
-        <div className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-5">
-          <div className="flex items-center gap-2.5 mb-5">
-            <Activity size={16} color="#3b82f6" />
-            <span className="text-sm font-semibold text-white">Mesures en temps réel</span>
-            <span className={`ml-auto px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${live.isLive
-              ? 'bg-green-500/10 border border-green-500/30 text-green-400'
-              : 'bg-blue-500/10 border border-blue-500/30 text-blue-400'}`}>
-              {live.isLive ? <><Activity size={10} /> EN DIRECT</> : <><Clock size={10} /> SIMULATION</>}
-            </span>
-          </div>
-
-          {[
-            { label: 'Vibration',          value: live.vibration, unit: 'mm/s', color: '#3b82f6', pct: vibPct },
-            { label: 'Courant électrique', value: live.courant,   unit: 'A',    color: '#f97316', pct: couPct },
-            ...(!isComp ? [{ label: 'Vitesse rotation', value: live.rpm,      unit: 'tr/min',  color: '#22c55e', pct: rpmPct  }] : []),
-            ...(isComp  ? [{ label: 'Pression',          value: live.pression, unit: 'bar',  color: '#06b6d4', pct: presPct }] : []),
-          ].map((m, i) => (
-            <div key={i} className="mb-5">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-slate-300">{m.label}</span>
-                <span className="text-[20px] font-bold font-mono" style={{ color: m.color }}>
-                  {m.value} <span className="text-sm">{m.unit}</span>
-                </span>
-              </div>
-              <div className="h-2 bg-slate-700/60 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-500"
-                  style={{ width: `${m.pct}%`, background: m.color }} />
+              <div
+                className="absolute left-4 top-4 inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.24em]"
+                style={{
+                  background: 'var(--app-surface)',
+                  border: '1px solid var(--app-accent-soft-strong)',
+                  color: 'var(--app-accent)',
+                }}
+              >
+                <visual.Icon size={14} />
+                <span>Machine</span>
               </div>
             </div>
-          ))}
 
-          <div className="mt-2 flex gap-3 flex-wrap">
-            {live.courant > 15 && (
-              <span className="text-[11px] px-3 py-1 rounded-full font-bold"
-                style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444' }}>
-                Courant eleve
-              </span>
-            )}
-            {live.vibration > 2 && (
-              <span className="text-[11px] px-3 py-1 rounded-full font-bold"
-                style={{ background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.3)', color: '#f97316' }}>
-                Vibration elevee
-              </span>
-            )}
-            {isComp && live.pression > 10 && (
-              <span className="text-[11px] px-3 py-1 rounded-full font-bold"
-                style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444' }}>
-                Pression critique
-              </span>
-            )}
-          </div>
-        </div>
-      )}
+            <div className="flex flex-col justify-between gap-4">
+              <div>
+                <div
+                  className="mb-2 text-[12px] font-semibold uppercase tracking-[0.24em]"
+                  style={{ color: 'var(--app-accent)' }}
+                >
+                  Detail machine
+                </div>
+                <h2 className="text-[30px] font-bold leading-tight" style={{ color: 'var(--app-heading)' }}>
+                  {machine.name}
+                </h2>
+                <p className="mt-2 text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
+                  {[machine.marque, machine.model].filter(Boolean).join(' • ') || 'Modele non renseigne'}
+                </p>
+              </div>
 
-      {/* ── FONCTIONS ── */}
-      {activeTab === 'Fonctions' && (
-        <div>
-          <div className="flex items-center gap-2 mb-4">
-            <Zap size={16} color="#00d4ff" />
-            <span className="text-[15px] font-bold text-white">Fonctions de la Machine</span>
-          </div>
-          {machineFunctions.length === 0 ? (
-            <div className="text-center text-slate-500 py-16">Aucune fonction renseignée</div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {machineFunctions.map((f, i) => (
-                <div key={i} className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-4 hover:border-[rgba(0,212,255,0.2)] transition-all">
-                  <div className="text-sm font-semibold text-[#00d4ff] mb-1">▸ {f.title}</div>
-                  <div className="text-xs text-slate-400">{f.desc}</div>
+              <div className="flex flex-wrap gap-2">
+                <span
+                  className="inline-flex items-center rounded-xl px-3 py-1.5 text-xs font-semibold"
+                  style={{ background: 'var(--app-inset)', border: '1px solid var(--app-border)', color: 'var(--app-text)' }}
+                >
+                  {machine.machId}
+                </span>
+                {machine.type && machine.type !== '-' && (
+                  <span
+                    className="inline-flex items-center rounded-xl px-3 py-1.5 text-xs font-semibold"
+                    style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)', color: 'var(--app-muted)' }}
+                  >
+                    {machine.type}
+                  </span>
+                )}
+                {machine.chipModel && machine.chipModel !== '-' && (
+                  <span
+                    className="inline-flex items-center rounded-xl px-3 py-1.5 text-xs font-semibold"
+                    style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)', color: 'var(--app-muted)' }}
+                  >
+                    {machine.chipModel}
+                  </span>
+                )}
+                {isLiveMachine && (
+                  <span
+                    className="inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-semibold"
+                    style={{ background: successTone.bg, border: `1px solid ${successTone.border}`, color: successTone.color }}
+                  >
+                    <Activity size={12} />
+                    Capteurs actifs
+                  </span>
+                )}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {metadata.map((item) => (
+                  <div key={item.label} className="rounded-[20px] px-4 py-3" style={insetPanelStyle}>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--app-subtle)' }}>
+                      {item.label}
+                    </div>
+                    <div className="mt-2 text-sm font-semibold break-all" style={{ color: 'var(--app-text)' }}>
+                      {item.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div
+                className="inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold"
+                style={{
+                  background: statusStyle.bg,
+                  border: `1px solid ${statusStyle.border}`,
+                  color: statusStyle.color,
+                }}
+              >
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: statusStyle.color }} />
+                {machine.status}
+              </div>
+
+              {sideFacts.map((item) => (
+                <div key={item.label} className="rounded-[22px] px-4 py-4" style={softPanelStyle}>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--app-subtle)' }}>
+                    {item.label}
+                  </div>
+                  <div className="mt-3 text-[22px] font-bold" style={{ color: item.color }}>
+                    {item.value}
+                  </div>
                 </div>
               ))}
             </div>
-          )}
-        </div>
-      )}
-
-      {/* ── PIÈCES (jamais affiché pour compresseur grâce à getTabs) ── */}
-      {hasPieces && activeTab === 'Pièces' && (
-        <div>
-          <div className="flex items-center gap-2 mb-4">
-            <Package size={16} className="text-[#00d4ff]" />
-            <span className="text-[15px] font-bold text-white">Pièces — {machine.name}</span>
-            <span className="text-xs text-slate-500">{pieces.length} pièce(s)</span>
           </div>
+        </section>
 
-          {pieces.length === 0 ? (
-            <div className="text-center text-slate-500 py-16">
-              <Package size={40} className="mb-3 text-slate-400" />
-              <div>Aucune pièce enregistrée pour cette machine</div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-4">
-              {pieces.map(piece => {
-                const sc = resolvePieceStatusConfig(getVisiblePieceStatus(piece));
-                return (
-                  <div key={piece._id}
-                    className="bg-slate-800/50 border border-white/[0.08] rounded-xl p-4 hover:border-[rgba(0,212,255,0.2)] transition-all">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="text-sm font-bold text-white">{piece.nom}</div>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold"
-                        style={{ background: sc.bg, color: sc.color }}>
-                        {sc.label}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="text-center p-2 rounded-lg" style={{ background: 'rgba(59,130,246,0.1)' }}>
-                        <div className="text-[16px] font-bold text-[#3b82f6]">{piece.quantite}</div>
-                        <div className="text-[10px] text-slate-500">pièces</div>
-                      </div>
-                      <div className="text-center p-2 rounded-lg" style={{ background: 'rgba(34,197,94,0.1)' }}>
-                        <div className="text-[16px] font-bold text-[#22c55e]">{(piece.quantite * piece.prix).toLocaleString()}</div>
-                        <div className="text-[10px] text-slate-500">DT</div>
-                      </div>
-                    </div>
-                    {!piece.matiere && (
-                      <div className="mt-2 text-[10px] text-red-400 flex items-center gap-1">Matiere manquante</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => {
+            const TabIcon = getTabIcon(tab);
+
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
+                style={getTabButtonStyle(activeTab === tab)}
+              >
+                <TabIcon size={15} />
+                {tab}
+              </button>
+            );
+          })}
         </div>
-      )}
 
-      {/* ── ALERTES ── */}
-      {activeTab === 'Alertes' && LIVE_MACHINES.includes(machine.id) && (() => {
-        const sevColor = (s: Alert['severity']) =>
-          s === 'critical' ? { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)', label: 'Critique' }
-          : s === 'warning' ? { color: '#f97316', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.3)', label: 'Avertissement' }
-          : { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', label: 'Info' };
-
-        const statusLabel = (s: Alert['status']) =>
-          s === 'new'        ? { text: 'Nouveau',  color: '#ef4444' }
-          : s === 'seen'     ? { text: 'Vu',       color: '#f59e0b' }
-          : s === 'notified' ? { text: 'Notifié',  color: '#a855f7' }
-          : { text: 'Résolu', color: '#22c55e' };
-
-        const active   = alerts.filter(a => a.status !== 'resolved');
-        const resolved = alerts.filter(a => a.status === 'resolved');
-
-        return (
-          <div>
-            <div className="flex items-center gap-2 mb-4 flex-wrap">
-              <Bell size={16} color="#f97316" />
-              <span className="text-[15px] font-bold text-white">Alertes — {machine.name}</span>
-              <span className="ml-auto text-xs px-2.5 py-0.5 rounded-full font-bold"
+        {activeTab === 'Capteurs' && isLiveMachine && (
+          <section className="rounded-[28px] p-5" style={panelStyle}>
+            <div className="mb-5 flex items-center gap-3 flex-wrap">
+              <div
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl"
+                style={{ background: 'var(--app-accent-soft)', color: 'var(--app-accent)' }}
+              >
+                <Activity size={18} />
+              </div>
+              <div>
+                <div className="text-lg font-bold" style={{ color: 'var(--app-heading)' }}>
+                  Mesures en temps reel
+                </div>
+                <div className="text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Suivi de l'etat machine et des valeurs instantanees.
+                </div>
+              </div>
+              <span
+                className="ml-auto inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold"
                 style={{
-                  background: active.length > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-                  border: `1px solid ${active.length > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,
-                  color: active.length > 0 ? '#ef4444' : '#22c55e'
-                }}>
-                {active.length > 0 ? `${active.length} active(s)` : 'Aucune alerte active'}
+                  background: live.isLive ? successTone.bg : accentTone.bg,
+                  border: `1px solid ${live.isLive ? successTone.border : accentTone.border}`,
+                  color: live.isLive ? successTone.color : accentTone.color,
+                }}
+              >
+                {live.isLive ? <Activity size={12} /> : <Clock size={12} />}
+                {live.isLive ? 'EN DIRECT' : 'SIMULATION'}
               </span>
-              <button onClick={fetchAlerts}
-                className="text-xs px-3 py-1 rounded-lg border border-white/[0.08] text-slate-400 hover:text-[#00d4ff] hover:border-[rgba(0,212,255,0.3)] transition-all cursor-pointer">
-                ↻ Actualiser
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {metrics.map((metric) => (
+                <div key={metric.label} className="rounded-[22px] p-4" style={insetPanelStyle}>
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="text-sm font-semibold" style={{ color: 'var(--app-muted)' }}>
+                      {metric.label}
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[24px] font-bold leading-none" style={{ color: metric.color }}>
+                        {metric.value}
+                      </div>
+                      <div className="mt-1 text-xs font-semibold" style={{ color: 'var(--app-subtle)' }}>
+                        {metric.unit}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="h-2 overflow-hidden rounded-full"
+                    style={{ background: 'var(--app-neutral-soft)' }}
+                  >
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${metric.pct}%`, background: metric.color }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {live.courant > 15 && (
+                <span
+                  className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
+                  style={{ background: dangerTone.bg, border: `1px solid ${dangerTone.border}`, color: dangerTone.color }}
+                >
+                  Courant eleve
+                </span>
+              )}
+              {live.vibration > 2 && (
+                <span
+                  className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
+                  style={{ background: warningTone.bg, border: `1px solid ${warningTone.border}`, color: warningTone.color }}
+                >
+                  Vibration elevee
+                </span>
+              )}
+              {isCompresseur && live.pression > 10 && (
+                <span
+                  className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
+                  style={{ background: dangerTone.bg, border: `1px solid ${dangerTone.border}`, color: dangerTone.color }}
+                >
+                  Pression critique
+                </span>
+              )}
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'Fonctions' && (
+          <section className="rounded-[28px] p-5" style={panelStyle}>
+            <div className="mb-5 flex items-center gap-3">
+              <div
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl"
+                style={{ background: 'var(--app-accent-soft)', color: 'var(--app-accent)' }}
+              >
+                <Zap size={18} />
+              </div>
+              <div>
+                <div className="text-lg font-bold" style={{ color: 'var(--app-heading)' }}>
+                  Fonctions de la machine
+                </div>
+                <div className="text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Capacites et usages operationnels de cet equipement.
+                </div>
+              </div>
+            </div>
+
+            {machineFunctions.length === 0 ? (
+              <div className="rounded-[22px] px-4 py-12 text-center" style={softPanelStyle}>
+                <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
+                  Aucune fonction renseignee
+                </div>
+                <div className="mt-2 text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Cette machine n'a pas encore de fiche fonctionnelle detaillee.
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {machineFunctions.map((func, index) => (
+                  <div key={`${func.title}-${index}`} className="rounded-[22px] p-4" style={softPanelStyle}>
+                    <div className="text-sm font-bold" style={{ color: 'var(--app-heading)' }}>
+                      {func.title}
+                    </div>
+                    <div className="mt-2 text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
+                      {func.desc}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {hasPieces && activeTab === 'Pieces' && (
+          <section className="rounded-[28px] p-5" style={panelStyle}>
+            <div className="mb-5 flex items-center gap-3 flex-wrap">
+              <div
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl"
+                style={{ background: 'var(--app-accent-soft)', color: 'var(--app-accent)' }}
+              >
+                <Package size={18} />
+              </div>
+              <div>
+                <div className="text-lg font-bold" style={{ color: 'var(--app-heading)' }}>
+                  Pieces de {machine.name}
+                </div>
+                <div className="text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Vue de production et etat des pieces associees a cette machine.
+                </div>
+              </div>
+              <span
+                className="ml-auto inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
+                style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)', color: 'var(--app-muted)' }}
+              >
+                {pieces.length} piece(s)
+              </span>
+            </div>
+
+            {pieces.length === 0 ? (
+              <div className="rounded-[22px] px-4 py-12 text-center" style={softPanelStyle}>
+                <Package size={40} className="mx-auto mb-3" style={{ color: 'var(--app-accent)' }} />
+                <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
+                  Aucune piece enregistree
+                </div>
+                <div className="mt-2 text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Cette machine n'a pas encore de piece de production associee.
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {pieces.map((piece) => {
+                  const pieceStatus = resolvePieceStatusConfig(getVisiblePieceStatus(piece));
+
+                  return (
+                    <div key={piece._id} className="rounded-[24px] p-4" style={softPanelStyle}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-lg font-bold" style={{ color: 'var(--app-heading)' }}>
+                            {piece.nom}
+                          </div>
+                          <div className="mt-1 text-sm" style={{ color: 'var(--app-muted)' }}>
+                            Suivi de production machine
+                          </div>
+                        </div>
+
+                        <span
+                          className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
+                          style={{
+                            background: pieceStatus.bg,
+                            border: `1px solid ${pieceStatus.border}`,
+                            color: pieceStatus.color,
+                          }}
+                        >
+                          {pieceStatus.label}
+                        </span>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div
+                          className="rounded-[20px] p-4 text-center"
+                          style={{
+                            background: 'var(--app-accent-soft)',
+                            border: '1px solid var(--app-accent-soft-strong)',
+                          }}
+                        >
+                          <div className="text-[26px] font-bold" style={{ color: 'var(--app-accent)' }}>
+                            {piece.quantite}
+                          </div>
+                          <div className="mt-1 text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--app-subtle)' }}>
+                            Quantite
+                          </div>
+                        </div>
+
+                        <div
+                          className="rounded-[20px] p-4 text-center"
+                          style={{
+                            background: successTone.bg,
+                            border: `1px solid ${successTone.border}`,
+                          }}
+                        >
+                          <div className="text-[26px] font-bold" style={{ color: successTone.color }}>
+                            {(piece.quantite * piece.prix).toLocaleString('fr-FR')}
+                          </div>
+                          <div className="mt-1 text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--app-subtle)' }}>
+                            Valeur DT
+                          </div>
+                        </div>
+                      </div>
+
+                      {!piece.matiere && (
+                        <div
+                          className="mt-4 inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
+                          style={{ background: dangerTone.bg, border: `1px solid ${dangerTone.border}`, color: dangerTone.color }}
+                        >
+                          Matiere manquante
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeTab === 'Alertes' && isLiveMachine && (
+          <section className="rounded-[28px] p-5" style={panelStyle}>
+            <div className="mb-5 flex items-center gap-3 flex-wrap">
+              <div
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl"
+                style={{ background: warningTone.bg, color: warningTone.color }}
+              >
+                <Bell size={18} />
+              </div>
+              <div>
+                <div className="text-lg font-bold" style={{ color: 'var(--app-heading)' }}>
+                  Alertes machine
+                </div>
+                <div className="text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Evenements, anomalies et suivi de resolution.
+                </div>
+              </div>
+
+              <span
+                className="ml-auto inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
+                style={{
+                  background: activeAlerts.length > 0 ? dangerTone.bg : successTone.bg,
+                  border: `1px solid ${activeAlerts.length > 0 ? dangerTone.border : successTone.border}`,
+                  color: activeAlerts.length > 0 ? dangerTone.color : successTone.color,
+                }}
+              >
+                {activeAlerts.length > 0 ? `${activeAlerts.length} active(s)` : 'Aucune alerte active'}
+              </span>
+
+              <button
+                onClick={fetchAlerts}
+                className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold"
+                style={{
+                  background: 'var(--app-surface)',
+                  border: '1px solid var(--app-border)',
+                  color: 'var(--app-accent)',
+                }}
+              >
+                Actualiser
               </button>
             </div>
 
             {alertsLoading ? (
-              <div className="text-center text-slate-500 py-16 animate-pulse">Chargement des alertes...</div>
+              <div className="rounded-[22px] px-4 py-12 text-center" style={softPanelStyle}>
+                <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
+                  Chargement des alertes...
+                </div>
+                <div className="mt-2 text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Recuperation des donnees machine en cours.
+                </div>
+              </div>
             ) : alerts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <CheckCircle size={40} color="#22c55e" />
-                <div className="text-base font-semibold text-white">Aucune alerte</div>
-                <div className="text-sm text-slate-500">Cette machine fonctionne normalement</div>
+              <div className="rounded-[22px] px-4 py-12 text-center" style={softPanelStyle}>
+                <CheckCircle size={40} className="mx-auto mb-3" style={{ color: successTone.color }} />
+                <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
+                  Aucune alerte
+                </div>
+                <div className="mt-2 text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Cette machine fonctionne normalement pour le moment.
+                </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-3">
-                {active.length > 0 && (
-                  <>
-                    <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Alertes actives</div>
-                    {active.map(alert => {
-                      const sev = sevColor(alert.severity);
-                      const sl  = statusLabel(alert.status);
-                      return (
-                        <div key={alert._id} className="rounded-xl p-4 border transition-all"
-                          style={{ background: sev.bg, borderColor: sev.border }}>
-                          <div className="flex items-start justify-between gap-2 mb-2 flex-wrap">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[11px] px-2 py-0.5 rounded-full font-bold"
-                                style={{ background: sev.bg, border: `1px solid ${sev.border}`, color: sev.color }}>
-                                {sev.label}
-                              </span>
-                              <span className="text-[11px] font-semibold" style={{ color: sl.color }}>● {sl.text}</span>
-                            </div>
-                            <span className="text-[10px] text-slate-500 flex-shrink-0 flex items-center gap-1">
-                              <Clock size={10} /> {new Date(alert.createdAt).toLocaleString('fr-FR')}
-                            </span>
-                          </div>
-                          <div className="text-sm text-white font-medium mb-3">{alert.message}</div>
-                          {alert.sensorSnapshot && Object.keys(alert.sensorSnapshot).length > 0 && (
-                            <div className="flex gap-2 flex-wrap mb-3">
-                              {Object.entries(alert.sensorSnapshot).map(([k, v]) => (
-                                <span key={k} className="text-[10px] px-2 py-0.5 rounded bg-slate-700/60 text-slate-400 border border-white/[0.06]">
-                                  {k}: <span className="text-white font-bold">{v}</span>
+              <div className="flex flex-col gap-4">
+                {activeAlerts.length > 0 && (
+                  <div>
+                    <div
+                      className="mb-3 text-[12px] font-semibold uppercase tracking-[0.24em]"
+                      style={{ color: 'var(--app-subtle)' }}
+                    >
+                      Alertes actives
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      {activeAlerts.map((alert) => {
+                        const severityStyle = resolveAlertSeverityStyle(alert.severity);
+                        const alertStatusStyle = resolveAlertStatusStyle(alert.status);
+
+                        return (
+                          <div
+                            key={alert._id}
+                            className="rounded-[22px] p-4"
+                            style={{
+                              background: severityStyle.bg,
+                              border: `1px solid ${severityStyle.border}`,
+                            }}
+                          >
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span
+                                  className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold"
+                                  style={{
+                                    background: severityStyle.bg,
+                                    border: `1px solid ${severityStyle.border}`,
+                                    color: severityStyle.color,
+                                  }}
+                                >
+                                  {severityStyle.label}
                                 </span>
-                              ))}
+                                <span className="text-xs font-semibold" style={{ color: alertStatusStyle.color }}>
+                                  {alertStatusStyle.text}
+                                </span>
+                              </div>
+
+                              <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--app-muted)' }}>
+                                <Clock size={12} />
+                                {new Date(alert.createdAt).toLocaleString('fr-FR')}
+                              </span>
                             </div>
-                          )}
-                          <div className="flex gap-2">
-                            {alert.status === 'new' && (
-                              <button onClick={() => handleMarkSeen(alert._id)}
-                                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg font-semibold cursor-pointer transition-all"
-                                style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.3)', color: '#f59e0b' }}>
-                                <Eye size={11} /> Marquer vu
-                              </button>
+
+                            <div className="mt-3 text-sm font-semibold leading-6" style={{ color: 'var(--app-heading)' }}>
+                              {alert.message}
+                            </div>
+
+                            {alert.sensorSnapshot && Object.keys(alert.sensorSnapshot).length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {Object.entries(alert.sensorSnapshot).map(([key, value]) => (
+                                  <span
+                                    key={key}
+                                    className="inline-flex items-center rounded-xl px-3 py-1.5 text-xs font-semibold"
+                                    style={{
+                                      background: 'var(--app-inset)',
+                                      border: '1px solid var(--app-border)',
+                                      color: 'var(--app-text)',
+                                    }}
+                                  >
+                                    {key}: {value}
+                                  </span>
+                                ))}
+                              </div>
                             )}
-                            <button onClick={() => handleResolve(alert._id)}
-                              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg font-semibold cursor-pointer transition-all"
-                              style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e' }}>
-                              <CheckCircle size={11} /> Résoudre
-                            </button>
+
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              {alert.status === 'new' && (
+                                <button
+                                  onClick={() => handleMarkSeen(alert._id)}
+                                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold"
+                                  style={{
+                                    background: warningTone.bg,
+                                    border: `1px solid ${warningTone.border}`,
+                                    color: warningTone.color,
+                                  }}
+                                >
+                                  <Eye size={12} />
+                                  Marquer vu
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => handleResolve(alert._id)}
+                                className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold"
+                                style={{
+                                  background: successTone.bg,
+                                  border: `1px solid ${successTone.border}`,
+                                  color: successTone.color,
+                                }}
+                              >
+                                <CheckCircle size={12} />
+                                Resoudre
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
 
-                {resolved.length > 0 && (
-                  <>
-                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-2 mb-1">
-                      Alertes résolues ({resolved.length})
+                {resolvedAlerts.length > 0 && (
+                  <div>
+                    <div
+                      className="mb-3 text-[12px] font-semibold uppercase tracking-[0.24em]"
+                      style={{ color: 'var(--app-subtle)' }}
+                    >
+                      Alertes resolues ({resolvedAlerts.length})
                     </div>
-                    {resolved.map(alert => {
-                      const sev = sevColor(alert.severity);
-                      return (
-                        <div key={alert._id}
-                          className="rounded-xl p-4 border border-white/[0.06] bg-slate-800/30 opacity-60">
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-[11px] px-2 py-0.5 rounded-full font-bold"
-                              style={{ background: sev.bg, border: `1px solid ${sev.border}`, color: sev.color }}>
-                              {sev.label}
-                            </span>
-                            <span className="text-[11px] font-semibold text-[#22c55e]">Resolu</span>
-                            <span className="text-[10px] text-slate-500 ml-auto">
-                              {new Date(alert.createdAt).toLocaleString('fr-FR')}
-                            </span>
+
+                    <div className="flex flex-col gap-3">
+                      {resolvedAlerts.map((alert) => {
+                        const severityStyle = resolveAlertSeverityStyle(alert.severity);
+
+                        return (
+                          <div key={alert._id} className="rounded-[22px] p-4" style={softPanelStyle}>
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <span
+                                className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold"
+                                style={{
+                                  background: severityStyle.bg,
+                                  border: `1px solid ${severityStyle.border}`,
+                                  color: severityStyle.color,
+                                }}
+                              >
+                                {severityStyle.label}
+                              </span>
+
+                              <span className="text-xs font-semibold" style={{ color: successTone.color }}>
+                                Resolu
+                              </span>
+
+                              <span className="text-xs" style={{ color: 'var(--app-muted)' }}>
+                                {new Date(alert.createdAt).toLocaleString('fr-FR')}
+                              </span>
+                            </div>
+
+                            <div className="mt-3 text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
+                              {alert.message}
+                            </div>
                           </div>
-                          <div className="text-sm text-slate-400">{alert.message}</div>
-                        </div>
-                      );
-                    })}
-                  </>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
-          </div>
-        );
-      })()}
+          </section>
+        )}
 
-      {/* ── HISTORIQUE ── */}
-      {activeTab === 'Historique' && (
-        <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <History size={38} className="text-slate-400" />
-          <div className="text-base font-semibold text-white">Historique</div>
-          <div className="text-sm text-slate-500">Bientôt disponible</div>
-        </div>
-      )}
-
+        {activeTab === 'Historique' && (
+          <section className="rounded-[28px] p-5" style={panelStyle}>
+            <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+              <History size={40} style={{ color: 'var(--app-accent)' }} />
+              <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
+                Historique
+              </div>
+              <div className="max-w-md text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
+                Cette partie sera utilisee pour afficher les interventions, les cycles passes et les
+                changements importants sur la machine.
+              </div>
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 };

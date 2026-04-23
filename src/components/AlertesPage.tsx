@@ -28,7 +28,7 @@ interface CallLog {
 const socket = io('http://localhost:5000', { transports: ['websocket'] });
 
 const AlertesPage: React.FC = () => {
-  const { darkMode } = useTheme();
+  useTheme();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [filter, setFilter] = useState<'all' | 'critical' | 'warning' | 'new' | 'resolved'>('all');
   const [loading, setLoading] = useState(true);
@@ -129,7 +129,8 @@ const AlertesPage: React.FC = () => {
         </div>
         <button
           onClick={fetchAlerts}
-          className="px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm font-medium cursor-pointer hover:bg-blue-500/30 transition-all"
+          className="px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all border"
+          style={{ background: 'var(--app-accent-soft)', borderColor: 'var(--app-accent-soft-strong)', color: 'var(--app-accent)' }}
         >
           Actualiser
         </button>
@@ -137,7 +138,7 @@ const AlertesPage: React.FC = () => {
 
       <div className="grid grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Total', value: counts.total, color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.2)' },
+          { label: 'Total', value: counts.total, color: 'var(--app-text)', bg: 'var(--app-neutral-soft)', border: 'var(--app-neutral-border)' },
           { label: 'Critiques', value: counts.critical, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.2)' },
           { label: 'Attention', value: counts.warning, color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.2)' },
           { label: 'Nouvelles', value: counts.new, color: '#3b82f6', bg: 'rgba(59,130,246,0.1)', border: 'rgba(59,130,246,0.2)' },
@@ -158,9 +159,10 @@ const AlertesPage: React.FC = () => {
             onClick={() => setFilter(f)}
             className={`px-4 py-1.5 rounded-full text-xs font-semibold cursor-pointer border transition-all ${
               filter === f
-                ? 'bg-[#00d4ff] text-black border-[#00d4ff]'
+                ? 'text-white'
                 : 'bg-transparent text-[var(--app-muted)] border-[color:var(--app-border)] hover:border-[color:var(--app-border)]'
             }`}
+            style={filter === f ? { background: 'var(--app-accent)', borderColor: 'var(--app-accent)' } : undefined}
           >
             {f === 'all' ? 'Toutes' : f === 'critical' ? 'Critiques' : f === 'warning' ? 'Attention' : f === 'new' ? 'Nouvelles' : 'Resolues'}
           </button>
@@ -204,7 +206,7 @@ const AlertesPage: React.FC = () => {
                   </span>
                   <span
                     className="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                    style={{ background: darkMode ? 'rgba(51,65,85,0.78)' : 'rgba(15,23,42,0.08)', color: darkMode ? '#cbd5e1' : '#233149' }}
+                    style={{ background: 'var(--app-inset)', color: 'var(--app-muted)', border: '1px solid var(--app-border)' }}
                   >
                     {alert.type}
                   </span>

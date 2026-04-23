@@ -73,7 +73,7 @@ const requestStatusLabel = (status: MaintenanceRequest['status']) => {
 };
 
 const MaintenancePage: React.FC = () => {
-  const { darkMode } = useTheme();
+  useTheme();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -169,8 +169,8 @@ const MaintenancePage: React.FC = () => {
   const bodyClass = 'text-[var(--app-text)]';
   const mutedClass = 'text-[var(--app-muted)]';
   const subtleClass = 'text-[var(--app-subtle)]';
-  const progressTrack = darkMode ? 'rgba(71,85,105,0.6)' : 'rgba(15,23,42,0.12)';
-  const statusBadgeBg = darkMode ? 'rgba(51,65,85,0.78)' : 'rgba(15,23,42,0.08)';
+  const progressTrack = 'var(--app-neutral-soft)';
+  const statusBadgeBg = 'var(--app-inset)';
 
   return (
     <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full bg-transparent">
@@ -181,19 +181,20 @@ const MaintenancePage: React.FC = () => {
         </div>
         <button
           onClick={fetchOverview}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border border-blue-500/25 bg-blue-500/15 hover:bg-blue-500/25 transition-all"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer border transition-all"
+          style={{ color: 'var(--app-accent)', borderColor: 'var(--app-accent-soft-strong)', background: 'var(--app-accent-soft)' }}
         >
           <RefreshCw size={14} /> Actualiser
         </button>
       </div>
 
       {message && (
-        <div className="mb-4 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">{message}</div>
+        <div className="mb-4 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: 'var(--app-accent-soft-strong)', background: 'var(--app-accent-soft)', color: 'var(--app-text)' }}>{message}</div>
       )}
 
       <div className="grid grid-cols-3 gap-4 mb-6">
         {[
-          { label: 'Demandes ouvertes', value: counts.openRequests, icon: <Wrench size={18} />, color: '#38bdf8' },
+          { label: 'Demandes ouvertes', value: counts.openRequests, icon: <Wrench size={18} />, color: 'var(--app-accent)' },
           { label: 'Rapports critiques', value: counts.criticalReports, icon: <AlertTriangle size={18} />, color: '#ef4444' },
           { label: 'Risques detectes', value: counts.warningReports, icon: <Activity size={18} />, color: '#f59e0b' },
         ].map(item => (

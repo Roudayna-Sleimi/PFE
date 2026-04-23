@@ -266,8 +266,8 @@ const PieceInfoGrid: React.FC<{ piece: Piece; machineName?: string; statusLabel?
             borderBottom: darkMode ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(15,23,42,0.08)",
           }}
         >
-          <span style={{ color: darkMode ? "#94a3b8" : "#64748b" }}>{row.label}</span>
-          <strong style={{ color: row.danger ? "#dc2626" : darkMode ? "#f8fafc" : "#0f172a" }}>{row.value}</strong>
+          <span style={{ color: "var(--app-subtle)" }}>{row.label}</span>
+          <strong style={{ color: row.danger ? "var(--app-danger)" : "var(--app-text)" }}>{row.value}</strong>
         </div>
       ))}
     </div>
@@ -285,7 +285,6 @@ const badge = (bg: string, color: string): React.CSSProperties => ({
 });
 
 const PiecePlanPreview: React.FC<{ piece: Piece; height?: number; compact?: boolean }> = ({ piece, height = 150, compact = false }) => {
-  const { darkMode } = useTheme();
   const plan = getPiecePlan(piece);
   const directUrl = resolveAssetUrl(plan.path);
   const shouldDownloadPlan = !directUrl && Boolean(piece.planDocumentId) && plan.isPreviewable;
@@ -334,8 +333,8 @@ const PiecePlanPreview: React.FC<{ piece: Piece; height?: number; compact?: bool
         height,
         borderRadius: 18,
         overflow: "hidden",
-        border: darkMode ? "1px solid rgba(148,163,184,0.18)" : "1px solid rgba(15,23,42,0.08)",
-        background: darkMode ? "linear-gradient(180deg, rgba(2,6,23,0.88), rgba(15,23,42,0.78))" : "linear-gradient(180deg, rgba(248,250,252,0.98), rgba(226,232,240,0.92))",
+        border: "1px solid var(--app-border)",
+        background: "linear-gradient(180deg, var(--app-card-alt), var(--app-inset))",
         display: "grid",
         placeItems: "center",
         cursor: previewUrl && plan.isPreviewable ? "pointer" : "default",
@@ -359,13 +358,13 @@ const PiecePlanPreview: React.FC<{ piece: Piece; height?: number; compact?: bool
       ) : previewUrl && plan.isPdf ? (
         <iframe title={plan.name || piece.nom} src={`${previewUrl}#toolbar=0&navpanes=0&scrollbar=0`} style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }} />
       ) : (
-        <div style={{ display: "grid", gap: 8, justifyItems: "center", color: darkMode ? "#94a3b8" : "#64748b", padding: 16, textAlign: "center" }}>
+        <div style={{ display: "grid", gap: 8, justifyItems: "center", color: "var(--app-subtle)", padding: 16, textAlign: "center" }}>
           <div style={{ fontSize: compact ? 20 : 28, fontWeight: 900, letterSpacing: 0 }}>{plan.isCad ? "CAD" : "PLAN"}</div>
           <div style={{ fontSize: 12 }}>{plan.name || "Aucun plan associe"}</div>
         </div>
       )}
       {plan.name && (
-        <div style={{ position: "absolute", left: 10, right: 10, bottom: 10, padding: "8px 10px", borderRadius: 12, background: darkMode ? "rgba(2,6,23,0.72)" : "rgba(255,255,255,0.9)", color: darkMode ? "#dbeafe" : "#122033", fontSize: 11, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", boxShadow: "none" }}>
+        <div style={{ position: "absolute", left: 10, right: 10, bottom: 10, padding: "8px 10px", borderRadius: 12, background: "var(--app-surface)", color: "var(--app-text)", fontSize: 11, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", boxShadow: "none" }}>
           {plan.name}
         </div>
       )}
@@ -419,13 +418,13 @@ const EmployePage: React.FC = () => {
       subtle: "var(--app-subtle)",
       accent: "var(--app-accent)",
       accentStrong: "var(--app-accent-strong)",
-      accentSoft: darkMode ? "rgba(29,78,216,0.18)" : "rgba(29,78,216,0.08)",
-      success: darkMode ? "#34d399" : "#059669",
-      warning: darkMode ? "#f59e0b" : "#d97706",
-      danger: darkMode ? "#f87171" : "#dc2626",
+      accentSoft: "var(--app-accent-soft)",
+      success: "var(--app-success)",
+      warning: "var(--app-warning)",
+      danger: "var(--app-danger)",
       inputBg: "var(--app-surface-strong)",
       shadow: "none",
-      primary: darkMode ? "linear-gradient(135deg,#1d4ed8,#2563eb)" : "#0f172a",
+      primary: "linear-gradient(135deg,var(--app-accent),var(--app-accent-strong))",
       secondary: "var(--app-surface)",
     }
   ), [darkMode]);
@@ -473,7 +472,7 @@ const EmployePage: React.FC = () => {
     color: theme.text,
     padding: "12px 14px",
     boxSizing: "border-box",
-    boxShadow: darkMode ? "inset 0 1px 0 rgba(255,255,255,0.03)" : "none",
+    boxShadow: "none",
   };
   const bigInputStyle: React.CSSProperties = {
     ...inputBaseStyle,
@@ -830,7 +829,7 @@ const EmployePage: React.FC = () => {
   const selectedPieceStatus = selectedPiece ? getVisibleStatus(selectedPiece) : "Arrete";
 
   return (
-    <div style={{ minHeight: "100vh", height: isCompactLayout ? "auto" : "100vh", overflow: isCompactLayout ? "visible" : "hidden", display: "flex", flexDirection: isCompactLayout ? "column" : "row", background: theme.bg, color: theme.text, fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
+    <div style={{ minHeight: "100vh", height: isCompactLayout ? "auto" : "100vh", overflow: isCompactLayout ? "visible" : "hidden", display: "flex", flexDirection: isCompactLayout ? "column" : "row", background: theme.bg, color: theme.text, fontFamily: "'Sora','Manrope','Segoe UI',system-ui,sans-serif" }}>
       <aside style={{ width: isCompactLayout ? "100%" : 292, minWidth: isCompactLayout ? 0 : 292, minHeight: isCompactLayout ? "auto" : "100vh", position: isCompactLayout ? "relative" : "sticky", top: 0, alignSelf: isCompactLayout ? "stretch" : "flex-start", overflowY: isCompactLayout ? "visible" : "auto", flexShrink: 0, borderRight: isCompactLayout ? "none" : `1px solid ${theme.border}`, borderBottom: isCompactLayout ? `1px solid ${theme.border}` : "none", background: theme.aside, padding: isCompactLayout ? 18 : 24, display: "flex", flexDirection: "column", gap: 18, backdropFilter: "blur(18px)", boxShadow: "none" }}>
         <div style={{ borderBottom: `1px solid ${theme.border}`, paddingBottom: 18, display: "grid", gap: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>

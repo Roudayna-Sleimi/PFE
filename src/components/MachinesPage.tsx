@@ -391,7 +391,7 @@ const MachinesPage: React.FC = () => {
           <button
             onClick={refresh}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
-            style={{ background: 'linear-gradient(135deg,#0066ff,#00d4ff)' }}
+            style={{ background: 'linear-gradient(135deg,var(--app-accent),var(--app-accent-strong))' }}
           >
             <RefreshCw size={14} /> Actualiser
           </button>
@@ -400,7 +400,7 @@ const MachinesPage: React.FC = () => {
             <button
               onClick={openAddMachineModal}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer border-none"
-              style={{ background: 'linear-gradient(135deg,#0f766e,#0891b2)' }}
+              style={{ background: 'linear-gradient(135deg,var(--app-accent),var(--app-accent-strong))' }}
             >
               <Plus size={14} /> Ajouter une machine
             </button>
@@ -420,7 +420,7 @@ const MachinesPage: React.FC = () => {
               className="group rounded-xl cursor-pointer transition-all duration-300"
               style={{ background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.08)' }}
               onMouseEnter={(event) => {
-                event.currentTarget.style.borderColor = 'rgba(0,212,255,0.3)';
+                event.currentTarget.style.borderColor = 'rgba(29,78,216,0.28)';
                 event.currentTarget.style.transform = 'translateY(-2px)';
               }}
               onMouseLeave={(event) => {
@@ -431,7 +431,7 @@ const MachinesPage: React.FC = () => {
               <div className="p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
                 <div className="flex items-start justify-between mb-1">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: '#00d4ff', boxShadow: '0 0 6px #00d4ff' }} />
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: 'var(--app-accent)', boxShadow: 'none' }} />
                     <span className="text-[15px] font-bold text-white">{machine.name}</span>
                   </div>
 
@@ -442,7 +442,7 @@ const MachinesPage: React.FC = () => {
                         title="Modifier"
                         aria-label={`Modifier ${machine.name}`}
                         className="p-1.5 rounded-lg cursor-pointer transition-all hover:bg-cyan-500/20"
-                        style={{ border: '1px solid rgba(56,189,248,0.3)', color: '#38bdf8', background: 'transparent' }}
+                        style={{ border: '1px solid var(--app-accent-soft-strong)', color: 'var(--app-accent)', background: 'transparent' }}
                       >
                         <PencilLine size={13} />
                       </button>
@@ -492,7 +492,7 @@ const MachinesPage: React.FC = () => {
                     ]
                   : [
                       { label: 'Production', value: machine.hasProductionData ? `${formatMachineNumber(machine.production)} pièces` : pendingMetric, color: '#3b82f6' },
-                      { label: 'Efficacité', value: machine.hasEfficiencyData ? `${formatMachineNumber(machine.efficacite, 1)}%` : pendingMetric, color: '#00d4ff' },
+                      { label: 'Efficacité', value: machine.hasEfficiencyData ? `${formatMachineNumber(machine.efficacite, 1)}%` : pendingMetric, color: 'var(--app-accent)' },
                       { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#475569' },
                     ]
                 ).map((stat) => (

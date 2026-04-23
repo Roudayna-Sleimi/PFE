@@ -56,7 +56,7 @@ const EMPTY_FORM: ContactFormState = {
 };
 
 const GsmContactsPage: React.FC = () => {
-  const { darkMode } = useTheme();
+  useTheme();
   const token = localStorage.getItem('token') || '';
   const role = localStorage.getItem('role') || '';
   const isAdmin = role === 'admin';
@@ -310,9 +310,9 @@ const GsmContactsPage: React.FC = () => {
   const mutedClass = 'text-[var(--app-muted)]';
   const subtleClass = 'text-[var(--app-subtle)]';
   const inactiveBadgeStyle = {
-    background: darkMode ? 'rgba(51,65,85,0.68)' : 'rgba(15,23,42,0.08)',
-    borderColor: darkMode ? 'rgba(71,85,105,0.82)' : 'rgba(15,23,42,0.14)',
-    color: darkMode ? '#cbd5e1' : '#233149',
+    background: 'var(--app-inset)',
+    borderColor: 'var(--app-border)',
+    color: 'var(--app-muted)',
   };
 
   return (
@@ -326,7 +326,7 @@ const GsmContactsPage: React.FC = () => {
           <button
             onClick={() => { loadContacts(); loadHistory(); }}
             className="px-4 py-2 rounded-lg text-sm font-semibold text-white border-none cursor-pointer"
-            style={{ background: 'linear-gradient(135deg,#0066ff,#00d4ff)' }}
+            style={{ background: 'linear-gradient(135deg,var(--app-accent),var(--app-accent-strong))' }}
           >
             Actualiser
           </button>
