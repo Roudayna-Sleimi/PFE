@@ -22,3 +22,18 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python cache and bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python AI runtime outputs
+python-ai/runtime/audio/*
+!python-ai/runtime/audio/.gitkeep
+python-ai/runtime/logs/*
+!python-ai/runtime/logs/.gitkeep
+python-ai/audio/
+python-ai/logs/
+python-ai/python-ai/

@@ -1,17 +1,17 @@
 {
-  "rows": 12050,
+  "rows": 12818,
   "machines": 2,
   "labels": {
-    "normal": 12010,
+    "normal": 12760,
     "warning": 2,
-    "critical": 38
+    "critical": 56
   },
   "label_sources": {
     "manual": 0,
-    "threshold": 12050
+    "threshold": 12818
   },
   "source_collection": "sensordatas",
-  "generated_at": "2026-04-17T22:07:18.113363+00:00",
+  "generated_at": "2026-04-23T05:59:31.774598+00:00",
   "thresholds": {
     "current_warning": 15.0,
     "current_critical": 20.0,
