@@ -1,7 +1,7 @@
 {
   "version": "simple-rules-v1",
-  "created_at": "2026-04-17T22:07:18.700305+00:00",
-  "dataset_path": "C:\\Users\\dell\\Desktop\\pfe\\PFE\\python-ai\\data\\lstm_dataset.csv",
+  "created_at": "2026-04-23T22:44:21.210660+00:00",
+  "dataset_path": "C:\\Users\\Rodawna\\cnc-pulse-dashboard\\python-ai\\data\\lstm_dataset.csv",
   "features": [
     "vibX",
     "vibY",
@@ -23,83 +23,46 @@
     "critical_zscore": 4.0
   },
   "label_counts": {
-    "normal": 12010,
-    "warning": 2,
-    "critical": 38
+    "normal": 22110,
+    "warning": 26,
+    "critical": 32
   },
   "machine_baselines": {
     "ESP32-NODE-01": {
       "vibX": {
-        "count": 12007,
-        "mean": 0.017795,
-        "std": 0.055494,
-        "min": -1.24,
-        "max": 0.35
+        "count": 22110,
+        "mean": 0.009791,
+        "std": 0.087584,
+        "min": -1.76,
+        "max": 1.81
       },
       "vibY": {
-        "count": 12007,
-        "mean": 0.062203,
-        "std": 0.073636,
-        "min": -0.4,
-        "max": 0.61
+        "count": 22110,
+        "mean": 0.057118,
+        "std": 0.093575,
+        "min": -1.42,
+        "max": 1.74
       },
       "vibZ": {
-        "count": 12007,
-        "mean": 0.891122,
-        "std": 0.052097,
-        "min": -1.3,
+        "count": 22110,
+        "mean": 0.888749,
+        "std": 0.104434,
+        "min": -1.88,
         "max": 1.97
       },
       "courant": {
-        "count": 12007,
-        "mean": 0.000565,
-        "std": 0.061872,
+        "count": 22110,
+        "mean": 0.007751,
+        "std": 0.214326,
         "min": 0.0,
-        "max": 6.78
+        "max": 6.01
       },
       "rpm": {
-        "count": 12007,
-        "mean": 0.059965,
-        "std": 3.948077,
+        "count": 22110,
+        "mean": 6.702849,
+        "std": 600.720336,
         "min": 0.0,
-        "max": 300.0
-      }
-    },
-    "compresseur": {
-      "vibX": {
-        "count": 3,
-        "mean": 0.0,
-        "std": 0.0,
-        "min": 0.0,
-        "max": 0.0
-      },
-      "vibY": {
-        "count": 3,
-        "mean": 0.0,
-        "std": 0.0,
-        "min": 0.0,
-        "max": 0.0
-      },
-      "vibZ": {
-        "count": 3,
-        "mean": 0.0,
-        "std": 0.0,
-        "min": 0.0,
-        "max": 0.0
-      },
-      "courant": {
-        "count": 3,
-        "mean": 0.0,
-        "std": 0.0,
-        "min": 0.0,
-        "max": 0.0
-      },
-      "rpm": {
-        "count": 3,
-        "mean": 0.0,
-        "std": 0.0,
-        "min": 0.0,
-        "max": 0.0
+        "max": 62400.0
       }
     }
   }
