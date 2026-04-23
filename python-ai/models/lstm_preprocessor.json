@@ -1,0 +1,97 @@
+{
+  "version": "lstm-v1",
+  "created_at": "2026-04-20T23:29:29.877256+00:00",
+  "model_path": "C:\\Users\\dell\\Desktop\\pfe\\PFE\\python-ai\\models\\maintenance_lstm.h5",
+  "dataset_path": "C:\\Users\\dell\\Desktop\\pfe\\PFE\\python-ai\\data\\lstm_dataset.csv",
+  "sequence_length": 30,
+  "window_stride": 1,
+  "features": [
+    "vibX",
+    "vibY",
+    "vibZ",
+    "courant",
+    "rpm",
+    "pression"
+  ],
+  "class_names": [
+    "normal",
+    "warning",
+    "critical"
+  ],
+  "label_to_index": {
+    "normal": 0,
+    "warning": 1,
+    "critical": 2
+  },
+  "index_to_label": {
+    "0": "normal",
+    "1": "warning",
+    "2": "critical"
+  },
+  "scaler": {
+    "mean": [
+      0.5024891495704651,
+      0.5373455882072449,
+      1.2180887460708618,
+      4.089303016662598,
+      0.3204801380634308,
+      3.4985530376434326
+    ],
+    "std": [
+      0.8377138376235962,
+      0.8282464742660522,
+      0.6233744621276855,
+      6.677894115447998,
+      4.614516258239746,
+      2.0153000354766846
+    ]
+  },
+  "normal_baseline": {
+    "vibX": {
+      "mean": 0.017859715968370438,
+      "std": 0.08407679200172424,
+      "min": -1.2400000095367432,
+      "max": 1.809999942779541
+    },
+    "vibY": {
+      "mean": 0.059532131999731064,
+      "std": 0.08066654950380325,
+      "min": -0.4000000059604645,
+      "max": 0.8500000238418579
+    },
+    "vibZ": {
+      "mean": 0.8909835815429688,
+      "std": 0.06125640496611595,
+      "min": -1.2999999523162842,
+      "max": 1.9700000286102295
+    },
+    "courant": {
+      "mean": 0.013962382450699806,
+      "std": 0.28828269243240356,
+      "min": 0.0,
+      "max": 6.78000020980835
+    },
+    "rpm": {
+      "mean": 0.15047021210193634,
+      "std": 6.717025279998779,
+      "min": 0.0,
+      "max": 480.0
+    },
+    "pression": {
+      "mean": 2.5899999141693115,
+      "std": 1.0,
+      "min": 2.5899999141693115,
+      "max": 2.5899999141693115
+    }
+  },
+  "thresholds": {
+    "current_warning": 15.0,
+    "current_critical": 20.0,
+    "vibration_warning": 2.0,
+    "vibration_critical": 3.0,
+    "pressure_warning_low": 4.5,
+    "pressure_warning_high": 10.0,
+    "pressure_critical_low": 3.5,
+    "pressure_critical_high": 11.0
+  }
+}
