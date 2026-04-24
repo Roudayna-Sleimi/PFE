@@ -121,7 +121,7 @@ const AlertesPage: React.FC = () => {
   const panelClass = 'rounded-xl border border-[color:var(--app-border)] bg-[var(--app-card)]';
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full" style={{ background: 'transparent' }}>
+    <div className="flex-1 min-w-0 w-full overflow-y-auto p-4 sm:p-6" style={{ background: 'transparent' }}>
       <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
         <div>
           <h2 className={`text-2xl font-bold mb-1 ${titleClass}`}>Alertes</h2>
@@ -136,7 +136,7 @@ const AlertesPage: React.FC = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { label: 'Total', value: counts.total, color: 'var(--app-text)', bg: 'var(--app-neutral-soft)', border: 'var(--app-neutral-border)' },
           { label: 'Critiques', value: counts.critical, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.2)' },
@@ -182,7 +182,7 @@ const AlertesPage: React.FC = () => {
           {filtered.map((alert) => (
             <div
               key={alert._id}
-              className="rounded-xl p-4 flex items-start gap-4"
+              className="flex flex-col gap-4 rounded-xl p-4 sm:flex-row sm:items-start"
               style={{
                 background: alert.severity === 'critical' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
                 border: `1px solid ${alert.severity === 'critical' ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`,
@@ -190,7 +190,7 @@ const AlertesPage: React.FC = () => {
                 opacity: alert.status === 'resolved' ? 0.6 : 1,
               }}
             >
-              <div className="text-2xl flex-shrink-0 mt-0.5">{alert.severity === 'critical' ? '!' : '!'}</div>
+              <div className="mt-0.5 text-2xl sm:flex-shrink-0">{alert.severity === 'critical' ? '!' : '!'}</div>
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -223,7 +223,7 @@ const AlertesPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 flex-shrink-0">
+              <div className="flex flex-wrap gap-2 sm:flex-col sm:flex-nowrap sm:self-start">
                 <button
                   onClick={() => playAlertAudio(alert._id)}
                   disabled={audioLoadingId === alert._id}

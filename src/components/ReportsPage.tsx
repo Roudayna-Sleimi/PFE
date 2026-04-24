@@ -144,7 +144,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
   }, [data, search]);
 
   return (
-    <div className={`flex-1 overflow-y-auto p-6 ${theme.page}`}>
+    <div className={`flex-1 overflow-y-auto p-4 sm:p-6 ${theme.page}`}>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="mb-1 text-2xl font-bold">Rapports de production</h2>
@@ -155,7 +155,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
             Energie estimee selon temps machine
           </div>
         )}
-        <div className={`flex h-10 min-w-[300px] items-center gap-2 rounded-lg border px-3 ${theme.card}`}>
+        <div className={`flex h-10 w-full sm:w-auto sm:min-w-[300px] items-center gap-2 rounded-lg border px-3 ${theme.card}`}>
           <Search size={15} color={neutral} />
           <input
             value={search}
@@ -180,7 +180,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
 
       {!loading && !error && data && (
         <>
-          <div className="mb-6 grid grid-cols-4 gap-4">
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {summary.map((item) => (
               <div key={item.label} className={`rounded-xl border p-4 ${theme.card}`}>
                 <div className="mb-3">{item.icon}</div>
@@ -190,7 +190,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
             ))}
           </div>
 
-          <div className="mb-6 grid grid-cols-2 gap-5">
+          <div className="mb-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
             <section className={`rounded-xl border p-5 ${theme.card}`}>
               <div className="mb-4 flex items-center gap-2">
                 <BarChart2 size={16} color={accent} />
@@ -200,21 +200,23 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
               {filtered.machines.length === 0 ? (
                 <div className={`text-sm ${theme.muted}`}>Aucune donnee machine.</div>
               ) : (
-                <div className={`overflow-hidden rounded-lg border ${theme.tableShell}`}>
-                  <div className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
-                    <span>Machine</span>
-                    <span>Pieces</span>
-                    <span>Usinage</span>
-                    <span>Energie</span>
-                  </div>
-                  {filtered.machines.map((row) => (
-                    <div key={row.machine} className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
-                      <span className="font-semibold">{row.machine}</span>
-                      <span>{row.piecesProduced}</span>
-                      <span>{fmtDuration(row.machiningSeconds)}</span>
-                      <span>{row.energyKwh.toLocaleString('fr-FR')} kWh</span>
+                <div className={`overflow-x-auto rounded-lg border ${theme.tableShell}`}>
+                  <div className="min-w-[560px]">
+                    <div className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
+                      <span>Machine</span>
+                      <span>Pieces</span>
+                      <span>Usinage</span>
+                      <span>Energie</span>
                     </div>
-                  ))}
+                    {filtered.machines.map((row) => (
+                      <div key={row.machine} className={`grid grid-cols-[1.4fr_0.8fr_1fr_1fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
+                        <span className="font-semibold">{row.machine}</span>
+                        <span>{row.piecesProduced}</span>
+                        <span>{fmtDuration(row.machiningSeconds)}</span>
+                        <span>{row.energyKwh.toLocaleString('fr-FR')} kWh</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </section>
@@ -228,24 +230,26 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
               {filtered.employees.length === 0 ? (
                 <div className={`text-sm ${theme.muted}`}>Aucune donnee employe.</div>
               ) : (
-                <div className={`overflow-hidden rounded-lg border ${theme.tableShell}`}>
-                  <div className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
-                    <span>Employe</span>
-                    <span>Pieces</span>
-                    <span>Usinage</span>
-                    <span>Energie</span>
-                  </div>
-                  {filtered.employees.map((row) => (
-                    <div key={row.username} className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
-                      <div>
-                        <div className="font-semibold">{row.username}</div>
-                        <div className={`text-[11px] ${theme.subtle}`}>{row.assignedMachine || 'Aucune machine fixe'}</div>
-                      </div>
-                      <span>{row.piecesProduced}</span>
-                      <span>{fmtDuration(row.machiningSeconds)}</span>
-                      <span>{row.energyKwh.toLocaleString('fr-FR')} kWh</span>
+                <div className={`overflow-x-auto rounded-lg border ${theme.tableShell}`}>
+                  <div className="min-w-[560px]">
+                    <div className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
+                      <span>Employe</span>
+                      <span>Pieces</span>
+                      <span>Usinage</span>
+                      <span>Energie</span>
                     </div>
-                  ))}
+                    {filtered.employees.map((row) => (
+                      <div key={row.username} className={`grid grid-cols-[1.2fr_0.7fr_1fr_1fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
+                        <div>
+                          <div className="font-semibold">{row.username}</div>
+                          <div className={`text-[11px] ${theme.subtle}`}>{row.assignedMachine || 'Aucune machine fixe'}</div>
+                        </div>
+                        <span>{row.piecesProduced}</span>
+                        <span>{fmtDuration(row.machiningSeconds)}</span>
+                        <span>{row.energyKwh.toLocaleString('fr-FR')} kWh</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </section>
@@ -263,23 +267,25 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
             {filtered.logs.length === 0 ? (
               <div className={`text-sm ${theme.muted}`}>Aucun log disponible.</div>
             ) : (
-              <div className={`overflow-hidden rounded-lg border ${theme.tableShell}`}>
-                <div className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
-                  <span>Machine</span>
-                  <span>Employe</span>
-                  <span>Action</span>
-                  <span>Pieces</span>
-                  <span>Date</span>
-                </div>
-                {filtered.logs.slice(0, 12).map((log, index) => (
-                  <div key={`${log.machine}-${log.at}-${index}`} className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
-                    <span>{log.machine}</span>
-                    <span>{log.username}</span>
-                    <span className="capitalize">{log.action}</span>
-                    <span>{log.pieceCount || 0}</span>
-                    <span>{new Date(log.at).toLocaleString('fr-FR')}</span>
+              <div className={`overflow-x-auto rounded-lg border ${theme.tableShell}`}>
+                <div className="min-w-[760px]">
+                  <div className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 px-4 py-3 text-xs font-bold ${theme.tableHead}`}>
+                    <span>Machine</span>
+                    <span>Employe</span>
+                    <span>Action</span>
+                    <span>Pieces</span>
+                    <span>Date</span>
                   </div>
-                ))}
+                  {filtered.logs.slice(0, 12).map((log, index) => (
+                    <div key={`${log.machine}-${log.at}-${index}`} className={`grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_1.2fr] gap-3 border-t px-4 py-3 text-sm ${theme.rowBorder}`}>
+                      <span>{log.machine}</span>
+                      <span>{log.username}</span>
+                      <span className="capitalize">{log.action}</span>
+                      <span>{log.pieceCount || 0}</span>
+                      <span>{new Date(log.at).toLocaleString('fr-FR')}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </section>

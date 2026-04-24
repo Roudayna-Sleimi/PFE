@@ -316,13 +316,13 @@ const GsmContactsPage: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full" style={{ background: 'transparent' }}>
+    <div className="flex-1 min-w-0 w-full overflow-y-auto p-4 sm:p-6" style={{ background: 'transparent' }}>
       <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
         <div>
           <h2 className={`text-2xl font-bold mb-1 ${titleClass}`}>Gestion GSM</h2>
           <p className={`text-sm ${mutedClass}`}>Contacts d'appel, contact actif et historique des tentatives.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => { loadContacts(); loadHistory(); }}
             className="px-4 py-2 rounded-lg text-sm font-semibold text-white border-none cursor-pointer"
@@ -350,7 +350,7 @@ const GsmContactsPage: React.FC = () => {
         <div className="mb-4 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">{successMsg}</div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mb-5">
+      <div className="mb-5 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <div className={`${panelClass} p-4`}>
           <div className={`text-xs mb-1 ${subtleClass}`}>Contact actif</div>
           {activeContact ? (
@@ -365,9 +365,9 @@ const GsmContactsPage: React.FC = () => {
           )}
         </div>
 
-        <form onSubmit={saveContact} className={`col-span-2 ${panelClass} p-4`}>
+        <form onSubmit={saveContact} className={`${panelClass} p-4 xl:col-span-2`}>
           <div className={`text-sm font-bold mb-3 ${titleClass}`}>{editingId ? 'Modifier contact' : 'Ajouter contact'}</div>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <input
               value={form.name}
               onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
@@ -435,7 +435,7 @@ const GsmContactsPage: React.FC = () => {
         ) : filteredContacts.length === 0 ? (
           <div className={`text-sm py-4 ${mutedClass}`}>Aucun contact trouve.</div>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {filteredContacts.map(contact => (
               <div key={contact._id} className={`${nestedPanelClass} p-3`}>
                 <div className="flex items-start justify-between gap-2">

@@ -317,7 +317,7 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     actionBg: 'var(--app-surface)',
     actionText: 'var(--app-text)',
     actionBorder: 'var(--app-border)',
-  }), [darkMode]);
+  }), []);
 
   const cardStyle: React.CSSProperties = useMemo(() => ({
     background: theme.cardBg,

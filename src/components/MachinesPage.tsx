@@ -368,7 +368,7 @@ const MachinesPage: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full" style={{ background: 'transparent' }}>
+    <div className="flex-1 min-w-0 w-full overflow-y-auto p-4 sm:p-6" style={{ background: 'transparent' }}>
       <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white mb-1">Gestion des Machines</h2>
@@ -376,13 +376,13 @@ const MachinesPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/[0.08] bg-slate-800/50">
+          <div className="flex w-full items-center gap-2 rounded-lg border border-white/[0.08] bg-slate-800/50 px-3 py-2 sm:w-auto">
             <Search size={14} color="#64748b" />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Rechercher une machine..."
-              className="bg-transparent text-sm text-white outline-none placeholder-slate-500 w-44"
+              className="w-full bg-transparent text-sm text-white outline-none placeholder-slate-500 sm:w-44"
             />
           </div>
 
@@ -408,7 +408,7 @@ const MachinesPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {filtrees.map((machine) => {
           const visual = getMachineVisual({ id: machine.id, name: machine.name, icon: machine.icon, imageUrl: machine.imageUrl });
           const canManageMachine = role === 'admin';
@@ -483,7 +483,7 @@ const MachinesPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 px-5 mb-4">
+              <div className="mb-4 grid grid-cols-1 gap-3 px-5 sm:grid-cols-3">
                 {(machine.id === 'compresseur'
                   ? [
                       { label: 'Pression', value: `${(machine.pression ?? 0).toFixed(1)} bar`, color: '#06b6d4' },
@@ -558,7 +558,7 @@ const MachinesPage: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="text-xs text-slate-400 mb-1 block">Marque</label>
                   <input

@@ -1,5 +1,6 @@
 ﻿import React, { useMemo, useState, useEffect } from 'react';
 import { Package, X, AlertTriangle, CheckCircle, Clock, User, Wrench, TrendingUp, Search } from 'lucide-react';
+import { useCallback } from 'react';
 import DossierPage from './DossierPage';
 import type { DossierPieceContext } from './DossierPage';
 import { io } from 'socket.io-client';
@@ -495,12 +496,12 @@ const ProductionPage: React.FC = () => {
     )
   ), [employeesOverview]);
 
-  const getVisiblePieceStatus = (piece: Piece | null | undefined): Piece['status'] => {
+  const getVisiblePieceStatus = useCallback((piece: Piece | null | undefined): Piece['status'] => {
     const normalized = normalizePieceStatus(piece?.status);
     if (normalized === 'Terminé' || normalized === 'Contrôle') return normalized;
     if (piece?._id && activePieceIds.has(piece._id)) return 'En cours';
     return 'Arrêté';
-  };
+  }, [activePieceIds]);
 
   const totalProduction = pieces.reduce((s, p) => s + toNumber(p.quantite), 0);
   const totalProduit = pieces.reduce((s, p) => s + toNumber(p.quantiteProduite), 0);
@@ -529,7 +530,7 @@ const ProductionPage: React.FC = () => {
 
       return searchable.includes(q);
     });
-  }, [filtre, pieces, search, activePieceIds]);
+  }, [filtre, getVisiblePieceStatus, pieces, search]);
 
   const dossiersByPiece = useMemo(() => {
     return dossiers.reduce<Record<string, DossierDocument[]>>((acc, doc) => {

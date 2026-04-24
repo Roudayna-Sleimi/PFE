@@ -173,7 +173,7 @@ const MaintenancePage: React.FC = () => {
   const statusBadgeBg = 'var(--app-inset)';
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto min-w-0 w-full bg-transparent">
+    <div className="flex-1 min-w-0 w-full overflow-y-auto bg-transparent p-4 sm:p-6">
       <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
         <div>
           <h2 className={`text-2xl font-bold mb-1 ${titleClass}`}>Maintenance AI</h2>
@@ -192,7 +192,7 @@ const MaintenancePage: React.FC = () => {
         <div className="mb-4 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: 'var(--app-accent-soft-strong)', background: 'var(--app-accent-soft)', color: 'var(--app-text)' }}>{message}</div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {[
           { label: 'Demandes ouvertes', value: counts.openRequests, icon: <Wrench size={18} />, color: 'var(--app-accent)' },
           { label: 'Rapports critiques', value: counts.criticalReports, icon: <AlertTriangle size={18} />, color: '#ef4444' },
@@ -215,7 +215,7 @@ const MaintenancePage: React.FC = () => {
         <div className={`text-center py-12 ${mutedClass}`}>Chargement maintenance AI...</div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
             {(overview?.machines || []).map(machine => {
               const st = severityStyle(machine.severity);
               return (
@@ -267,7 +267,7 @@ const MaintenancePage: React.FC = () => {
             })}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <div className={`${panelClass} p-4`}>
               <div className="flex items-center gap-2 mb-4">
                 <AlertTriangle size={16} className="text-amber-400" />
@@ -312,7 +312,7 @@ const MaintenancePage: React.FC = () => {
                         </div>
                         <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: statusBadgeBg, color: 'var(--app-text)' }}>{requestStatusLabel(request.status)}</span>
                       </div>
-                      <div className="mt-3 flex gap-2">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         {request.status === 'open' && (
                           <button onClick={() => updateRequestStatus(request._id, 'in_progress')} className="inline-flex items-center gap-1 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-200">
                             <Clock size={11} /> Demarrer

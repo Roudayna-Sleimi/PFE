@@ -427,7 +427,7 @@ const EmployePage: React.FC = () => {
       primary: "linear-gradient(135deg,var(--app-accent),var(--app-accent-strong))",
       secondary: "var(--app-surface)",
     }
-  ), [darkMode]);
+  ), []);
   const cardStyle: React.CSSProperties = {
     background: theme.card,
     border: `1px solid ${theme.border}`,

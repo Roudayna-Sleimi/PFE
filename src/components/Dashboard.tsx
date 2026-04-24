@@ -339,7 +339,7 @@ const [activePage, setActivePage] = useState<
   const navActive = 'text-[var(--app-heading)] border border-[color:var(--app-border)] bg-[var(--app-surface-strong)]';
 
   // ── navItems ──
-const navItems = [
+  const navItems = useMemo(() => ([
   { key: 'dashboard' as const, icon: <LayoutDashboard size={18} />, label: 'Tableau de bord' },
   { key: 'production' as const, icon: <Package size={18} />, label: 'Production' },
   ...(role === 'admin' ? [
@@ -352,7 +352,7 @@ const navItems = [
   ...(role === 'admin' ? [
     { key: 'demandes' as const, icon: <UserPlus size={18} />, label: "Demande d'accès" },
   ] : []),
-];
+  ]), [role]);
 
   const globalSearchResults = useMemo(() => {
     const q = globalSearch.trim().toLowerCase();
@@ -402,12 +402,12 @@ const navItems = [
   const reportsContent = <ReportsPage darkMode={darkMode} />;
 
   return (
-    <div className={`flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden relative font-sans ${shellBg}`}>
+    <div className={`relative flex min-h-screen w-screen max-w-[100vw] overflow-x-hidden font-sans ${shellBg}`}>
       {darkMode && <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(29,78,216,0.10)_0%,rgba(29,78,216,0.02)_34%,#020617_100%)]" />}
       {darkMode && <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.06)_1px,transparent_1px)] [background-size:36px_36px] opacity-20" />}
 
       {/* ── SIDEBAR ── */}
-      <aside className={`w-[260px] min-w-[260px] ${bg2} border-r ${border} flex flex-col py-6 px-4 h-screen fixed left-0 top-0 overflow-y-auto overflow-x-hidden z-[100]`}>
+      <aside className={`w-full md:w-[260px] md:min-w-[260px] ${bg2} border-b md:border-b-0 md:border-r ${border} z-[100] flex flex-col overflow-x-hidden overflow-y-auto px-4 py-6 md:fixed md:left-0 md:top-0 md:h-screen`}>
         <div className={`flex items-center gap-3 mb-8 pb-5 border-b ${border}`}>
           <div className="w-11 h-11 min-w-[44px] rounded-[10px] flex items-center justify-center text-white"
             style={{ background: 'linear-gradient(135deg,#1e3a8a,#1d4ed8)' }}>
@@ -461,10 +461,10 @@ const navItems = [
       </aside>
 
       {/* ── MAIN ── */}
-      <main className="flex-1 ml-[260px] w-[calc(100vw-260px)] min-w-0 flex flex-col overflow-x-hidden">
+      <main className="flex-1 min-w-0 flex flex-col overflow-x-hidden md:ml-[260px] md:w-[calc(100vw-260px)]">
 
         {/* Header */}
-        <header className={`h-[70px] ${bg2} border-b ${border} flex items-center justify-between px-6 gap-4 flex-wrap`}>
+        <header className={`min-h-[70px] ${bg2} border-b ${border} flex items-center justify-between px-4 py-3 sm:px-6 gap-4 flex-wrap`}>
           <div className="flex items-center gap-4 flex-wrap">
             <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${darkMode ? 'bg-black border border-white text-white' : 'bg-white border border-black text-black'}`}>
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connected ? 'bg-white' : 'bg-black'}`} />
@@ -480,7 +480,7 @@ const navItems = [
                 if (globalSearchResults[0]) openGlobalSearchResult(globalSearchResults[0].page);
               }}
             >
-              <div className={`${bgCardStrong} border ${border} flex h-10 w-[310px] max-w-[42vw] items-center gap-2 rounded-xl px-3`}>
+              <div className={`${bgCardStrong} border ${border} flex h-10 w-full sm:w-[310px] sm:max-w-[42vw] items-center gap-2 rounded-xl px-3`}>
                 <Search size={15} className={txt2} />
                 <input
                   value={globalSearch}
@@ -538,7 +538,7 @@ const navItems = [
         : activePage === 'maintenance' ? <div className="flex-1 overflow-y-auto"><MaintenancePage /></div>
         : activePage === 'production'  ? <div className="flex-1 overflow-y-auto"><ProductionPage /></div>
         : activePage === 'employes'    ? (
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
             {/* Header */}
             <div className="flex items-start justify-between mb-5 flex-wrap gap-4">
               <div>
@@ -552,7 +552,7 @@ const navItems = [
             </div>
 
             {/* Stats globales */}
-            <div className="grid grid-cols-4 gap-3 mb-5">
+            <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 { label: 'En production', value: employeesOverview.filter(e => e.machineStatus === 'started').length, color: '#1d4ed8', icon: <Activity size={16} /> },
                 { label: 'En pause',      value: employeesOverview.filter(e => e.machineStatus === 'paused').length,  color: pausedColor, icon: <Activity size={16} /> },
@@ -570,7 +570,7 @@ const navItems = [
               ))}
             </div>
 
-            <div className="grid grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
               {/* ── Cards employés ── */}
               <div className="flex flex-col gap-3">
                 {employeesOverview.length === 0 ? (
@@ -618,7 +618,7 @@ const navItems = [
                       </div>
 
                       {/* Info row */}
-                      <div className="grid grid-cols-2 gap-2 mb-2">
+                      <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                         <div className="rounded-lg p-2" style={{ background: darkMode ? 'rgba(255,255,255,0.08)' : '#f8fbff', border: darkMode ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(15,23,42,0.08)' }}>
                           <div className={`text-[9px] ${txtMut} mb-0.5`}>MACHINE</div>
                           <div className="text-[12px] font-bold text-white truncate">{emp.assignedMachine || '—'}</div>
@@ -660,7 +660,7 @@ const navItems = [
                       {/* En-tête employé */}
                       <div className={`${bgCard} border ${border} rounded-xl p-4`}>
                         <div className="text-xs font-bold text-white uppercase tracking-wider mb-3">{selectedEmploye} — Aujourd'hui</div>
-                        <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.15)' }}>
                             <div className="text-[22px] font-bold text-[#1d4ed8]">{h.stats.piecesAujourd ?? 0}</div>
                             <div className="text-[10px] text-white">Pièces produites aujourd'hui</div>
@@ -670,7 +670,7 @@ const navItems = [
                             <div className="text-[10px] text-white">Temps travaillé aujourd'hui</div>
                           </div>
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                           {[
                             { label: 'Sessions', value: h.stats.totalSessions, color: '#3b82f6' },
                             { label: 'Pauses',   value: h.stats.totalPausees,  color: pausedColor },
@@ -733,7 +733,7 @@ const navItems = [
         : activePage === 'rapports'    ? reportsContent
         : (
           /* ── DASHBOARD PRINCIPAL ── */
-          <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 w-full">
+          <div className="flex-1 min-w-0 w-full overflow-y-auto overflow-x-hidden p-4 sm:p-6">
 
             {/* Title */}
             <div className="flex justify-between items-start mb-5 flex-wrap gap-4">
@@ -754,7 +754,7 @@ const navItems = [
             </div>
 
             {/* ── KPI Row ── */}
-            <div className="grid grid-cols-3 gap-4 mb-5">
+            <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {[
                 {
                   icon: <Package size={20} />, title: 'Total Produites',
@@ -788,7 +788,7 @@ const navItems = [
             </div>
 
             {/* ── Row 2: Production en Cours + Chart + Répartition ── */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
 
               {/* Production en Cours */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
@@ -888,7 +888,7 @@ const navItems = [
             </div>
 
             {/* ── Row 3: Temps Machines + Santé + Alertes ── */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
 
               {/* Temps des Machines */}
               <div className={`${bgCard} border ${border} rounded-xl p-4`}>
@@ -959,7 +959,7 @@ const navItems = [
                       <div className="h-1.5 rounded-full bg-black">
                         <div className="h-full rounded-full transition-all duration-500" style={{ width: `${m.value}%`, background: m.value > 70 ? '#1d4ed8' : m.value > 40 ? '#1e40af' : '#ef4444' }} />
                       </div>
-                      <div className="grid grid-cols-3 gap-1.5 mt-2">
+                      <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
                         {(i === 0 ? [
                           { l: 'Courant', v: `${latest.courant}A`, c: latest.courant > 15 ? '#dc2626' : '#1e3a8a' },
                           { l: 'Vib.', v: `${latest.vibX.toFixed(1)}g`, c: latest.vibX > 2 ? '#f97316' : '#3b82f6' },

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Users, Check, X, Clock, UserPlus, PencilLine, Trash2 } from 'lucide-react';
+import './DemandesPage.css';
 
 interface Demande {
   _id: string;
@@ -19,6 +20,13 @@ const emptyEditForm = {
   telephone: '',
 };
 
+const editFields = [
+  { key: 'nom', label: 'Nom', placeholder: 'Nom complet' },
+  { key: 'email', label: 'Email', placeholder: 'email@exemple.com' },
+  { key: 'poste', label: 'Poste', placeholder: 'Poste' },
+  { key: 'telephone', label: 'Telephone', placeholder: 'Telephone' },
+] as const;
+
 const normalizeDemandeStatut = (statut: string) => {
   const normalized = String(statut || '')
     .toLowerCase()
@@ -30,121 +38,9 @@ const normalizeDemandeStatut = (statut: string) => {
   return 'en attente';
 };
 
-const iconBadgeStyle: React.CSSProperties = {
-  width: 40,
-  height: 40,
-  borderRadius: 12,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  background: 'linear-gradient(135deg, var(--app-accent), var(--app-accent-strong))',
-  color: '#ffffff',
-};
+const formatMeta = (...values: Array<string | null | undefined>) => values.filter(Boolean).join(' - ');
 
-const pillStyle: React.CSSProperties = {
-  padding: '8px 12px',
-  borderRadius: 10,
-  border: '1px solid var(--app-border)',
-  background: 'var(--app-card-alt)',
-  color: 'var(--app-heading)',
-  fontSize: 12,
-  fontWeight: 700,
-};
-
-const cardStyle: React.CSSProperties = {
-  background: 'var(--app-card)',
-  border: '1px solid var(--app-border)',
-  borderRadius: 14,
-  padding: 16,
-};
-
-const secondaryCardStyle: React.CSSProperties = {
-  ...cardStyle,
-  background: 'var(--app-card-alt)',
-};
-
-const avatarStyle: React.CSSProperties = {
-  width: 40,
-  height: 40,
-  borderRadius: '999px',
-  background: 'var(--app-surface-strong)',
-  border: '1px solid var(--app-border)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  color: 'var(--app-heading)',
-  fontWeight: 800,
-  fontSize: 14,
-  flexShrink: 0,
-};
-
-const badgeBaseStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 4,
-  padding: '4px 10px',
-  borderRadius: 999,
-  fontSize: 11,
-  fontWeight: 700,
-  border: '1px solid transparent',
-};
-
-const actionButtonBase: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  padding: '8px 12px',
-  borderRadius: 10,
-  border: '1px solid transparent',
-  fontSize: 12,
-  fontWeight: 700,
-  cursor: 'pointer',
-};
-
-const fieldStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 12px',
-  borderRadius: 10,
-  border: '1px solid var(--app-border)',
-  background: 'var(--app-surface-strong)',
-  color: 'var(--app-heading)',
-  fontSize: 14,
-  outline: 'none',
-};
-
-const modalStyle: React.CSSProperties = {
-  background: 'var(--app-card)',
-  border: '1px solid var(--app-border)',
-  borderRadius: 16,
-  padding: 24,
-  width: '100%',
-  maxWidth: 420,
-  margin: '0 16px',
-};
-
-const secondaryButtonStyle: React.CSSProperties = {
-  flex: 1,
-  padding: '10px 12px',
-  borderRadius: 10,
-  border: '1px solid var(--app-border)',
-  background: 'var(--app-card-alt)',
-  color: 'var(--app-heading)',
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: 'pointer',
-};
-
-const primaryButtonStyle: React.CSSProperties = {
-  flex: 1,
-  padding: '10px 12px',
-  borderRadius: 10,
-  border: '1px solid var(--app-accent)',
-  background: 'var(--app-accent)',
-  color: '#ffffff',
-  fontSize: 14,
-  fontWeight: 700,
-  cursor: 'pointer',
-};
+const getInitial = (nom: string) => nom.trim().charAt(0).toUpperCase() || '?';
 
 const DemandesPage: React.FC = () => {
   const [demandes, setDemandes] = useState<Demande[]>([]);
@@ -173,11 +69,13 @@ const DemandesPage: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
+
       if (!res.ok) {
         setError(data.message || 'Impossible de charger les demandes');
         return;
       }
-      setDemandes(data);
+
+      setDemandes(Array.isArray(data) ? data : []);
     } catch {
       setError('Impossible de contacter le serveur.');
     } finally {
@@ -189,17 +87,17 @@ const DemandesPage: React.FC = () => {
     fetchDemandes();
   }, [fetchDemandes]);
 
-  const handleRefuser = async (id: string) => {
-    if (!confirm('Refuser cette demande ?')) return;
-    try {
-      await fetch(`http://localhost:5000/api/demandes/${id}/refuser`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      fetchDemandes();
-    } catch {
-      alert('Erreur serveur');
-    }
+  const closeEditModal = () => {
+    setEditing(null);
+    setEditForm(emptyEditForm);
+    setEditErr('');
+  };
+
+  const closeApprovalModal = () => {
+    setSelected(null);
+    setUsername('');
+    setPassword('');
+    setModalErr('');
   };
 
   const openEdit = (demande: Demande) => {
@@ -213,8 +111,30 @@ const DemandesPage: React.FC = () => {
     setEditErr('');
   };
 
+  const openApproval = (demande: Demande) => {
+    setSelected(demande);
+    setUsername(demande.username || '');
+    setPassword('');
+    setModalErr('');
+  };
+
+  const handleRefuser = async (id: string) => {
+    if (!confirm('Refuser cette demande ?')) return;
+
+    try {
+      await fetch(`http://localhost:5000/api/demandes/${id}/refuser`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      fetchDemandes();
+    } catch {
+      alert('Erreur serveur');
+    }
+  };
+
   const handleModifier = async () => {
     if (!editing) return;
+
     if (!editForm.nom || !editForm.email || !editForm.poste || !editForm.telephone) {
       setEditErr('Tous les champs sont requis');
       return;
@@ -233,12 +153,13 @@ const DemandesPage: React.FC = () => {
         body: JSON.stringify(editForm),
       });
       const data = await res.json();
+
       if (!res.ok) {
         setEditErr(data.message || 'Modification impossible');
         return;
       }
-      setEditing(null);
-      setEditForm(emptyEditForm);
+
+      closeEditModal();
       fetchDemandes();
     } catch {
       setEditErr('Erreur serveur');
@@ -249,6 +170,7 @@ const DemandesPage: React.FC = () => {
 
   const handleSupprimer = async (id: string) => {
     if (!confirm('Supprimer cette demande ?')) return;
+
     try {
       await fetch(`http://localhost:5000/api/demandes/${id}`, {
         method: 'DELETE',
@@ -262,6 +184,7 @@ const DemandesPage: React.FC = () => {
 
   const handleApprouver = async () => {
     if (!selected) return;
+
     if (!username || !password) {
       setModalErr('Username et mot de passe requis');
       return;
@@ -280,13 +203,13 @@ const DemandesPage: React.FC = () => {
         body: JSON.stringify({ username, password }),
       });
       const data = await res.json();
+
       if (!res.ok) {
-        setModalErr(data.message);
+        setModalErr(data.message || 'Creation impossible');
         return;
       }
-      setSelected(null);
-      setUsername('');
-      setPassword('');
+
+      closeApprovalModal();
       fetchDemandes();
     } catch {
       setModalErr('Erreur serveur');
@@ -298,248 +221,200 @@ const DemandesPage: React.FC = () => {
   const enAttente = demandes.filter((d) => normalizeDemandeStatut(d.statut) === 'en attente');
   const traitees = demandes.filter((d) => normalizeDemandeStatut(d.statut) !== 'en attente');
 
-  const statutBadge = (statut: Demande['statut']) => {
+  const renderStatutBadge = (statut: Demande['statut']) => {
     const normalized = normalizeDemandeStatut(statut);
+
     if (normalized === 'approuvee') {
       return (
-        <span
-          style={{
-            ...badgeBaseStyle,
-            background: 'rgba(34,197,94,0.12)',
-            borderColor: 'rgba(34,197,94,0.28)',
-            color: 'var(--app-success)',
-          }}
-        >
-          <Check size={11} /> Approuvee
+        <span className="demandes-badge demandes-badge--success">
+          <Check size={12} />
+          Approuvee
         </span>
       );
     }
+
     if (normalized === 'refusee') {
       return (
-        <span
-          style={{
-            ...badgeBaseStyle,
-            background: 'rgba(239,68,68,0.12)',
-            borderColor: 'rgba(239,68,68,0.28)',
-            color: 'var(--app-danger)',
-          }}
-        >
-          <X size={11} /> Refusee
+        <span className="demandes-badge demandes-badge--danger">
+          <X size={12} />
+          Refusee
         </span>
       );
     }
+
     return (
-      <span
-        style={{
-          ...badgeBaseStyle,
-          background: 'var(--app-neutral-soft)',
-          borderColor: 'var(--app-neutral-border)',
-          color: 'var(--app-muted)',
-        }}
-      >
-        <Clock size={11} /> En attente
+      <span className="demandes-badge demandes-badge--neutral">
+        <Clock size={12} />
+        En attente
       </span>
     );
   };
 
   return (
-    <div className="p-6 min-h-full">
-      <div className="flex items-center gap-3 mb-6">
-        <div style={iconBadgeStyle}>
-          <Users size={20} color="white" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold m-0" style={{ color: 'var(--app-heading)' }}>
-            Demandes d'acces
-          </h1>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--app-muted)' }}>
-            Gerez les demandes d'acces des employes
-          </p>
-        </div>
-        <div className="ml-auto flex gap-3">
-          <div style={pillStyle}>{enAttente.length} en attente</div>
-          <div style={{ ...pillStyle, background: 'var(--app-accent)', borderColor: 'var(--app-accent)', color: '#ffffff' }}>
-            {demandes.length} total
+    <div className="demandes-page">
+      <header className="demandes-header">
+        <div className="demandes-heading-group">
+          <div className="demandes-icon-badge">
+            <Users size={20} />
+          </div>
+          <div>
+            <p className="demandes-kicker">Administration</p>
+            <h1 className="demandes-title">Demandes d'acces</h1>
+            <p className="demandes-subtitle">Gerez les demandes d'acces des employes depuis un espace plus propre et lisible.</p>
           </div>
         </div>
-      </div>
 
-      {loading && (
-        <div className="text-center py-12" style={{ color: 'var(--app-muted)' }}>
-          Chargement...
+        <div className="demandes-stats">
+          <div className="demandes-pill">
+            <span className="demandes-pill__label">En attente</span>
+            <strong>{enAttente.length}</strong>
+          </div>
+          <div className="demandes-pill demandes-pill--accent">
+            <span className="demandes-pill__label">Total</span>
+            <strong>{demandes.length}</strong>
+          </div>
         </div>
-      )}
+      </header>
 
-      {error && (
-        <div
-          className="rounded-xl p-4 mb-4"
-          style={{
-            color: 'var(--app-danger)',
-            background: 'rgba(239,68,68,0.1)',
-            border: '1px solid rgba(239,68,68,0.2)',
-          }}
-        >
-          {error}
-        </div>
-      )}
+      {loading && <div className="demandes-state-card">Chargement des demandes...</div>}
+
+      {error && <div className="demandes-alert demandes-alert--danger">{error}</div>}
 
       {enAttente.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3 flex items-center gap-2" style={{ color: 'var(--app-muted)' }}>
-            <Clock size={14} /> En attente ({enAttente.length})
-          </h2>
-          <div className="flex flex-col gap-3">
-            {enAttente.map((d) => (
-              <div key={d._id} className="flex items-center gap-4 flex-wrap" style={cardStyle}>
-                <div style={avatarStyle}>{d.nom.charAt(0).toUpperCase()}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-sm" style={{ color: 'var(--app-heading)' }}>
-                    {d.nom}
-                  </div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--app-muted)' }}>
-                    {d.email} · {d.poste}
-                  </div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--app-subtle)' }}>
-                    Telephone: {d.telephone}
-                  </div>
+        <section className="demandes-section">
+          <div className="demandes-section-title">
+            <Clock size={14} />
+            En attente ({enAttente.length})
+          </div>
+
+          <div className="demandes-list">
+            {enAttente.map((demande) => (
+              <article key={demande._id} className="demandes-card">
+                <div className="demandes-avatar">{getInitial(demande.nom)}</div>
+
+                <div className="demandes-card__body">
+                  <h2 className="demandes-card__title">{demande.nom}</h2>
+                  <p className="demandes-card__meta">{formatMeta(demande.email, demande.poste)}</p>
+                  <p className="demandes-card__detail">Telephone: {demande.telephone}</p>
                 </div>
-                <div className="text-xs whitespace-nowrap" style={{ color: 'var(--app-subtle)' }}>
-                  {new Date(d.createdAt).toLocaleDateString('fr-FR')}
+
+                <div className="demandes-card__aside">
+                  <span className="demandes-card__date">
+                    {new Date(demande.createdAt).toLocaleDateString('fr-FR')}
+                  </span>
                 </div>
-                <div className="flex gap-2 flex-wrap">
-                  <button onClick={() => openEdit(d)} style={{ ...actionButtonBase, background: 'var(--app-accent)', borderColor: 'var(--app-accent)', color: '#ffffff' }}>
-                    <PencilLine size={13} /> Modifier
+
+                <div className="demandes-actions">
+                  <button type="button" onClick={() => openEdit(demande)} className="demandes-action demandes-action--accent">
+                    <PencilLine size={14} />
+                    Modifier
                   </button>
-                  <button
-                    onClick={() => {
-                      setSelected(d);
-                      setModalErr('');
-                      setUsername('');
-                      setPassword('');
-                    }}
-                    style={{ ...actionButtonBase, background: 'var(--app-success)', borderColor: 'var(--app-success)', color: '#ffffff' }}
-                  >
-                    <UserPlus size={13} /> Approuver
+
+                  <button type="button" onClick={() => openApproval(demande)} className="demandes-action demandes-action--success">
+                    <UserPlus size={14} />
+                    Approuver
                   </button>
-                  <button onClick={() => handleRefuser(d._id)} style={{ ...actionButtonBase, background: '#b45309', borderColor: '#b45309', color: '#ffffff' }}>
-                    <X size={13} /> Refuser
+
+                  <button type="button" onClick={() => handleRefuser(demande._id)} className="demandes-action demandes-action--warning">
+                    <X size={14} />
+                    Refuser
                   </button>
-                  <button onClick={() => handleSupprimer(d._id)} style={{ ...actionButtonBase, background: 'var(--app-danger)', borderColor: 'var(--app-danger)', color: '#ffffff' }}>
-                    <Trash2 size={13} /> Supprimer
+
+                  <button type="button" onClick={() => handleSupprimer(demande._id)} className="demandes-action demandes-action--danger">
+                    <Trash2 size={14} />
+                    Supprimer
                   </button>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {traitees.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={{ color: 'var(--app-muted)' }}>
-            Historique ({traitees.length})
-          </h2>
-          <div className="flex flex-col gap-2">
-            {traitees.map((d) => (
-              <div key={d._id} className="flex items-center gap-4 flex-wrap" style={secondaryCardStyle}>
-                <div style={{ ...avatarStyle, width: 36, height: 36, color: 'var(--app-muted)' }}>
-                  {d.nom.charAt(0).toUpperCase()}
+        <section className="demandes-section">
+          <div className="demandes-section-title">Historique ({traitees.length})</div>
+
+          <div className="demandes-list">
+            {traitees.map((demande) => (
+              <article key={demande._id} className="demandes-card demandes-card--secondary">
+                <div className="demandes-avatar demandes-avatar--muted">{getInitial(demande.nom)}</div>
+
+                <div className="demandes-card__body">
+                  <h2 className="demandes-card__title">{demande.nom}</h2>
+                  <p className="demandes-card__meta">{formatMeta(demande.email, demande.poste)}</p>
+                  {demande.username && <p className="demandes-card__detail">Utilisateur: @{demande.username}</p>}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm" style={{ color: 'var(--app-heading)' }}>
-                    {d.nom}
-                  </div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--app-muted)' }}>
-                    {d.email} · {d.poste}
-                  </div>
-                  {d.username && (
-                    <div className="text-xs mt-0.5" style={{ color: 'var(--app-subtle)' }}>
-                      Utilisateur: @{d.username}
-                    </div>
-                  )}
+
+                <div className="demandes-card__aside demandes-card__aside--status">
+                  {renderStatutBadge(demande.statut)}
                 </div>
-                {statutBadge(d.statut)}
-                <div className="flex gap-2 flex-wrap">
-                  <button onClick={() => openEdit(d)} style={{ ...actionButtonBase, background: 'var(--app-accent)', borderColor: 'var(--app-accent)', color: '#ffffff' }}>
-                    <PencilLine size={13} /> Modifier
+
+                <div className="demandes-actions">
+                  <button type="button" onClick={() => openEdit(demande)} className="demandes-action demandes-action--accent">
+                    <PencilLine size={14} />
+                    Modifier
                   </button>
-                  <button onClick={() => handleSupprimer(d._id)} style={{ ...actionButtonBase, background: 'var(--app-danger)', borderColor: 'var(--app-danger)', color: '#ffffff' }}>
-                    <Trash2 size={13} /> Supprimer
+
+                  <button type="button" onClick={() => handleSupprimer(demande._id)} className="demandes-action demandes-action--danger">
+                    <Trash2 size={14} />
+                    Supprimer
                   </button>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {!loading && demandes.length === 0 && (
-        <div className="text-center py-16">
-          <div className="text-5xl mb-4" style={{ color: 'var(--app-subtle)' }}>
-            -
-          </div>
-          <div className="text-sm" style={{ color: 'var(--app-muted)' }}>
-            Aucune demande pour le moment
-          </div>
+        <div className="demandes-state-card demandes-state-card--empty">
+          <div className="demandes-state-card__icon">-</div>
+          <div className="demandes-state-card__title">Aucune demande pour le moment</div>
+          <div className="demandes-state-card__text">Les nouvelles demandes d'acces apparaitront ici.</div>
         </div>
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center backdrop-blur-sm" style={{ background: 'rgba(2,6,23,0.52)' }}>
-          <div style={modalStyle}>
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="font-bold text-base" style={{ color: 'var(--app-heading)' }}>
-                Modifier la demande
-              </h3>
-              <button
-                onClick={() => setEditing(null)}
-                title="Fermer"
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)', color: 'var(--app-subtle)' }}
-              >
+        <div className="demandes-modal-backdrop">
+          <div className="demandes-modal">
+            <div className="demandes-modal__header">
+              <div>
+                <p className="demandes-kicker">Edition</p>
+                <h3 className="demandes-modal__title">Modifier la demande</h3>
+              </div>
+
+              <button type="button" onClick={closeEditModal} title="Fermer" className="demandes-icon-button">
                 <X size={16} />
               </button>
             </div>
 
-            <div className="flex flex-col gap-3 mb-4">
-              {[
-                { key: 'nom', label: 'Nom', placeholder: 'Nom complet' },
-                { key: 'email', label: 'Email', placeholder: 'email@exemple.com' },
-                { key: 'poste', label: 'Poste', placeholder: 'Poste' },
-                { key: 'telephone', label: 'Telephone', placeholder: 'Telephone' },
-              ].map((field) => (
-                <div key={field.key}>
-                  <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--app-muted)' }}>
-                    {field.label}
-                  </label>
+            <div className="demandes-form-grid">
+              {editFields.map((field) => (
+                <label key={field.key} className="demandes-field-group">
+                  <span className="demandes-field-group__label">{field.label}</span>
                   <input
                     type="text"
                     placeholder={field.placeholder}
-                    value={editForm[field.key as keyof typeof editForm]}
+                    value={editForm[field.key]}
                     onChange={(event) => setEditForm((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                    style={fieldStyle}
+                    className="demandes-field"
                   />
-                </div>
+                </label>
               ))}
             </div>
 
-            {editErr && (
-              <div
-                className="text-xs rounded-lg px-3 py-2 mb-4"
-                style={{ color: 'var(--app-danger)', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
-              >
-                {editErr}
-              </div>
-            )}
+            {editErr && <div className="demandes-alert demandes-alert--danger">{editErr}</div>}
 
-            <div className="flex gap-2">
-              <button onClick={() => setEditing(null)} style={secondaryButtonStyle}>
+            <div className="demandes-modal__actions">
+              <button type="button" onClick={closeEditModal} className="demandes-action demandes-action--secondary">
                 Annuler
               </button>
               <button
+                type="button"
                 onClick={handleModifier}
                 disabled={editLoad}
-                style={{ ...primaryButtonStyle, opacity: editLoad ? 0.6 : 1, cursor: editLoad ? 'not-allowed' : 'pointer' }}
+                className="demandes-action demandes-action--accent demandes-action--wide"
               >
                 {editLoad ? 'Modification...' : 'Modifier'}
               </button>
@@ -549,75 +424,59 @@ const DemandesPage: React.FC = () => {
       )}
 
       {selected && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center backdrop-blur-sm" style={{ background: 'rgba(2,6,23,0.52)' }}>
-          <div style={modalStyle}>
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="font-bold text-base" style={{ color: 'var(--app-heading)' }}>
-                Creer le compte
-              </h3>
-              <button
-                onClick={() => setSelected(null)}
-                title="Fermer"
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)', color: 'var(--app-subtle)' }}
-              >
+        <div className="demandes-modal-backdrop">
+          <div className="demandes-modal">
+            <div className="demandes-modal__header">
+              <div>
+                <p className="demandes-kicker">Validation</p>
+                <h3 className="demandes-modal__title">Creer le compte</h3>
+              </div>
+
+              <button type="button" onClick={closeApprovalModal} title="Fermer" className="demandes-icon-button">
                 <X size={16} />
               </button>
             </div>
 
-            <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)' }}>
-              <div className="font-semibold text-sm" style={{ color: 'var(--app-heading)' }}>
-                {selected.nom}
-              </div>
-              <div className="text-xs mt-0.5" style={{ color: 'var(--app-muted)' }}>
-                {selected.email} · {selected.poste}
-              </div>
+            <div className="demandes-summary-card">
+              <div className="demandes-summary-card__title">{selected.nom}</div>
+              <div className="demandes-summary-card__text">{formatMeta(selected.email, selected.poste)}</div>
             </div>
 
-            <div className="flex flex-col gap-3 mb-4">
-              <div>
-                <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--app-muted)' }}>
-                  Username
-                </label>
+            <div className="demandes-form-grid">
+              <label className="demandes-field-group">
+                <span className="demandes-field-group__label">Username</span>
                 <input
                   type="text"
                   placeholder="ex: m.ben_salah"
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
-                  style={fieldStyle}
+                  className="demandes-field"
                 />
-              </div>
-              <div>
-                <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--app-muted)' }}>
-                  Mot de passe
-                </label>
+              </label>
+
+              <label className="demandes-field-group">
+                <span className="demandes-field-group__label">Mot de passe</span>
                 <input
-                  type="text"
+                  type="password"
                   placeholder="Choisir un mot de passe"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  style={fieldStyle}
+                  className="demandes-field"
                 />
-              </div>
+              </label>
             </div>
 
-            {modalErr && (
-              <div
-                className="text-xs rounded-lg px-3 py-2 mb-4"
-                style={{ color: 'var(--app-danger)', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
-              >
-                {modalErr}
-              </div>
-            )}
+            {modalErr && <div className="demandes-alert demandes-alert--danger">{modalErr}</div>}
 
-            <div className="flex gap-2">
-              <button onClick={() => setSelected(null)} style={secondaryButtonStyle}>
+            <div className="demandes-modal__actions">
+              <button type="button" onClick={closeApprovalModal} className="demandes-action demandes-action--secondary">
                 Annuler
               </button>
               <button
+                type="button"
                 onClick={handleApprouver}
                 disabled={modalLoad}
-                style={{ ...primaryButtonStyle, opacity: modalLoad ? 0.6 : 1, cursor: modalLoad ? 'not-allowed' : 'pointer' }}
+                className="demandes-action demandes-action--accent demandes-action--wide"
               >
                 {modalLoad ? 'Creation...' : 'Creer le compte'}
               </button>
