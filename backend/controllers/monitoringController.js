@@ -177,7 +177,7 @@ const createMonitoringController = (deps) => {
   const maintenanceAnalyze = async (req, res) => {
     try {
       const data = await service.maintenanceAnalyze(req.body || {});
-      const statusCode = data?.alert ? 201 : 200;
+      const statusCode = data?.maintenance ? 201 : 200;
       return res.status(statusCode).json(data);
     } catch (err) {
       return handleError(res, err);

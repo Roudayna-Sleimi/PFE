@@ -21,7 +21,7 @@ interface LoginProps {
   onLogin: () => void;
 }
 
-type View = "login" | "demande" | "success";
+type View = "login" | "demande" | "success" | "forgot" | "reset";
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const navigate = useNavigate();
@@ -32,16 +32,31 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [loginNotice, setLoginNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
   const [form, setForm] = useState({ nom: "", email: "", poste: "", telephone: "" });
   const [formError, setFormError] = useState("");
   const [formLoading, setFormLoading] = useState(false);
 
+  const [forgotIdentifier, setForgotIdentifier] = useState("");
+  const [forgotError, setForgotError] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+
+  const [resetForm, setResetForm] = useState({ identifier: "", code: "", newPassword: "" });
+  const [resetError, setResetError] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+
   const openView = (nextView: View) => {
     setView(nextView);
     setError("");
+    setLoginNotice("");
     setFormError("");
+    setForgotError("");
+    setResetError("");
+    setResetMessage("");
   };
 
   const academicNotes = [
@@ -128,10 +143,21 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     color: "var(--app-muted)",
   };
 
+  const readResponsePayload = async (response: Response) => {
+    const text = await response.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { message: text };
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoading(true);
     setError("");
+    setLoginNotice("");
 
     try {
       const response = await fetch("http://localhost:5000/api/auth/login", {
@@ -140,7 +166,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         body: JSON.stringify({ username, password }),
       });
 
-      const data = await response.json();
+      const data = await readResponsePayload(response);
 
       if (!response.ok) {
         setError(data.message || "Identifiants incorrects");
@@ -177,7 +203,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         body: JSON.stringify(form),
       });
 
-      const data = await response.json();
+      const data = await readResponsePayload(response);
 
       if (!response.ok) {
         setFormError(data.message || "Erreur serveur");
@@ -189,6 +215,83 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       setFormError("Impossible de contacter le serveur.");
     } finally {
       setFormLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setForgotError("");
+
+    if (!forgotIdentifier) {
+      setForgotError("L'identifiant ou le numero enregistre est requis");
+      return;
+    }
+
+    setForgotLoading(true);
+
+    try {
+      const response = await fetch("http://localhost:5000/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier: forgotIdentifier }),
+      });
+
+      const data = await readResponsePayload(response);
+
+      if (!response.ok) {
+        setForgotError(data.error || data.message || "Impossible d'envoyer le code.");
+        return;
+      }
+
+      setResetForm({ identifier: forgotIdentifier.trim(), code: "", newPassword: "" });
+      setShowResetPassword(false);
+      openView("reset");
+      setResetMessage(
+        data.code
+          ? `${data.warning ? `${data.warning} ` : ""}${data.phoneMasked ? `Numero cible: ${data.phoneMasked}. ` : ""}${data.message || "Code envoye."} Code de test: ${data.code}`
+          : `${data.phoneMasked ? `Numero cible: ${data.phoneMasked}. ` : ""}${data.message || "Un code de reinitialisation a ete envoye."}`
+      );
+    } catch {
+      setForgotError("Impossible de contacter le serveur.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setResetError("");
+
+    if (!resetForm.identifier || !resetForm.code || !resetForm.newPassword) {
+      setResetError("Identifiant, code et nouveau mot de passe sont requis.");
+      return;
+    }
+
+    setResetLoading(true);
+
+    try {
+      const response = await fetch("http://localhost:5000/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(resetForm),
+      });
+
+      const data = await readResponsePayload(response);
+
+      if (!response.ok) {
+        setResetError(data.error || data.message || "Impossible de mettre a jour le mot de passe.");
+        return;
+      }
+
+      setPassword("");
+      setResetForm((prev) => ({ ...prev, code: "", newPassword: "" }));
+      setShowResetPassword(false);
+      openView("login");
+      setLoginNotice(data.message || "Mot de passe mis a jour. Vous pouvez vous connecter.");
+    } catch {
+      setResetError("Impossible de contacter le serveur.");
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -257,6 +360,20 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       return {
         title: "Demande d'acces",
         text: "Renseignez vos informations professionnelles pour demander un compte.",
+      };
+    }
+
+    if (view === "forgot") {
+      return {
+        title: "Mot de passe oublie",
+        text: "Recevez un code temporaire sur le numero de telephone deja enregistre sur le compte.",
+      };
+    }
+
+    if (view === "reset") {
+      return {
+        title: "Nouveau mot de passe",
+        text: "Saisissez le code recu sur le numero enregistre puis choisissez un nouveau mot de passe.",
       };
     }
 
@@ -371,7 +488,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-[20px] p-3.5" style={softCardStyle}>
+                <div className="rounded-[20px] p-3.5" style={softCardStyle}>
                   <div
                     className="text-[11px] font-bold uppercase tracking-[0.2em]"
                     style={{ color: "var(--app-subtle)" }}
@@ -383,7 +500,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                   </div>
                 </div>
 
-                  <div className="rounded-[20px] p-3.5" style={softCardStyle}>
+                <div className="rounded-[20px] p-3.5" style={softCardStyle}>
                   <div
                     className="text-[11px] font-bold uppercase tracking-[0.2em]"
                     style={{ color: "var(--app-subtle)" }}
@@ -396,7 +513,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 </div>
               </div>
 
-              {view !== "success" && (
+              {(view === "login" || view === "demande") && (
                 <div className="mt-6 grid grid-cols-2 rounded-2xl p-1" style={softCardStyle}>
                   <button
                     type="button"
@@ -510,6 +627,19 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     </div>
                   )}
 
+                  {loginNotice && (
+                    <div
+                      className="rounded-2xl px-3 py-3 text-xs font-medium"
+                      style={{
+                        background: "rgba(34,197,94,0.1)",
+                        border: "1px solid rgba(34,197,94,0.18)",
+                        color: darkMode ? "#86efac" : "#166534",
+                      }}
+                    >
+                      {loginNotice}
+                    </div>
+                  )}
+
                   <button
                     type="submit"
                     disabled={loading}
@@ -517,6 +647,18 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     style={primaryButtonStyle}
                   >
                     {loading ? "Connexion..." : "Se connecter"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotIdentifier("");
+                      openView("forgot");
+                    }}
+                    className="w-full text-center text-xs font-semibold"
+                    style={{ color: "var(--app-accent)" }}
+                  >
+                    Mot de passe oublie ?
                   </button>
 
                   <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
@@ -528,6 +670,180 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                       style={{ color: "var(--app-accent)" }}
                     >
                       Demander un acces
+                    </button>
+                  </p>
+                </form>
+              )}
+
+              {view === "forgot" && (
+                <form className="mt-6 space-y-4" onSubmit={handleForgotPassword}>
+                  {renderField("forgotIdentifier", "Identifiant ou numero", forgotIdentifier, setForgotIdentifier, Phone, {
+                    placeholder: "Identifiant ou numero deja enregistre",
+                    autoComplete: "username",
+                  })}
+
+                  {forgotError && (
+                    <div
+                      className="rounded-2xl px-3 py-3 text-xs font-medium"
+                      style={{
+                        background: "rgba(239,68,68,0.1)",
+                        border: "1px solid rgba(239,68,68,0.18)",
+                        color: "var(--app-danger)",
+                      }}
+                    >
+                      {forgotError}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    className="w-full rounded-2xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70"
+                    style={primaryButtonStyle}
+                  >
+                    {forgotLoading ? "Envoi du code..." : "Envoyer le code"}
+                  </button>
+
+                  <div className="rounded-[22px] p-4 text-xs leading-6" style={softCardStyle}>
+                    Le code est associe au numero de telephone deja stocke sur le compte. En mode debug local, il est affiche ici au lieu d etre envoye par SMS.
+                  </div>
+
+                  <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
+                    Vous avez deja un code ?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResetForm((prev) => ({ ...prev, identifier: forgotIdentifier.trim() || prev.identifier }));
+                        openView("reset");
+                      }}
+                      className="font-semibold"
+                      style={{ color: "var(--app-accent)" }}
+                    >
+                      Reinitialiser maintenant
+                    </button>
+                  </p>
+
+                  <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
+                    <button
+                      type="button"
+                      onClick={() => openView("login")}
+                      className="font-semibold"
+                      style={{ color: "var(--app-accent)" }}
+                    >
+                      Retour a la connexion
+                    </button>
+                  </p>
+                </form>
+              )}
+
+              {view === "reset" && (
+                <form className="mt-6 space-y-4" onSubmit={handleResetPassword}>
+                  {renderField(
+                    "resetIdentifier",
+                    "Identifiant ou numero",
+                    resetForm.identifier,
+                    (value) => setResetForm((prev) => ({ ...prev, identifier: value })),
+                    Phone,
+                    {
+                      placeholder: "Identifiant ou numero deja enregistre",
+                      autoComplete: "username",
+                    },
+                  )}
+
+                  {renderField(
+                    "resetCode",
+                    "Code recu",
+                    resetForm.code,
+                    (value) => setResetForm((prev) => ({ ...prev, code: value })),
+                    KeyRound,
+                    {
+                      placeholder: "Code de reinitialisation",
+                      autoComplete: "one-time-code",
+                    },
+                  )}
+
+                  {renderField(
+                    "newPassword",
+                    "Nouveau mot de passe",
+                    resetForm.newPassword,
+                    (value) => setResetForm((prev) => ({ ...prev, newPassword: value })),
+                    KeyRound,
+                    {
+                      placeholder: "Nouveau mot de passe",
+                      type: showResetPassword ? "text" : "password",
+                      autoComplete: "new-password",
+                      trailing: (
+                        <button
+                          type="button"
+                          onClick={() => setShowResetPassword((current) => !current)}
+                          className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg transition"
+                          style={{ color: "var(--app-subtle)" }}
+                          aria-label={showResetPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                        >
+                          {showResetPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      ),
+                    },
+                  )}
+
+                  {resetMessage && (
+                    <div
+                      className="rounded-2xl px-3 py-3 text-xs font-medium"
+                      style={{
+                        background: "rgba(34,197,94,0.1)",
+                        border: "1px solid rgba(34,197,94,0.18)",
+                        color: darkMode ? "#86efac" : "#166534",
+                      }}
+                    >
+                      {resetMessage}
+                    </div>
+                  )}
+
+                  {resetError && (
+                    <div
+                      className="rounded-2xl px-3 py-3 text-xs font-medium"
+                      style={{
+                        background: "rgba(239,68,68,0.1)",
+                        border: "1px solid rgba(239,68,68,0.18)",
+                        color: "var(--app-danger)",
+                      }}
+                    >
+                      {resetError}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={resetLoading}
+                    className="w-full rounded-2xl px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70"
+                    style={primaryButtonStyle}
+                  >
+                    {resetLoading ? "Mise a jour..." : "Mettre a jour le mot de passe"}
+                  </button>
+
+                  <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
+                    Pas encore de code ?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotIdentifier(resetForm.identifier);
+                        openView("forgot");
+                      }}
+                      className="font-semibold"
+                      style={{ color: "var(--app-accent)" }}
+                    >
+                      Demander un code
+                    </button>
+                  </p>
+
+                  <p className="text-center text-xs leading-6" style={{ color: "var(--app-muted)" }}>
+                    <button
+                      type="button"
+                      onClick={() => openView("login")}
+                      className="font-semibold"
+                      style={{ color: "var(--app-accent)" }}
+                    >
+                      Retour a la connexion
                     </button>
                   </p>
                 </form>

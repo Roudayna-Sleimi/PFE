@@ -88,13 +88,13 @@ const MaintenancePage: React.FC = () => {
       });
       const data = await res.json();
       if (!res.ok) {
-        setMessage(data.message || 'Impossible de charger maintenance AI.');
+        setMessage(data.message || 'Impossible de charger la maintenance predictive.');
         return;
       }
       setOverview(data);
       setMessage('');
     } catch {
-      setMessage('Serveur maintenance AI indisponible.');
+      setMessage('Serveur maintenance predictive indisponible.');
     } finally {
       setLoading(false);
     }
@@ -140,7 +140,7 @@ const MaintenancePage: React.FC = () => {
         setMessage(data.message || 'Analyse impossible.');
         return;
       }
-      setMessage(data.maintenance ? 'Rapport maintenance cree.' : 'Analyse terminee: comportement normal.');
+      setMessage(data.maintenance ? 'Anomalie detectee par l IA: rapport maintenance cree.' : 'Analyse terminee: comportement normal.');
       await fetchOverview();
     } catch {
       setMessage('Analyse maintenance echouee.');
@@ -176,8 +176,8 @@ const MaintenancePage: React.FC = () => {
     <div className="flex-1 min-w-0 w-full overflow-y-auto bg-transparent p-4 sm:p-6">
       <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
         <div>
-          <h2 className={`text-2xl font-bold mb-1 ${titleClass}`}>Maintenance AI</h2>
-          <p className={`text-sm ${mutedClass}`}>Dataset capteurs, prediction panne, rapports et demandes maintenance</p>
+          <h2 className={`text-2xl font-bold mb-1 ${titleClass}`}>Maintenance predictive</h2>
+          <p className={`text-sm ${mutedClass}`}>Detection IA, recommandations et suivi des demandes de maintenance</p>
         </div>
         <button
           onClick={fetchOverview}
@@ -195,7 +195,7 @@ const MaintenancePage: React.FC = () => {
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {[
           { label: 'Demandes ouvertes', value: counts.openRequests, icon: <Wrench size={18} />, color: 'var(--app-accent)' },
-          { label: 'Rapports critiques', value: counts.criticalReports, icon: <AlertTriangle size={18} />, color: '#ef4444' },
+          { label: 'Anomalies critiques', value: counts.criticalReports, icon: <AlertTriangle size={18} />, color: '#ef4444' },
           { label: 'Risques detectes', value: counts.warningReports, icon: <Activity size={18} />, color: '#f59e0b' },
         ].map(item => (
           <div key={item.label} className={`${panelClass} p-4`}>
@@ -212,7 +212,7 @@ const MaintenancePage: React.FC = () => {
       </div>
 
       {loading ? (
-        <div className={`text-center py-12 ${mutedClass}`}>Chargement maintenance AI...</div>
+        <div className={`text-center py-12 ${mutedClass}`}>Chargement maintenance predictive...</div>
       ) : (
         <>
           <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -244,14 +244,14 @@ const MaintenancePage: React.FC = () => {
                   </div>
 
                   <div className={`${nestedPanelClass} p-3 mb-3`}>
-                    <div className={`text-xs mb-1 ${mutedClass}`}>Prediction</div>
+                    <div className={`text-xs mb-1 ${mutedClass}`}>Diagnostic IA</div>
                     <div className={`text-sm font-semibold ${titleClass}`}>{machine.prediction?.label || 'Pas de prediction'}</div>
                     <div className={`text-xs mt-1 ${mutedClass}`}>ETA: {machine.prediction?.eta || '-'}</div>
                   </div>
 
                   {machine.openRequest && (
                     <div className="mb-3 flex items-center gap-2 rounded-lg border border-sky-400/20 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
-                      <Wrench size={13} /> Demande ouverte: {machine.openRequest.title}
+                      <Wrench size={13} /> Suivi maintenance actif: {machine.openRequest.title}
                     </div>
                   )}
 
@@ -260,7 +260,7 @@ const MaintenancePage: React.FC = () => {
                     disabled={analyzing === machine.machineId}
                     className="w-full rounded-lg border border-cyan-400/30 bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-50"
                   >
-                    {analyzing === machine.machineId ? 'Analyse...' : 'Analyser maintenant'}
+                    {analyzing === machine.machineId ? 'Analyse...' : 'Lancer analyse IA'}
                   </button>
                 </div>
               );
@@ -271,7 +271,7 @@ const MaintenancePage: React.FC = () => {
             <div className={`${panelClass} p-4`}>
               <div className="flex items-center gap-2 mb-4">
                 <AlertTriangle size={16} className="text-amber-400" />
-                <span className={`text-sm font-bold ${titleClass}`}>Derniers rapports</span>
+                <span className={`text-sm font-bold ${titleClass}`}>Dernieres detections IA</span>
               </div>
               {(overview?.reports || []).length === 0 ? (
                 <div className={`text-center py-8 ${mutedClass}`}>Aucun rapport maintenance</div>

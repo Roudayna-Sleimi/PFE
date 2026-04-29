@@ -1,23 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useTheme } from '../hooks/useTheme';
+import {
+  type AlertRecord,
+  formatAlertAnalysis,
+  formatAlertSource,
+  formatAlertTrigger,
+  upsertAlertEntry,
+} from '../utils/alertMetadata';
 
-interface Alert {
-  _id: string;
-  node: string;
-  severity: 'critical' | 'warning';
-  message: string;
-  status: string;
-  createdAt: string;
-  type: string;
-  sensorSnapshot?: {
-    vibX?: number;
-    vibY?: number;
-    vibZ?: number;
-    courant?: number;
-    rpm?: number;
-  };
-}
+type Alert = AlertRecord;
 
 interface CallLog {
   _id: string;
@@ -52,11 +44,14 @@ const AlertesPage: React.FC = () => {
 
   useEffect(() => {
     fetchAlerts();
-    socket.on('alert', (data: Alert) => {
-      setAlerts((prev) => [data, ...prev].slice(0, 50));
-    });
+    const onAlert = (data: Alert) => {
+      setAlerts((prev) => upsertAlertEntry(prev, data, 50));
+    };
+    socket.on('alert', onAlert);
+    socket.on('alert-updated', onAlert);
     return () => {
-      socket.off('alert');
+      socket.off('alert', onAlert);
+      socket.off('alert-updated', onAlert);
     };
   }, [fetchAlerts]);
 
@@ -213,13 +208,35 @@ const AlertesPage: React.FC = () => {
                   {alert.status === 'resolved' && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/20 text-green-400">RESOLU</span>
                   )}
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                    style={{ background: 'var(--app-accent-soft)', color: 'var(--app-accent)', border: '1px solid var(--app-accent-soft-strong)' }}
+                  >
+                    {formatAlertSource(alert.ai?.source)}
+                  </span>
+                  {(alert.occurrenceCount || 1) > 1 && (
+                    <span
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                      style={{ background: 'var(--app-neutral-soft)', color: 'var(--app-text)', border: '1px solid var(--app-border)' }}
+                    >
+                      x{alert.occurrenceCount}
+                    </span>
+                  )}
+                </div>
+
+                <div className={`mb-2 text-xs ${bodyClass}`}>
+                  Analyse: {formatAlertAnalysis(alert.ai)}
+                  {alert.ai?.trigger ? ` · ${formatAlertTrigger(alert.ai.trigger)}` : ''}
+                  {alert.ai?.contributor ? ` · Cause: ${alert.ai.contributor}` : ''}
                 </div>
 
                 <div className={`flex items-center gap-4 text-xs flex-wrap ${mutedClass}`}>
                   <span>Node: {alert.node}</span>
                   <span>Heure: {new Date(alert.createdAt).toLocaleString('fr-FR')}</span>
+                  {alert.lastObservedAt && <span>Derniere detection: {new Date(alert.lastObservedAt).toLocaleString('fr-FR')}</span>}
                   {alert.sensorSnapshot?.courant != null && <span>Courant: {alert.sensorSnapshot.courant.toFixed(1)} A</span>}
                   {alert.sensorSnapshot?.vibX != null && <span>VibX: {alert.sensorSnapshot.vibX.toFixed(2)} g</span>}
+                  {alert.sensorSnapshot?.pression != null && <span>Pression: {alert.sensorSnapshot.pression.toFixed(1)} bar</span>}
                 </div>
               </div>
 

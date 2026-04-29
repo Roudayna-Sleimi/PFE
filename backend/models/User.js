@@ -2,7 +2,12 @@ const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
+  email: { type: String, default: null, unique: true, sparse: true, lowercase: true, trim: true },
+  phone: { type: String, default: null, unique: true, sparse: true, trim: true },
   password: { type: String, required: true },
+  passwordResetCodeHash: { type: String, default: null },
+  passwordResetExpiresAt: { type: Date, default: null },
+  passwordResetRequestedAt: { type: Date, default: null },
   role: { type: String, default: 'user' },
   assignedMachine: { type: String, default: null },
   currentPieceName: { type: String, default: null },

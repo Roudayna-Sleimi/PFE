@@ -29,9 +29,29 @@ const createAuthController = (deps) => {
     }
   };
 
+  const forgotPassword = async (req, res) => {
+    try {
+      const result = await authService.requestPasswordReset(deps, req.body || {});
+      return res.json(result);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  };
+
+  const resetPassword = async (req, res) => {
+    try {
+      const result = await authService.resetPassword(deps, req.body || {});
+      return res.json(result);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  };
+
   return {
     register,
     login,
+    forgotPassword,
+    resetPassword,
   };
 };
 

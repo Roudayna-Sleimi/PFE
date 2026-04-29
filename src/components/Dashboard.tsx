@@ -14,6 +14,13 @@ import ReportsPage from './ReportsPage';
 import GsmContactsPage from './GsmContactsPage';
 import MaintenancePage from './MaintenancePage';
 import { useTheme } from '../hooks/useTheme';
+import {
+  type AlertRecord,
+  formatAlertAnalysis,
+  formatAlertSource,
+  isActiveAlert,
+  upsertAlertEntry,
+} from '../utils/alertMetadata';
 import './Dashboard.css';
 
 interface SensorData {
@@ -100,7 +107,7 @@ const Dashboard: React.FC = () => {
   const [latestComp, setLatestComp]         = useState<SensorData>({ node:'compresseur', courant:0, vibX:0, vibY:0, vibZ:0, rpm:0, pression:0 });
   const [showMessaging, setShowMessaging]   = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
-  const [alertCount, setAlertCount]         = useState(0);
+  const [recentAlerts, setRecentAlerts]     = useState<AlertRecord[]>([]);
   const [globalSearch, setGlobalSearch]     = useState('');
   const role = localStorage.getItem('role');
 
@@ -182,7 +189,48 @@ const [activePage, setActivePage] = useState<
     } catch { /* ignore */ }
   }, []);
 
+  const fetchRecentAlerts = useCallback(async () => {
+    const token = localStorage.getItem('token') || '';
+    try {
+      const res = await fetch('http://localhost:5000/api/alerts?limit=25', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)) setRecentAlerts(data);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
+    const onAlert = (data: AlertRecord) => {
+      setRecentAlerts(prev => upsertAlertEntry(prev, data, 25));
+      const source = formatAlertSource(data.ai?.source);
+      const analysis = formatAlertAnalysis(data.ai);
+      const occurrences = (data.occurrenceCount || 1) > 1 ? ` · Occurrences: ${data.occurrenceCount}` : '';
+      const alertDiv = document.createElement('div');
+      alertDiv.style.cssText = `
+        position: fixed; top: 80px; right: 24px; z-index: 9999;
+        padding: 18px 24px; border-radius: 14px; font-size: 14px;
+        font-weight: 600; color: white; max-width: 420px; min-width: 320px;
+        background: ${data.severity === 'critical' ? '#ef4444' : '#f59e0b'};
+        border-left: 5px solid ${data.severity === 'critical' ? '#b91c1c' : '#d97706'};
+        display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+      `;
+      alertDiv.innerHTML = `
+        <div style="font-size:16px;">${data.severity === 'critical' ? 'ALERTE CRITIQUE' : 'ATTENTION'}</div>
+        <div style="font-size:13px; font-weight:400; opacity:0.95;">${data.message}</div>
+        <div style="font-size:11px; opacity:0.85;">Source: ${source} · Analyse: ${analysis}${occurrences}</div>
+        <div style="font-size:11px; opacity:0.7;">Machine: ${data.node || 'Inconnue'} · Cliquez pour fermer</div>
+      `;
+      alertDiv.onclick = () => alertDiv.remove();
+      document.body.appendChild(alertDiv);
+      setTimeout(() => alertDiv.remove(), 10000);
+    };
+
+    const onAlertUpdated = (data: AlertRecord) => {
+      setRecentAlerts(prev => upsertAlertEntry(prev, data, 25));
+    };
+
     socket.on('connect', () => {
       setConnected(true);
       const username = localStorage.getItem('username');
@@ -190,8 +238,10 @@ const [activePage, setActivePage] = useState<
       if (username && role) socket.emit('user-online', { username, role });
     });
     socket.on('disconnect', () => setConnected(false));
-    socket.on('alert', (data: { severity: string; message: string; node: string }) => {
-      setAlertCount(prev => prev + 1);
+    fetchRecentAlerts();
+    socket.on('alert', onAlert);
+    /*
+      setRecentAlerts(prev => upsertAlertEntry(prev, data, 25));
       const alertDiv = document.createElement('div');
       alertDiv.style.cssText = `
         position: fixed; top: 80px; right: 24px; z-index: 9999;
@@ -210,6 +260,8 @@ const [activePage, setActivePage] = useState<
       document.body.appendChild(alertDiv);
       setTimeout(() => alertDiv.remove(), 10000);
     });
+    */
+    socket.on('alert-updated', onAlertUpdated);
     socket.on('direct-message', (msg: { from: string }) => {
       const currentUser = localStorage.getItem('username');
       if (msg.from !== currentUser) setUnreadMessages(prev => prev + 1);
@@ -241,11 +293,12 @@ const [activePage, setActivePage] = useState<
       socket.off('disconnect');
       socket.off('direct-message');
       socket.off('alert');
+      socket.off('alert-updated');
       socket.off('employee-machine-updated');
       socket.off('user-status');
       socket.off('dashboard-refresh');
     };
-  }, [fetchDashStats]);
+  }, [fetchDashStats, fetchRecentAlerts]);
 
   useEffect(() => {
     socket.on('sensor-data', (data: SensorData) => {
@@ -284,6 +337,12 @@ const [activePage, setActivePage] = useState<
     const v = latestComp.vibX + latestComp.vibY + latestComp.vibZ;
     return parseFloat(Math.max(0, Math.min(100, 100 - v * 5)).toFixed(1));
   }, [latestComp]);
+
+  const activeAlerts = useMemo(
+    () => recentAlerts.filter((alert) => isActiveAlert(alert)),
+    [recentAlerts],
+  );
+  const alertCount = activeAlerts.length;
 
   const pausedColor = darkMode ? '#ffffff' : '#08111f';
   const stoppedColor = darkMode ? '#ffffff' : '#08111f';
@@ -995,18 +1054,29 @@ const [activePage, setActivePage] = useState<
                   </div>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    {[
+                    {activeAlerts.slice(0, 3).map((alert) => {
+                      /*
                       { label: 'Vibration élevée', machine: 'Rectifieuse', color: pausedColor },
                       { label: 'Courant anormal',  machine: 'Compresseur', color: '#1e3a8a' },
-                    ].slice(0, alertCount).map((a, i) => (
-                      <div key={i} className="flex items-center gap-2 p-2 rounded-lg" style={{ background: a.color + '10', border: `1px solid ${a.color}25` }}>
-                        <Activity size={14} style={{ color: a.color }} />
+                      */
+                      const color = alert.severity === 'critical' ? '#ef4444' : '#f59e0b';
+                      return (
+                        <div key={alert._id} className="flex items-center gap-2 p-2 rounded-lg" style={{ background: color + '10', border: `1px solid ${color}25` }}>
+                        <Activity size={14} style={{ color }} />
                         <div>
-                          <div className="text-[11px] font-bold" style={{ color: a.color }}>{a.label}</div>
-                          <div className={`text-[10px] ${txtMut}`}>{a.machine}</div>
+                          <div className="text-[11px] font-bold" style={{ color }}>{alert.message}</div>
+                          <div className={`text-[10px] ${txtMut}`}>
+                            {(alert.node || 'Machine inconnue')} · {formatAlertSource(alert.ai?.source)} · {formatAlertAnalysis(alert.ai)}
+                          </div>
                         </div>
+                        {(alert.occurrenceCount || 1) > 1 && (
+                          <span className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: color + '18', color }}>
+                            x{alert.occurrenceCount}
+                          </span>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

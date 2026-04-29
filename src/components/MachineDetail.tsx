@@ -13,20 +13,17 @@ import {
 } from 'lucide-react';
 import { getMachineVisual } from '../utils/machineVisuals';
 import { getMachineFunctions, type MachineFunction } from '../utils/machineFunctions';
+import {
+  type AlertRecord,
+  formatAlertAnalysis,
+  formatAlertSource,
+  formatAlertTrigger,
+  upsertAlertEntry,
+} from '../utils/alertMetadata';
 
-interface Alert {
-  _id: string;
-  machineId?: string | null;
-  node?: string | null;
-  type?: string;
-  severity: 'critical' | 'warning' | 'info';
-  message: string;
+type Alert = AlertRecord & {
   status: 'new' | 'seen' | 'resolved' | 'notified';
-  createdAt: string;
-  seenAt?: string;
-  seenBy?: string;
-  sensorSnapshot?: Record<string, number>;
-}
+};
 
 interface Piece {
   _id: string;
@@ -253,6 +250,23 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     return machine.name;
   })();
 
+  const matchesMachineAlert = useCallback((alert: Alert) => {
+    const machineId = normalizeAlertText(machine.id);
+    const machId = normalizeAlertText(machine.machId);
+    const node = normalizeAlertText(machine.node);
+    const alertMachineId = normalizeAlertText(alert.machineId);
+    const alertNode = normalizeAlertText(alert.node);
+
+    return (
+      alertMachineId === machineId ||
+      alertMachineId === machId ||
+      alertNode === node ||
+      (machine.id === 'rectifieuse' && (alertMachineId.includes('rectif') || alertNode.includes('esp32'))) ||
+      (machine.id === 'compresseur' &&
+        (alertMachineId.includes('compress') || alertNode.includes('compress')))
+    );
+  }, [machine.id, machine.machId, machine.node]);
+
   const fetchAlerts = useCallback(async () => {
     if (!LIVE_MACHINES.includes(machine.id)) return;
 
@@ -270,35 +284,33 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
         return;
       }
 
-      const machineId = normalizeAlertText(machine.id);
-      const machId = normalizeAlertText(machine.machId);
-      const node = normalizeAlertText(machine.node);
-
-      const filtered = data.filter((alert: Alert) => {
-        const alertMachineId = normalizeAlertText(alert.machineId);
-        const alertNode = normalizeAlertText(alert.node);
-
-        return (
-          alertMachineId === machineId ||
-          alertMachineId === machId ||
-          alertNode === node ||
-          (machine.id === 'rectifieuse' && (alertMachineId.includes('rectif') || alertNode.includes('esp32'))) ||
-          (machine.id === 'compresseur' &&
-            (alertMachineId.includes('compress') || alertNode.includes('compress')))
-        );
-      });
-
-      setAlerts(filtered);
+      setAlerts(data.filter((alert: Alert) => matchesMachineAlert(alert)));
     } catch {
       setAlerts([]);
     } finally {
       setAlertsLoading(false);
     }
-  }, [machine.id, machine.machId, machine.node]);
+  }, [machine.id, matchesMachineAlert]);
 
   useEffect(() => {
     if (activeTab === 'Alertes') fetchAlerts();
   }, [activeTab, fetchAlerts]);
+
+  useEffect(() => {
+    if (!LIVE_MACHINES.includes(machine.id)) return;
+
+    const onAlert = (incoming: Alert) => {
+      if (!matchesMachineAlert(incoming)) return;
+      setAlerts((prev) => upsertAlertEntry(prev, incoming, 50));
+    };
+
+    socket.on('alert', onAlert);
+    socket.on('alert-updated', onAlert);
+    return () => {
+      socket.off('alert', onAlert);
+      socket.off('alert-updated', onAlert);
+    };
+  }, [machine.id, matchesMachineAlert]);
 
   const handleMarkSeen = async (alertId: string) => {
     const token = localStorage.getItem('token') || '';
@@ -988,6 +1000,20 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                                 <span className="text-xs font-semibold" style={{ color: alertStatusStyle.color }}>
                                   {alertStatusStyle.text}
                                 </span>
+                                <span
+                                  className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold"
+                                  style={{ background: accentTone.bg, border: `1px solid ${accentTone.border}`, color: accentTone.color }}
+                                >
+                                  {formatAlertSource(alert.ai?.source)}
+                                </span>
+                                {(alert.occurrenceCount || 1) > 1 && (
+                                  <span
+                                    className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold"
+                                    style={{ background: 'var(--app-neutral-soft)', border: '1px solid var(--app-border)', color: 'var(--app-text)' }}
+                                  >
+                                    x{alert.occurrenceCount}
+                                  </span>
+                                )}
                               </div>
 
                               <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--app-muted)' }}>
@@ -998,6 +1024,12 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
                             <div className="mt-3 text-sm font-semibold leading-6" style={{ color: 'var(--app-heading)' }}>
                               {alert.message}
+                            </div>
+
+                            <div className="mt-2 text-xs leading-6" style={{ color: 'var(--app-muted)' }}>
+                              Analyse: {formatAlertAnalysis(alert.ai)}
+                              {alert.ai?.trigger ? ` · ${formatAlertTrigger(alert.ai.trigger)}` : ''}
+                              {alert.ai?.contributor ? ` · Cause: ${alert.ai.contributor}` : ''}
                             </div>
 
                             {alert.sensorSnapshot && Object.keys(alert.sensorSnapshot).length > 0 && (
@@ -1015,6 +1047,12 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                                     {key}: {value}
                                   </span>
                                 ))}
+                              </div>
+                            )}
+
+                            {alert.lastObservedAt && (
+                              <div className="mt-3 text-xs" style={{ color: 'var(--app-muted)' }}>
+                                Derniere detection: {new Date(alert.lastObservedAt).toLocaleString('fr-FR')}
                               </div>
                             )}
 
@@ -1085,6 +1123,13 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                                 Resolu
                               </span>
 
+                              <span
+                                className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold"
+                                style={{ background: accentTone.bg, border: `1px solid ${accentTone.border}`, color: accentTone.color }}
+                              >
+                                {formatAlertSource(alert.ai?.source)}
+                              </span>
+
                               <span className="text-xs" style={{ color: 'var(--app-muted)' }}>
                                 {new Date(alert.createdAt).toLocaleString('fr-FR')}
                               </span>
@@ -1092,6 +1137,10 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
                             <div className="mt-3 text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
                               {alert.message}
+                            </div>
+
+                            <div className="mt-2 text-xs leading-6" style={{ color: 'var(--app-muted)' }}>
+                              Analyse: {formatAlertAnalysis(alert.ai)}
                             </div>
                           </div>
                         );

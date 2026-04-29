@@ -1,3 +1,5 @@
+const { normalizePhone } = require('../utils/normalizePhone');
+
 // Title: Normalize a piece status string for tolerant comparisons.
 const normalizeStatus = (value = '') => String(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
@@ -238,8 +240,38 @@ const createWorkforceService = (deps) => {
       throw error;
     }
 
+    const normalizedEmail = String(demande.email || '').trim().toLowerCase();
+    if (normalizedEmail) {
+      const emailExists = await User.findOne({ email: normalizedEmail });
+      if (emailExists) {
+        const error = new Error('Email deja utilise');
+        error.statusCode = 409;
+        throw error;
+      }
+    }
+
+    const normalizedPhone = normalizePhone(demande.telephone);
+    if (!normalizedPhone) {
+      const error = new Error('Numero de telephone invalide');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const phoneExists = await User.findOne({ phone: normalizedPhone });
+    if (phoneExists) {
+      const error = new Error('Numero de telephone deja utilise');
+      error.statusCode = 409;
+      throw error;
+    }
+
     const hashed = await bcrypt.hash(password, 12);
-    await User.create({ username, password: hashed, role: 'employe' });
+    await User.create({
+      username,
+      email: normalizedEmail || null,
+      phone: normalizedPhone,
+      password: hashed,
+      role: 'employe',
+    });
     demande.statut = 'approuvee';
     demande.username = username;
     await demande.save();
@@ -302,7 +334,7 @@ const createWorkforceService = (deps) => {
 
   // Title: List users with lightweight fields.
   const listUsers = async () => {
-    return User.find({}, 'username role isOnline lastSeen assignedMachine machineStatus currentActivity machineStatusUpdatedAt');
+    return User.find({}, 'username role phone isOnline lastSeen assignedMachine machineStatus currentActivity machineStatusUpdatedAt');
   };
 
   // Title: Assign a machine to an employee.
@@ -333,7 +365,7 @@ const createWorkforceService = (deps) => {
   // Title: Return admin overview for all employees.
   const employesOverview = async () => {
     return User.find({ role: 'employe' })
-      .select('username assignedMachine currentPieceName currentPieceId machineStatus currentActivity machineStatusUpdatedAt connectedAt isOnline lastSeen')
+      .select('username phone assignedMachine currentPieceName currentPieceId machineStatus currentActivity machineStatusUpdatedAt connectedAt isOnline lastSeen')
       .sort({ username: 1 });
   };
 

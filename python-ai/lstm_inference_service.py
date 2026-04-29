@@ -397,33 +397,9 @@ def create_ai_alert(data: dict, result: dict) -> None:
         return
 
     created_at = now_utc()
-    alert_doc = {
-        "machineId": machine_id,
-        "node": data.get("node", "UNKNOWN"),
-        "type": "maintenance-ai",
-        "severity": severity,
-        "message": f"Maintenance risk {severity} detected on {machine_id}",
-        "status": "new",
-        "createdAt": created_at,
-        "seenAt": None,
-        "seenBy": None,
-        "notifiedAt": None,
-        "notifiedBy": None,
-        "callAttempts": 0,
-        "ai": {
-            "source": "rule-engine",
-            "label": label,
-            "proba": result["proba"],
-            "model": "SimpleThresholdBaseline",
-            "version": rules.get("version", "simple-rules-v1"),
-        },
-        "sensorSnapshot": result["snapshot"],
-    }
-
-    alert_id = db.alerts.insert_one(alert_doc).inserted_id
-    create_maintenance_report(data, alert_id, result)
+    create_maintenance_report(data, None, result)
     last_alert_at[machine_id] = created_at
-    print(f"[AI] {severity.upper()} alert - {machine_id} - {label} ({confidence:.2f})")
+    print(f"[AI] {severity.upper()} maintenance report - {machine_id} - {label} ({confidence:.2f})")
 
 
 # --- MQTT callback ---

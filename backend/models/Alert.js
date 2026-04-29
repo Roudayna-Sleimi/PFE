@@ -8,6 +8,8 @@ const alertSchema = new mongoose.Schema({
   message: { type: String, required: true },
   status: { type: String, enum: ['new', 'seen', 'notified', 'resolved'], default: 'new' },
   createdAt: { type: Date, default: Date.now },
+  lastObservedAt: { type: Date, default: Date.now },
+  occurrenceCount: { type: Number, default: 1 },
   seenAt: { type: Date, default: null },
   seenBy: { type: String, default: null },
   notifiedAt: { type: Date, default: null },
@@ -16,6 +18,10 @@ const alertSchema = new mongoose.Schema({
   ai: {
     source: { type: String, default: 'rules' },
     label: { type: String, default: null },
+    score: { type: Number, default: null },
+    summary: { type: String, default: null },
+    contributor: { type: String, default: null },
+    trigger: { type: String, default: null },
     proba: { type: mongoose.Schema.Types.Mixed, default: null },
     model: { type: String, default: null },
     version: { type: String, default: null },
@@ -26,6 +32,7 @@ const alertSchema = new mongoose.Schema({
     vibZ: { type: Number, default: null },
     courant: { type: Number, default: null },
     rpm: { type: Number, default: null },
+    pression: { type: Number, default: null },
   },
 });
 

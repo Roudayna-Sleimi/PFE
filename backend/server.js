@@ -4,6 +4,7 @@ const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const cors       = require('cors');
 const mqtt       = require('mqtt');
+const nodemailer = require('nodemailer');
 const http       = require('http');
 const { Server } = require('socket.io');
 const multer     = require('multer');
@@ -13,6 +14,7 @@ const { startDossierWatcher } = require('./dossierWatcher');
 const { ensureBaseMachines } = require('./services/machineCatalog');
 const { slugify } = require('./utils/slugify');
 const { createAuthRoutes } = require('./routes/authRoutes');
+const { createPasswordResetMailer } = require('./services/passwordResetMailer');
 const { createWorkforceRoutes } = require('./routes/workforceRoutes');
 const { createTaskMessageRoutes } = require('./routes/taskMessageRoutes');
 const { createMonitoringRoutes } = require('./routes/monitoringRoutes');
@@ -140,6 +142,7 @@ const serviceKeyMiddleware = (req, res, next) => {
 };
 
 const sanitizeSeverity = (value) => value === 'critical' ? 'critical' : 'warning';
+const parseBooleanEnv = (value = false) => ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
 
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -196,6 +199,7 @@ const computeWorkByMachine = (events = []) => {
 
 const MAINTENANCE_FEATURES = ['vibX', 'vibY', 'vibZ', 'courant', 'rpm'];
 const MAINTENANCE_REPORT_COOLDOWN_MIN = Number(process.env.MAINTENANCE_REPORT_COOLDOWN_MIN || 15);
+const SENSOR_ALERT_COOLDOWN_SEC = Number(process.env.SENSOR_ALERT_COOLDOWN_SEC || 20);
 
 const resolveMachineIdentity = (data = {}) => {
   const node = String(data.node || data.machineId || 'UNKNOWN');
@@ -309,6 +313,131 @@ const buildMaintenanceAssessment = (data = {}, history = []) => {
   };
 };
 
+const buildSensorRuleAlerts = (data = {}) => {
+  const snapshot = sensorSnapshot(data);
+  const maxAxisVibration = Math.max(
+    Math.abs(snapshot.vibX),
+    Math.abs(snapshot.vibY),
+    Math.abs(snapshot.vibZ),
+  );
+  const alerts = [];
+
+  if (snapshot.courant > 20) {
+    alerts.push({
+      severity: 'critical',
+      message: `Courant critique detecte (${snapshot.courant.toFixed(1)} A)`,
+      node: data.node,
+      type: 'sensor',
+      trigger: 'current-threshold',
+    });
+  } else if (snapshot.courant > 15) {
+    alerts.push({
+      severity: 'warning',
+      message: `Courant eleve detecte (${snapshot.courant.toFixed(1)} A)`,
+      node: data.node,
+      type: 'sensor',
+      trigger: 'current-threshold',
+    });
+  }
+
+  if (maxAxisVibration > 3) {
+    alerts.push({
+      severity: 'critical',
+      message: 'Vibration critique detectee',
+      node: data.node,
+      type: 'sensor',
+      trigger: 'vibration-threshold',
+    });
+  } else if (maxAxisVibration > 2) {
+    alerts.push({
+      severity: 'warning',
+      message: 'Vibration elevee',
+      node: data.node,
+      type: 'sensor',
+      trigger: 'vibration-threshold',
+    });
+  }
+
+  if (snapshot.pression !== null) {
+    if (snapshot.pression > 11 || snapshot.pression < 3.5) {
+      alerts.push({
+        severity: 'critical',
+        message: `Pression critique detectee (${snapshot.pression.toFixed(1)} bar)`,
+        node: data.node,
+        type: 'sensor',
+        trigger: 'pressure-threshold',
+      });
+    } else if (snapshot.pression > 10 || snapshot.pression < 4.5) {
+      alerts.push({
+        severity: 'warning',
+        message: `Pression hors zone (${snapshot.pression.toFixed(1)} bar)`,
+        node: data.node,
+        type: 'sensor',
+        trigger: 'pressure-threshold',
+      });
+    }
+  }
+
+  return alerts;
+};
+
+const buildAlertAiPayload = (assessment = {}, ruleAlert = {}) => ({
+  source: 'rules',
+  label: assessment?.severity || 'normal',
+  score: Number.isFinite(Number(assessment?.anomalyScore)) ? Number(assessment.anomalyScore) : null,
+  summary: assessment?.prediction?.label || null,
+  contributor: Array.isArray(assessment?.contributors) && assessment.contributors[0]?.label
+    ? assessment.contributors[0].label
+    : null,
+  trigger: ruleAlert?.trigger || null,
+  model: 'backend-maintenance-assessment',
+  version: 'rules-v2',
+});
+
+const upsertSensorAlert = async ({ identity, payload, ruleAlert, assessment }) => {
+  const severity = sanitizeSeverity(ruleAlert.severity);
+  const snapshot = sensorSnapshot(payload);
+  const ai = buildAlertAiPayload(assessment, ruleAlert);
+  const now = new Date();
+
+  if (SENSOR_ALERT_COOLDOWN_SEC > 0) {
+    const cutoff = new Date(now.getTime() - (SENSOR_ALERT_COOLDOWN_SEC * 1000));
+    const existing = await Alert.findOne({
+      machineId: identity.machineId,
+      node: payload.node || 'UNKNOWN',
+      type: ruleAlert.type || 'sensor',
+      severity,
+      message: ruleAlert.message,
+      status: { $ne: 'resolved' },
+      lastObservedAt: { $gte: cutoff },
+    }).sort({ lastObservedAt: -1 });
+
+    if (existing) {
+      existing.lastObservedAt = now;
+      existing.occurrenceCount = (existing.occurrenceCount || 1) + 1;
+      existing.sensorSnapshot = snapshot;
+      existing.ai = { ...(existing.ai?.toObject ? existing.ai.toObject() : existing.ai), ...ai };
+      await existing.save();
+      io.emit('alert-updated', existing);
+      return { alert: existing, isNew: false };
+    }
+  }
+
+  const created = await Alert.create({
+    machineId: identity.machineId,
+    node: payload.node || 'UNKNOWN',
+    type: ruleAlert.type || 'sensor',
+    severity,
+    message: ruleAlert.message,
+    lastObservedAt: now,
+    occurrenceCount: 1,
+    ai,
+    sensorSnapshot: snapshot,
+  });
+  io.emit('alert', created);
+  return { alert: created, isNew: true };
+};
+
 const assessMaintenanceRisk = async (data = {}) => {
   const identity = resolveMachineIdentity(data);
   const history = await SensorData.find({ node: identity.node }).sort({ createdAt: -1 }).limit(120).lean();
@@ -373,13 +502,33 @@ const createMaintenanceCase = async (data = {}, alert = null, assessment = null,
   return { report, request, reused: false };
 };
 
+const passwordResetMailer = createPasswordResetMailer({
+  nodemailer,
+  config: {
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    secure: process.env.SMTP_SECURE,
+    from: process.env.MAIL_FROM,
+  },
+  logger: console,
+});
+
 // Auth Routes
 // MVC Routes
 app.use('/api/auth', createAuthRoutes({
   User,
+  Demande,
   bcrypt,
   jwt,
   jwtSecret: process.env.JWT_SECRET,
+  passwordResetMailer,
+  passwordResetConfig: {
+    ttlMs: Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15) * 60 * 1000,
+    cooldownMs: Number(process.env.PASSWORD_RESET_COOLDOWN_SECONDS || 60) * 1000,
+    debugCode: parseBooleanEnv(process.env.PASSWORD_RESET_DEBUG_CODE),
+  },
 }));
 
 app.use('/api', createWorkforceRoutes({
@@ -448,6 +597,17 @@ app.use('/api', createDossierRoutes({
   escapeRegex,
 }));
 
+// Return a clean client error when a request body is not valid JSON.
+app.use((err, _req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && Object.prototype.hasOwnProperty.call(err, 'body')) {
+    return res.status(400).json({
+      message: 'JSON invalide',
+      error: 'Le corps de la requete doit etre un JSON valide.',
+    });
+  }
+  return next(err);
+});
+
 const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
 
 mqttClient.on('connect', () => {
@@ -479,40 +639,21 @@ mqttClient.on('message', async (topic, message) => {
     const savedSensor = await SensorData.create(data);
     const sensorPayload = savedSensor.toObject ? savedSensor.toObject() : data;
     io.emit('sensor-data', data);
-    const alerts = [];
-    if (data.courant > 20)       alerts.push({ severity: 'critical', message: 'Current critical: ' + data.courant + 'A', node: data.node, type: 'sensor' });
-    else if (data.courant > 15)  alerts.push({ severity: 'warning',  message: 'Current elevated: ' + data.courant + 'A', node: data.node, type: 'sensor' });
-    if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)        alerts.push({ severity: 'critical', message: 'Vibration critique detectee', node: data.node, type: 'sensor' });
-    else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)   alerts.push({ severity: 'warning',  message: 'Vibration elevee',            node: data.node, type: 'sensor' });
-    const savedAlerts = [];
-    for (const alert of alerts) {
-      const identity = resolveMachineIdentity(data);
-      const savedAlert = await Alert.create({
-        machineId: identity.machineId,
-        node: data.node || 'UNKNOWN', type: alert.type || 'sensor',
-        severity: sanitizeSeverity(alert.severity), message: alert.message,
-        ai: { source: 'rules', label: alert.severity || 'warning' },
-        sensorSnapshot: sensorSnapshot(data)
-      });
-      savedAlerts.push(savedAlert);
-      io.emit('alert', savedAlert);
-    }
     const assessment = await assessMaintenanceRisk(sensorPayload);
+    const alerts = buildSensorRuleAlerts(sensorPayload);
+    const identity = resolveMachineIdentity(sensorPayload);
+    let primaryAlert = null;
+    for (const alert of alerts) {
+      const { alert: savedAlert } = await upsertSensorAlert({
+        identity,
+        payload: sensorPayload,
+        ruleAlert: alert,
+        assessment,
+      });
+      if (!primaryAlert && savedAlert) primaryAlert = savedAlert;
+    }
     if (assessment.severity !== 'normal') {
-      let maintenanceAlert = savedAlerts[0] || null;
-      if (!maintenanceAlert) {
-        maintenanceAlert = await Alert.create({
-          machineId: assessment.machineId,
-          node: assessment.node,
-          type: 'maintenance-ai',
-          severity: sanitizeSeverity(assessment.severity),
-          message: assessment.message,
-          ai: { source: 'backend-predictive-maintenance', label: assessment.severity, model: 'SensorBaselineRules', version: 'v1' },
-          sensorSnapshot: assessment.sensorSnapshot,
-        });
-        io.emit('alert', maintenanceAlert);
-      }
-      await createMaintenanceCase(sensorPayload, maintenanceAlert, assessment, 'backend-predictive-maintenance');
+      await createMaintenanceCase(sensorPayload, primaryAlert, assessment, 'backend-predictive-maintenance');
     }
   } catch (err) {
     console.error('Erreur MQTT:', err.message);
@@ -606,4 +747,13 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
+server.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`Le port ${PORT} est deja utilise. Un autre serveur tourne deja sur cette machine.`);
+    process.exit(1);
+  }
+  console.error('Erreur serveur HTTP:', err);
+  process.exit(1);
+});
+
 server.listen(PORT, '0.0.0.0', () => console.log(`Serveur demarre sur le port ${PORT}`));

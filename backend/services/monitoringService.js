@@ -29,9 +29,11 @@ const createMonitoringService = (deps) => {
 
   // Title: Return alerts with optional status and limit filters.
   const listAlerts = async (query = {}) => {
-    const { status, limit = 100 } = query;
+    const { status, type, includeMaintenanceAi, limit = 100 } = query;
     const filter = {};
     if (status) filter.status = status;
+    if (type) filter.type = String(type);
+    else if (String(includeMaintenanceAi || '').toLowerCase() !== 'true') filter.type = { $ne: 'maintenance-ai' };
     return Alert.find(filter).sort({ createdAt: -1 }).limit(Number(limit));
   };
 
@@ -334,19 +336,8 @@ const createMonitoringService = (deps) => {
       return { assessment, maintenance: null };
     }
 
-    const alert = await Alert.create({
-      machineId: assessment.machineId,
-      node: assessment.node,
-      type: 'maintenance-ai',
-      severity: sanitizeSeverity(assessment.severity),
-      message: assessment.message,
-      ai: { source: 'backend-predictive-maintenance', label: assessment.severity, model: 'SensorBaselineRules', version: 'v1' },
-      sensorSnapshot: assessment.sensorSnapshot,
-    });
-    io.emit('alert', alert);
-
-    const maintenance = await createMaintenanceCase(latest, alert, assessment, 'manual-ai-analysis');
-    return { assessment, alert, maintenance };
+    const maintenance = await createMaintenanceCase(latest, null, assessment, 'manual-ai-analysis');
+    return { assessment, maintenance };
   };
 
   // Title: Update one maintenance request.
