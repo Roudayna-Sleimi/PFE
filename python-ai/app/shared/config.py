@@ -78,6 +78,7 @@ class MqttSettings:
     broker: str
     port: int
     sensor_topic: str
+    prediction_topic: str
     gsm_call_topic: str
 
 
@@ -90,6 +91,8 @@ class PathSettings:
     train_metrics_path: Path
     training_curve_path: Path
     confusion_matrix_path: Path
+    model_versions_dir: Path
+    retrain_state_path: Path
     runtime_audio_dir: Path
     runtime_logs_dir: Path
 
@@ -125,9 +128,7 @@ class TrainingSettings:
 
 @dataclass(frozen=True)
 class InferenceSettings:
-    alert_cooldown_sec: int
     model_reload_sec: int
-    min_history_for_alert: int
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,7 @@ class SchedulerSettings:
     interval_minutes: int
     run_on_start: bool
     stop_on_error: bool
+    min_dataset_growth_ratio: float
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,7 @@ def load_settings() -> AppSettings:
         broker=os.getenv("MQTT_BROKER", "broker.hivemq.com"),
         port=int(os.getenv("MQTT_PORT", "1883")),
         sensor_topic=os.getenv("MQTT_SENSOR_TOPIC", "cncpulse/sensors"),
+        prediction_topic=os.getenv("MQTT_PREDICTION_TOPIC", "cncpulse/maintenance/predictions"),
         gsm_call_topic=os.getenv("MQTT_GSM_CALL_TOPIC", "cncpulse/gsm/call"),
     )
     paths = PathSettings(
@@ -191,6 +194,12 @@ def load_settings() -> AppSettings:
         ),
         confusion_matrix_path=resolve_project_path(
             os.getenv("CONFUSION_MATRIX_PATH", "models/lstm_confusion_matrix.png")
+        ),
+        model_versions_dir=resolve_project_path(
+            os.getenv("MODEL_VERSIONS_DIR", "models/versions")
+        ),
+        retrain_state_path=resolve_project_path(
+            os.getenv("RETRAIN_STATE_PATH", "runtime/logs/retrain_state.json")
         ),
         runtime_audio_dir=resolve_project_path(os.getenv("AUDIO_OUTPUT_DIR", "runtime/audio")),
         runtime_logs_dir=resolve_project_path(os.getenv("RUNTIME_LOG_DIR", "runtime/logs")),
@@ -221,14 +230,13 @@ def load_settings() -> AppSettings:
         enable_plots=parse_bool(os.getenv("ENABLE_TRAINING_PLOTS", "1"), default=True),
     )
     inference = InferenceSettings(
-        alert_cooldown_sec=int(os.getenv("ALERT_COOLDOWN_SEC", "60")),
         model_reload_sec=int(os.getenv("MODEL_RELOAD_SEC", "15")),
-        min_history_for_alert=int(os.getenv("MIN_HISTORY_FOR_ALERT", "8")),
     )
     scheduler = SchedulerSettings(
         interval_minutes=int(os.getenv("AUTO_TRAIN_INTERVAL_MINUTES", "60")),
         run_on_start=parse_bool(os.getenv("AUTO_TRAIN_RUN_ON_START", "1"), default=True),
         stop_on_error=parse_bool(os.getenv("AUTO_TRAIN_STOP_ON_ERROR", "0"), default=False),
+        min_dataset_growth_ratio=to_float(os.getenv("AUTO_TRAIN_MIN_GROWTH_RATIO"), 0.2),
     )
     gsm = GsmSettings(
         unseen_minutes=int(os.getenv("UNSEEN_MINUTES", "5")),
@@ -251,4 +259,3 @@ def load_settings() -> AppSettings:
         scheduler=scheduler,
         gsm=gsm,
     )
-

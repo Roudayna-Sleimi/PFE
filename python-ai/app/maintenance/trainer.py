@@ -827,9 +827,12 @@ def main() -> None:
 
     model.save(config.model_path, include_optimizer=False)
 
+    model_version = datetime.now(timezone.utc).strftime("lstm-%Y%m%d-%H%M%S")
+    created_at = datetime.now(timezone.utc).isoformat()
+
     preprocessor_payload = {
-        "version": "lstm-v1",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "version": model_version,
+        "created_at": created_at,
         "model_path": str(config.model_path),
         "dataset_path": str(config.dataset_path),
         "sequence_length": config.sequence_length,
@@ -854,7 +857,8 @@ def main() -> None:
     config.preprocessor_path.write_text(json.dumps(preprocessor_payload, indent=2), encoding="utf-8")
 
     metrics_payload = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at,
+        "model_version": model_version,
         "model_path": str(config.model_path),
         "preprocessor_path": str(config.preprocessor_path),
         "train_size": int(len(x_train_aug)),

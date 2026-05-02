@@ -1,7 +1,7 @@
 """
 Titre: Script Service Inference Maintenance
-Explication: Demarre le service MQTT de prediction maintenance en temps reel.
-Utilite: Entree unique et explicite pour la partie IA en production.
+Explication: Demarre le service MQTT LSTM qui consomme les capteurs et publie les predictions vers le backend.
+Utilite: Entree unique et explicite pour la partie IA en production (voie de prediction principale).
 """
 
 import sys

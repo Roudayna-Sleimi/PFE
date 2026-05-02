@@ -174,10 +174,11 @@ class MaintenanceLSTMPredictor:
             class_name: round(float(probabilities[index]), 4)
             for index, class_name in enumerate(self.artifacts.class_names)
         }
+        severity = label if label in {"normal", "warning", "critical"} else "warning"
         return {
             "machine_id": safe_machine_id,
             "label": label,
-            "severity": "critical" if label == "critical" else "warning",
+            "severity": severity,
             "confidence": confidence,
             "proba": proba,
             "contributors": self._contributors(snapshot, label),

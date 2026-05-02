@@ -86,8 +86,9 @@ function Register-PfeTask {
 }
 
 $tasks = @(
-  @{ TaskName = 'PFE_BackendService'; Execute = $nodeExe; Arguments = 'server.js'; WorkingDirectory = $backendDir; DelaySeconds = 15 },
-  @{ TaskName = 'PFE_AIInferenceService'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'scripts\run_maintenance_inference.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 45 },
+  # Start LSTM inference first so backend can consume predictions as primary path.
+  @{ TaskName = 'PFE_AIInferenceService'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'scripts\run_maintenance_inference.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 15 },
+  @{ TaskName = 'PFE_BackendService'; Execute = $nodeExe; Arguments = 'server.js'; WorkingDirectory = $backendDir; DelaySeconds = 45 },
   @{ TaskName = 'PFE_AIRetrainScheduler'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'scripts\run_retraining_scheduler.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 75 },
   @{ TaskName = 'PFE_AISupervisorService'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'scripts\run_gsm_supervisor.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 105 }
 )

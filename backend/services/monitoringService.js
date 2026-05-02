@@ -13,6 +13,7 @@ const createMonitoringService = (deps) => {
     buildMaintenanceAssessment,
     assessMaintenanceRisk,
     createMaintenanceCase,
+    getLatestPrediction = () => null,
   } = deps;
 
   // Title: Return latest sensor history rows.
@@ -222,12 +223,13 @@ const createMonitoringService = (deps) => {
       const identity = resolveMachineIdentity(sensor);
       const report = reports.find((row) => row.machineId === identity.machineId || row.node === identity.node);
       const request = requests.find((row) => (row.machineId === identity.machineId || row.node === identity.node) && ['open', 'in_progress'].includes(row.status));
-      const assessment = buildMaintenanceAssessment(sensor, []);
+      const latestPrediction = getLatestPrediction({ node: identity.node, machineId: identity.machineId });
+      const assessment = buildMaintenanceAssessment(sensor, [], latestPrediction);
       return {
         ...identity,
         latestSensor: sensor,
         severity: report?.severity || assessment.severity,
-        anomalyScore: report?.anomalyScore ?? assessment.anomalyScore,
+        anomalyScore: report?.anomalyScore ?? assessment.anomalyScore ?? 0,
         prediction: report?.prediction || assessment.prediction,
         recommendedAction: report?.recommendedAction || assessment.recommendedAction,
         lastReport: report || null,
@@ -261,7 +263,11 @@ const createMonitoringService = (deps) => {
       throw error;
     }
 
-    const assessment = await assessMaintenanceRisk({ ...latest, machineId: machineId || latest.machineId });
+    const latestPrediction = getLatestPrediction({ node: latest.node, machineId: machineId || latest.machineId });
+    const assessment = await assessMaintenanceRisk(
+      { ...latest, machineId: machineId || latest.machineId },
+      latestPrediction
+    );
     if (assessment.severity === 'normal') {
       return { assessment, maintenance: null };
     }
@@ -272,12 +278,23 @@ const createMonitoringService = (deps) => {
       type: 'maintenance-ai',
       severity: sanitizeSeverity(assessment.severity),
       message: assessment.message,
-      ai: { source: 'backend-predictive-maintenance', label: assessment.severity, model: 'SensorBaselineRules', version: 'v1' },
+      ai: {
+        source: assessment.decisionSource,
+        label: assessment.predictedClass,
+        proba: assessment.modelPrediction?.proba || null,
+        model: assessment.modelPrediction?.modelName || 'MaintenanceLSTMClassifier',
+        version: assessment.modelPrediction?.modelVersion || 'lstm-v1',
+      },
       sensorSnapshot: assessment.sensorSnapshot,
     });
     io.emit('alert', alert);
 
-    const maintenance = await createMaintenanceCase(latest, alert, assessment, 'manual-ai-analysis');
+    const maintenance = await createMaintenanceCase(
+      latest,
+      alert,
+      assessment,
+      `manual-${assessment.decisionSource || 'hybrid'}`
+    );
     return { assessment, alert, maintenance };
   };
 

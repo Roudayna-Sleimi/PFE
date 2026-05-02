@@ -187,6 +187,11 @@ const computeWorkByMachine = (events = []) => {
 
 const MAINTENANCE_FEATURES = ['vibX', 'vibY', 'vibZ', 'courant', 'rpm'];
 const MAINTENANCE_REPORT_COOLDOWN_MIN = Number(process.env.MAINTENANCE_REPORT_COOLDOWN_MIN || 15);
+const PREDICTION_CONFIDENCE_THRESHOLD = Number(process.env.PRIMARY_CONFIDENCE_THRESHOLD || 0.7);
+const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://broker.hivemq.com:1883';
+const MQTT_SENSOR_TOPIC = process.env.MQTT_SENSOR_TOPIC || 'cncpulse/sensors';
+const MQTT_PREDICTION_TOPIC = process.env.MQTT_PREDICTION_TOPIC || 'cncpulse/maintenance/predictions';
+const MQTT_GSM_RESULT_TOPIC = process.env.MQTT_GSM_RESULT_TOPIC || 'cncpulse/gsm/result';
 
 const resolveMachineIdentity = (data = {}) => {
   const node = String(data.node || data.machineId || 'UNKNOWN');
@@ -220,8 +225,48 @@ const strongestMaintenanceSeverity = (...levels) => {
   return levels.reduce((best, level) => rank[level] > rank[best] ? level : best, 'normal');
 };
 
-const buildMaintenanceAssessment = (data = {}, history = []) => {
-  const identity = resolveMachineIdentity(data);
+const predictionLabelFromClass = (predictedClass) => {
+  if (predictedClass === 'critical') return 'Panne probable';
+  if (predictedClass === 'warning') return 'Risque de panne';
+  return 'Comportement normal';
+};
+
+const etaFromClass = (predictedClass) => {
+  if (predictedClass === 'critical') return 'moins de 24h';
+  if (predictedClass === 'warning') return '24-72h';
+  return 'aucune panne prevue';
+};
+
+const recommendedActionFromClass = (predictedClass) => {
+  if (predictedClass === 'critical') {
+    return 'Arreter la machine, verifier les roulements, le courant et les fixations avant reprise.';
+  }
+  if (predictedClass === 'warning') {
+    return 'Planifier une inspection maintenance et surveiller les prochaines mesures.';
+  }
+  return 'Continuer la surveillance automatique.';
+};
+
+const normalizeModelPrediction = (prediction = {}) => {
+  const parsedClass = String(prediction.predictedClass || prediction.label || 'normal').toLowerCase();
+  const predictedClass = ['normal', 'warning', 'critical'].includes(parsedClass) ? parsedClass : 'normal';
+  const anomalyScoreRaw = Number(prediction.anomalyScore);
+  const confidenceRaw = Number(prediction.confidence);
+  const anomalyScore = Number.isFinite(anomalyScoreRaw) ? Math.min(1, Math.max(0, anomalyScoreRaw)) : 0;
+  const confidence = Number.isFinite(confidenceRaw) ? Math.min(1, Math.max(0, confidenceRaw)) : 0;
+  return {
+    predictedClass,
+    confidence,
+    anomalyScore,
+    proba: prediction.proba && typeof prediction.proba === 'object' ? prediction.proba : null,
+    modelName: prediction.modelName || null,
+    modelVersion: prediction.modelVersion || null,
+    historySize: Number(prediction.historySize || 0),
+    sequenceLength: Number(prediction.sequenceLength || 0),
+  };
+};
+
+const buildRuleFallbackAssessment = (data = {}, history = []) => {
   const snapshot = sensorSnapshot(data);
   const maxAxisVibration = Math.max(Math.abs(snapshot.vibX), Math.abs(snapshot.vibY), Math.abs(snapshot.vibZ));
   const vibration = Math.sqrt(snapshot.vibX ** 2 + snapshot.vibY ** 2 + snapshot.vibZ ** 2);
@@ -271,42 +316,52 @@ const buildMaintenanceAssessment = (data = {}, history = []) => {
     }
   }
 
-  const severity = strongestMaintenanceSeverity(...contributors.map(item => item.level));
-  const scoreFromContributors = contributors.reduce((score, item) => score + (item.level === 'critical' ? 38 : 22), 0);
-  const anomalyScore = severity === 'normal' ? 0 : Math.min(100, Math.max(severity === 'critical' ? 76 : 48, scoreFromContributors));
-  const prediction = severity === 'critical'
-    ? { label: 'Panne probable', eta: 'moins de 24h', confidence: anomalyScore }
-    : severity === 'warning'
-      ? { label: 'Risque de panne', eta: '24-72h', confidence: anomalyScore }
-      : { label: 'Comportement normal', eta: 'aucune panne prevue', confidence: 100 - anomalyScore };
+  return {
+    severity: strongestMaintenanceSeverity(...contributors.map(item => item.level)),
+    contributors,
+    sensorSnapshot: snapshot,
+  };
+};
 
-  const recommendedAction = severity === 'critical'
-    ? 'Arreter la machine, verifier les roulements, le courant et les fixations avant reprise.'
-    : severity === 'warning'
-      ? 'Planifier une inspection maintenance et surveiller les prochaines mesures.'
-      : 'Continuer la surveillance automatique.';
+const buildMaintenanceAssessment = (data = {}, history = [], modelPrediction = null) => {
+  const identity = resolveMachineIdentity(data);
+  const fallback = buildRuleFallbackAssessment(data, history);
+  const model = normalizeModelPrediction(modelPrediction);
+  const useModel = model.confidence > PREDICTION_CONFIDENCE_THRESHOLD;
+  const predictedClass = useModel ? model.predictedClass : fallback.severity;
+  const severity = predictedClass;
+  const anomalyScore = Math.round(model.anomalyScore * 100);
+  const prediction = {
+    label: predictionLabelFromClass(predictedClass),
+    eta: etaFromClass(predictedClass),
+    confidence: Math.round(model.confidence * 100),
+  };
 
   return {
     ...identity,
     severity,
+    predictedClass,
     anomalyScore,
     prediction,
-    contributors,
-    sensorSnapshot: snapshot,
-    recommendedAction,
+    contributors: useModel ? [] : fallback.contributors,
+    sensorSnapshot: fallback.sensorSnapshot,
+    recommendedAction: recommendedActionFromClass(predictedClass),
     message: severity === 'normal'
       ? `Maintenance AI: comportement normal sur ${identity.machineName}`
       : `Maintenance AI: ${prediction.label} sur ${identity.machineName} (${anomalyScore}%).`,
+    decisionSource: useModel ? 'lstm-primary' : 'backend-rules-fallback',
+    modelPrediction: model,
+    fallbackSeverity: fallback.severity,
   };
 };
 
-const assessMaintenanceRisk = async (data = {}) => {
+const assessMaintenanceRisk = async (data = {}, modelPrediction = null) => {
   const identity = resolveMachineIdentity(data);
   const history = await SensorData.find({ node: identity.node }).sort({ createdAt: -1 }).limit(120).lean();
-  return buildMaintenanceAssessment(data, history);
+  return buildMaintenanceAssessment(data, history, modelPrediction);
 };
 
-const createMaintenanceCase = async (data = {}, alert = null, assessment = null, source = 'predictive-maintenance') => {
+const createMaintenanceCase = async (data = {}, alert = null, assessment = null, source = 'predictive-maintenance-hybrid') => {
   const result = assessment || await assessMaintenanceRisk(data);
   if (!result || result.severity === 'normal') return null;
 
@@ -351,7 +406,7 @@ const createMaintenanceCase = async (data = {}, alert = null, assessment = null,
       lastReportId: report._id,
       title: `Maintenance predictive - ${result.machineName}`,
       description: result.recommendedAction,
-      priority: result.severity === 'critical' ? 'critical' : result.anomalyScore >= 65 ? 'high' : 'medium',
+      priority: result.severity === 'critical' ? 'critical' : 'high',
       status: 'open',
       requestedBy: 'ai-maintenance',
     });
@@ -411,6 +466,7 @@ app.use('/api', createMonitoringRoutes({
   buildMaintenanceAssessment,
   assessMaintenanceRisk,
   createMaintenanceCase,
+  getLatestPrediction,
 }));
 
 app.use('/api', createPieceRoutes({
@@ -438,18 +494,43 @@ app.use('/api', createDossierRoutes({
   escapeRegex,
 }));
 
-const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
+const latestPredictions = new Map();
+const rememberPrediction = (event = {}) => {
+  const node = String(event.node || event?.prediction?.node || event?.sensorPayload?.node || 'UNKNOWN');
+  const machineId = String(event.machineId || event?.prediction?.machineId || event?.sensorPayload?.machineId || node);
+  const normalized = {
+    node,
+    machineId,
+    prediction: event.prediction || null,
+    createdAt: Date.now(),
+  };
+  latestPredictions.set(`node:${node}`, normalized);
+  latestPredictions.set(`machine:${machineId}`, normalized);
+};
+const getLatestPrediction = ({ node, machineId } = {}) => {
+  const now = Date.now();
+  const maxAgeMs = 10 * 60 * 1000;
+  const fromNode = node ? latestPredictions.get(`node:${node}`) : null;
+  const fromMachine = machineId ? latestPredictions.get(`machine:${machineId}`) : null;
+  const found = fromNode || fromMachine;
+  if (!found) return null;
+  if ((now - Number(found.createdAt || 0)) > maxAgeMs) return null;
+  return found.prediction || null;
+};
+
+const mqttClient = mqtt.connect(MQTT_BROKER_URL);
 
 mqttClient.on('connect', () => {
-  mqttClient.subscribe('cncpulse/gsm/result', err => { if (!err) console.log('Subscribed: cncpulse/gsm/result'); });
-  console.log('âœ… MQTT connectÃ© Ã  HiveMQ');
-  mqttClient.subscribe('cncpulse/sensors', err => { if (!err) console.log('ðŸ“¡ AbonnÃ© au topic: cncpulse/sensors'); });
+  mqttClient.subscribe(MQTT_GSM_RESULT_TOPIC, err => { if (!err) console.log(`Subscribed: ${MQTT_GSM_RESULT_TOPIC}`); });
+  mqttClient.subscribe(MQTT_SENSOR_TOPIC, err => { if (!err) console.log(`Subscribed: ${MQTT_SENSOR_TOPIC}`); });
+  mqttClient.subscribe(MQTT_PREDICTION_TOPIC, err => { if (!err) console.log(`Subscribed: ${MQTT_PREDICTION_TOPIC}`); });
+  console.log(`MQTT connected: ${MQTT_BROKER_URL}`);
 });
 
 mqttClient.on('message', async (topic, message) => {
   try {
     const data = JSON.parse(message.toString());
-    if (topic === 'cncpulse/gsm/result') {
+    if (topic === MQTT_GSM_RESULT_TOPIC) {
       const { alertId, status, phoneNumber, providerRef, durationSec, errorMessage } = data;
       if (!alertId) return;
       const alert = await Alert.findById(alertId);
@@ -466,43 +547,40 @@ mqttClient.on('message', async (topic, message) => {
       io.emit('gsm-result', { alertId, status: status || 'unknown' });
       return;
     }
-    const savedSensor = await SensorData.create(data);
-    const sensorPayload = savedSensor.toObject ? savedSensor.toObject() : data;
-    io.emit('sensor-data', data);
-    const alerts = [];
-    if (data.courant > 20)       alerts.push({ severity: 'critical', message: 'Current critical: ' + data.courant + 'A', node: data.node, type: 'sensor' });
-    else if (data.courant > 15)  alerts.push({ severity: 'warning',  message: 'Current elevated: ' + data.courant + 'A', node: data.node, type: 'sensor' });
-    if (data.vibX > 3 || data.vibY > 3 || data.vibZ > 3)        alerts.push({ severity: 'critical', message: 'Vibration critique detectee', node: data.node, type: 'sensor' });
-    else if (data.vibX > 2 || data.vibY > 2 || data.vibZ > 2)   alerts.push({ severity: 'warning',  message: 'Vibration elevee',            node: data.node, type: 'sensor' });
-    const savedAlerts = [];
-    for (const alert of alerts) {
-      const identity = resolveMachineIdentity(data);
-      const savedAlert = await Alert.create({
-        machineId: identity.machineId,
-        node: data.node || 'UNKNOWN', type: alert.type || 'sensor',
-        severity: sanitizeSeverity(alert.severity), message: alert.message,
-        ai: { source: 'rules', label: alert.severity || 'warning' },
-        sensorSnapshot: sensorSnapshot(data)
-      });
-      savedAlerts.push(savedAlert);
-      io.emit('alert', savedAlert);
+
+    if (topic === MQTT_SENSOR_TOPIC) {
+      await SensorData.create(data);
+      io.emit('sensor-data', data);
+      return;
     }
-    const assessment = await assessMaintenanceRisk(sensorPayload);
-    if (assessment.severity !== 'normal') {
-      let maintenanceAlert = savedAlerts[0] || null;
-      if (!maintenanceAlert) {
-        maintenanceAlert = await Alert.create({
-          machineId: assessment.machineId,
-          node: assessment.node,
-          type: 'maintenance-ai',
-          severity: sanitizeSeverity(assessment.severity),
-          message: assessment.message,
-          ai: { source: 'backend-predictive-maintenance', label: assessment.severity, model: 'SensorBaselineRules', version: 'v1' },
-          sensorSnapshot: assessment.sensorSnapshot,
-        });
-        io.emit('alert', maintenanceAlert);
-      }
-      await createMaintenanceCase(sensorPayload, maintenanceAlert, assessment, 'backend-predictive-maintenance');
+
+    if (topic === MQTT_PREDICTION_TOPIC) {
+      rememberPrediction(data);
+      const sensorPayload = data?.sensorPayload && typeof data.sensorPayload === 'object'
+        ? data.sensorPayload
+        : data;
+      const assessment = await assessMaintenanceRisk(sensorPayload, data?.prediction || null);
+      if (assessment.severity === 'normal') return;
+
+      const alert = await Alert.create({
+        machineId: assessment.machineId,
+        node: assessment.node,
+        type: 'maintenance-ai',
+        severity: sanitizeSeverity(assessment.severity),
+        message: assessment.message,
+        ai: {
+          source: assessment.decisionSource,
+          label: assessment.predictedClass,
+          proba: assessment.modelPrediction?.proba || null,
+          model: assessment.modelPrediction?.modelName || 'MaintenanceLSTMClassifier',
+          version: assessment.modelPrediction?.modelVersion || 'lstm-v1',
+        },
+        sensorSnapshot: assessment.sensorSnapshot,
+      });
+      io.emit('alert', alert);
+
+      await createMaintenanceCase(sensorPayload, alert, assessment, assessment.decisionSource);
+      return;
     }
   } catch (err) {
     console.error('âŒ Erreur MQTT:', err.message);

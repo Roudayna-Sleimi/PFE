@@ -1,7 +1,7 @@
 """
 Titre: Script Scheduler Re-entrainement
-Explication: Lance la boucle periodique qui reconstruit le dataset puis re-entraine le modele.
-Utilite: Automatise la maintenance du modele avec un point d'entree explicite.
+Explication: Lance la boucle periodique qui re-entraine seulement si la croissance des donnees depasse le seuil configure.
+Utilite: Automatise la maintenance du modele sans re-entrainer a chaque mise a jour.
 """
 
 import sys
