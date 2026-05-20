@@ -21,12 +21,26 @@ import {
   isActiveAlert,
   upsertAlertEntry,
 } from '../utils/alertMetadata';
+import { normalizeSensorData, type RawSensorDataPayload, type SensorDataPayload } from '../utils/liveSensorData';
+import {
+  RECTIFIEUSE_NODE,
+  COMPRESSEUR_NODE,
+  isCompresseurNode,
+} from '../utils/liveMachineNodes';
+import { API_BASE_URL, SOCKET_URL } from '../utils/runtimeConfig';
 import './Dashboard.css';
 
-interface SensorData {
-  node: string; courant: number;
-  vibX: number; vibY: number; vibZ: number; rpm: number;
-  pression?: number;
+const APP_VERSION = '0.1.0';
+
+interface LiveMachineSnapshot {
+  node: string;
+  courant: number | null;
+  vibration: number | null;
+  rpm: number | null;
+  pression: number | null;
+  hasData: boolean;
+  isStreaming: boolean;
+  sensorUpdatedAt?: string | null;
 }
 
 interface EmployeOverview {
@@ -72,6 +86,12 @@ interface MachineApi {
   name: string;
   hasSensors?: boolean;
   node?: string | null;
+  courant?: number;
+  vibration?: number;
+  rpm?: number;
+  pression?: number | null;
+  hasSensorData?: boolean;
+  sensorUpdatedAt?: string | null;
 }
 
 interface DashboardStats {
@@ -86,25 +106,51 @@ interface DashboardStats {
   employes: { total: number; actifs: number; enPause: number; enligne: number };
 }
 
-const socket: Socket = io('http://localhost:5000', { transports: ['websocket'] });
+const socket: Socket = io(SOCKET_URL, { transports: ['websocket'] });
 
-const generateSimData = (): SensorData => ({
-  node: 'ESP32-NODE-01',
-  courant: parseFloat((10 + Math.sin(Date.now() / 3000) * 5 + Math.random()).toFixed(2)),
-  vibX:    parseFloat((1.5 + Math.sin(Date.now() / 2000) * 0.8 + Math.random() * 0.3).toFixed(2)),
-  vibY:    parseFloat((1.2 + Math.cos(Date.now() / 2500) * 0.6 + Math.random() * 0.2).toFixed(2)),
-  vibZ:    parseFloat((0.8 + Math.sin(Date.now() / 1800) * 0.4 + Math.random() * 0.2).toFixed(2)),
-  rpm:     parseFloat((1200 + Math.sin(Date.now() / 4000) * 200).toFixed(0)),
+const emptySnapshot = (node: string): LiveMachineSnapshot => ({
+  node,
+  courant: null,
+  vibration: null,
+  rpm: null,
+  pression: null,
+  hasData: false,
+  isStreaming: false,
+  sensorUpdatedAt: null,
+});
+
+const buildSnapshotFromMachine = (machine: MachineApi | undefined, fallbackNode: string): LiveMachineSnapshot => {
+  if (!machine) return emptySnapshot(fallbackNode);
+
+  return {
+    node: String(machine.node || fallbackNode),
+    courant: machine.hasSensorData && typeof machine.courant === 'number' ? machine.courant : null,
+    vibration: machine.hasSensorData && typeof machine.vibration === 'number' ? machine.vibration : null,
+    rpm: machine.hasSensorData && typeof machine.rpm === 'number' ? machine.rpm : null,
+    pression: machine.hasSensorData && typeof machine.pression === 'number' ? machine.pression : null,
+    hasData: Boolean(machine.hasSensorData),
+    isStreaming: false,
+    sensorUpdatedAt: machine.sensorUpdatedAt || null,
+  };
+};
+
+const buildSnapshotFromSensor = (data: SensorDataPayload): LiveMachineSnapshot => ({
+  node: isCompresseurNode(data.node) ? COMPRESSEUR_NODE : RECTIFIEUSE_NODE,
+  courant: data.courant,
+  vibration: Number(Math.sqrt(data.vibX ** 2 + data.vibY ** 2 + data.vibZ ** 2).toFixed(2)),
+  rpm: data.rpm,
+  pression: data.pression ?? null,
+  hasData: true,
+  isStreaming: true,
+  sensorUpdatedAt: new Date().toISOString(),
 });
 
 const Dashboard: React.FC = () => {
   const { darkMode, toggleTheme }           = useTheme();
   const [currentTime, setCurrentTime]       = useState(new Date());
   const [connected, setConnected]           = useState(false);
-  const [hasLiveData, setHasLiveData]       = useState(false);
-  const [paused]                            = useState(false);
-  const [latest, setLatest]                 = useState<SensorData>(generateSimData());
-  const [latestComp, setLatestComp]         = useState<SensorData>({ node:'compresseur', courant:0, vibX:0, vibY:0, vibZ:0, rpm:0, pression:0 });
+  const [rectifieuseSnapshot, setRectifieuseSnapshot] = useState<LiveMachineSnapshot>(emptySnapshot(RECTIFIEUSE_NODE));
+  const [compresseurSnapshot, setCompresseurSnapshot] = useState<LiveMachineSnapshot>(emptySnapshot(COMPRESSEUR_NODE));
   const [showMessaging, setShowMessaging]   = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [recentAlerts, setRecentAlerts]     = useState<AlertRecord[]>([]);
@@ -127,18 +173,21 @@ const [activePage, setActivePage] = useState<
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
-    fetch('http://localhost:5000/api/machines', { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE_URL}/machines`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then((data: MachineApi[]) => {
         if (!Array.isArray(data)) return;
-
+        const rectifieuse = data.find((machine) => machine.id === 'rectifieuse');
+        const compresseur = data.find((machine) => machine.id === 'compresseur');
+        setRectifieuseSnapshot(buildSnapshotFromMachine(rectifieuse, RECTIFIEUSE_NODE));
+        setCompresseurSnapshot(buildSnapshotFromMachine(compresseur, COMPRESSEUR_NODE));
       })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
-    fetch('http://localhost:5000/api/pieces', {
+    fetch(`${API_BASE_URL}/pieces`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => r.json())
@@ -156,7 +205,7 @@ const [activePage, setActivePage] = useState<
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
     if (role === 'admin') {
-      fetch('http://localhost:5000/api/admin/employes-overview', {
+      fetch(`${API_BASE_URL}/admin/employes-overview`, {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then(r => r.json())
@@ -182,7 +231,7 @@ const [activePage, setActivePage] = useState<
   const fetchDashStats = useCallback(async () => {
     const token = localStorage.getItem('token') || '';
     try {
-      const res = await fetch('http://localhost:5000/api/dashboard/stats', {
+      const res = await fetch(`${API_BASE_URL}/dashboard/stats`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) { const data = await res.json(); setDashStats(data); }
@@ -192,7 +241,7 @@ const [activePage, setActivePage] = useState<
   const fetchRecentAlerts = useCallback(async () => {
     const token = localStorage.getItem('token') || '';
     try {
-      const res = await fetch('http://localhost:5000/api/alerts?limit=25', {
+      const res = await fetch(`${API_BASE_URL}/alerts?limit=25`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) return;
@@ -301,48 +350,70 @@ const [activePage, setActivePage] = useState<
   }, [fetchDashStats, fetchRecentAlerts]);
 
   useEffect(() => {
-    socket.on('sensor-data', (data: SensorData) => {
-      if (paused) return;
-      setHasLiveData(true);
-      if (data.node === 'compresseur') setLatestComp(data);
-      else setLatest(data);
+    socket.on('sensor-data', (data: RawSensorDataPayload) => {
+      const snapshot = buildSnapshotFromSensor(normalizeSensorData(data));
+      if (isCompresseurNode(snapshot.node)) setCompresseurSnapshot(snapshot);
+      else setRectifieuseSnapshot(snapshot);
     });
     return () => { socket.off('sensor-data'); };
-  }, [paused]);
-
-  useEffect(() => {
-    if (hasLiveData) return;
-    const interval = setInterval(() => {
-      if (paused) return;
-      setLatest(generateSimData());
-      setLatestComp({
-        node: 'compresseur',
-        courant:  parseFloat((8 + Math.sin(Date.now() / 3000) * 2 + Math.random()).toFixed(2)),
-        vibX:     parseFloat((0.5 + Math.sin(Date.now() / 2000) * 0.3 + Math.random() * 0.1).toFixed(2)),
-        vibY:     parseFloat((0.3 + Math.cos(Date.now() / 2500) * 0.2 + Math.random() * 0.1).toFixed(2)),
-        vibZ:     parseFloat((0.2 + Math.sin(Date.now() / 1800) * 0.1 + Math.random() * 0.1).toFixed(2)),
-        rpm:      0,
-        pression: parseFloat((7 + Math.sin(Date.now() / 4000) * 1.5).toFixed(2)),
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [hasLiveData, paused]);
+  }, []);
 
   const sante = useMemo(() => {
-    const v = latest.vibX + latest.vibY + latest.vibZ;
-    return parseFloat(Math.max(0, Math.min(100, 100 - v * 5)).toFixed(1));
-  }, [latest]);
+    if (rectifieuseSnapshot.vibration === null) return 0;
+    return parseFloat(Math.max(0, Math.min(100, 100 - rectifieuseSnapshot.vibration * 5)).toFixed(1));
+  }, [rectifieuseSnapshot.vibration]);
 
   const santeComp = useMemo(() => {
-    const v = latestComp.vibX + latestComp.vibY + latestComp.vibZ;
-    return parseFloat(Math.max(0, Math.min(100, 100 - v * 5)).toFixed(1));
-  }, [latestComp]);
+    if (compresseurSnapshot.vibration === null) return 0;
+    return parseFloat(Math.max(0, Math.min(100, 100 - compresseurSnapshot.vibration * 5)).toFixed(1));
+  }, [compresseurSnapshot.vibration]);
 
   const activeAlerts = useMemo(
     () => recentAlerts.filter((alert) => isActiveAlert(alert)),
     [recentAlerts],
   );
   const alertCount = activeAlerts.length;
+  const hasRealtimeSensorData = rectifieuseSnapshot.isStreaming || compresseurSnapshot.isStreaming;
+  const hasAnySensorData = rectifieuseSnapshot.hasData || compresseurSnapshot.hasData;
+  const pendingMetric = '-';
+
+  const formatLiveMetric = (value: number | null, digits = 1, suffix = '') => (
+    value === null ? pendingMetric : `${value.toFixed(digits)}${suffix}`
+  );
+
+  const formatSensorTime = (value?: string | null) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
+
+  const getSnapshotStatus = (snapshot: LiveMachineSnapshot) => {
+    if (snapshot.isStreaming) {
+      return {
+        label: 'DONNEES REELLES',
+        background: 'rgba(34,197,94,0.1)',
+        border: '1px solid rgba(34,197,94,0.2)',
+        color: '#22c55e',
+      };
+    }
+
+    if (snapshot.hasData) {
+      return {
+        label: 'DERNIERE MESURE',
+        background: 'rgba(59,130,246,0.1)',
+        border: '1px solid rgba(59,130,246,0.2)',
+        color: '#3b82f6',
+      };
+    }
+
+    return {
+      label: 'EN ATTENTE',
+      background: 'rgba(245,158,11,0.12)',
+      border: '1px solid rgba(245,158,11,0.2)',
+      color: '#f59e0b',
+    };
+  };
 
   const pausedColor = darkMode ? '#ffffff' : '#08111f';
   const stoppedColor = darkMode ? '#ffffff' : '#08111f';
@@ -353,6 +424,30 @@ const [activePage, setActivePage] = useState<
   const piePalette = darkMode
     ? ['#ffffff', '#1d4ed8', '#2563eb', '#e7eef8', '#1e3a8a']
     : ['#08111f', '#1e3a8a', '#1d4ed8', '#122033', '#2563eb'];
+  const liveMachineCards = [
+    {
+      name: 'Rectifieuse',
+      snapshot: rectifieuseSnapshot,
+      value: sante,
+      color: '#2563eb',
+      metrics: [
+        { label: 'Courant', value: formatLiveMetric(rectifieuseSnapshot.courant, 1, 'A'), color: darkMode ? '#60a5fa' : '#1d4ed8' },
+        { label: 'Vibration', value: formatLiveMetric(rectifieuseSnapshot.vibration, 2, ' mm/s'), color: darkMode ? '#cbd5e1' : '#475569' },
+        { label: 'Vitesse', value: formatLiveMetric(rectifieuseSnapshot.rpm, 0, ' tr/min'), color: darkMode ? '#e2e8f0' : stoppedColor },
+      ],
+    },
+    {
+      name: 'Compresseur',
+      snapshot: compresseurSnapshot,
+      value: santeComp,
+      color: '#1e3a8a',
+      metrics: [
+        { label: 'Pression', value: formatLiveMetric(compresseurSnapshot.pression, 1, ' bar'), color: darkMode ? '#67e8f9' : '#06b6d4' },
+        { label: 'Courant', value: formatLiveMetric(compresseurSnapshot.courant, 1, 'A'), color: darkMode ? '#60a5fa' : '#1d4ed8' },
+        { label: 'Vibration', value: formatLiveMetric(compresseurSnapshot.vibration, 2, ' mm/s'), color: darkMode ? '#cbd5e1' : '#475569' },
+      ],
+    },
+  ];
 
   const handleLogout = useCallback(() => {
     const savedTheme = localStorage.getItem('themeMode') || localStorage.getItem('loginMode');
@@ -377,7 +472,7 @@ const [activePage, setActivePage] = useState<
     setHistorique(null);
     const token = localStorage.getItem('token') || '';
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/employes/${username}/historique`, {
+      const res = await fetch(`${API_BASE_URL}/admin/employes/${username}/historique`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -394,6 +489,13 @@ const [activePage, setActivePage] = useState<
   const txt1 = 'text-[var(--app-heading)]';
   const txt2 = 'text-[var(--app-text)]';
   const txtMut = 'text-[var(--app-muted)]';
+  const softPanelStyle: React.CSSProperties = {
+    background: darkMode ? 'rgba(19, 36, 59, 0.92)' : 'var(--app-card-alt)',
+    border: darkMode ? '1px solid rgba(96, 165, 250, 0.14)' : '1px solid var(--app-border)',
+  };
+  const railStyle: React.CSSProperties = {
+    background: darkMode ? 'rgba(255,255,255,0.10)' : 'var(--app-neutral-soft)',
+  };
   const navHover = 'hover:bg-[var(--app-surface-strong)] hover:text-[var(--app-heading)]';
   const navActive = 'text-[var(--app-heading)] border border-[color:var(--app-border)] bg-[var(--app-surface-strong)]';
 
@@ -475,6 +577,10 @@ const [activePage, setActivePage] = useState<
           <div>
             <h1 className={`${txt1} text-[18px] font-bold m-0`}>CNC Pulse</h1>
             <span className={`text-[10px] ${txtMut} uppercase tracking-widest`}>Supervision Industrielle</span>
+            <div className="mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{ background: 'rgba(29,78,216,0.14)', border: '1px solid rgba(96,165,250,0.22)', color: darkMode ? '#bfdbfe' : '#1d4ed8' }}>
+              Version {APP_VERSION}
+            </div>
           </div>
         </div>
 
@@ -529,9 +635,6 @@ const [activePage, setActivePage] = useState<
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connected ? 'bg-white' : 'bg-black'}`} />
               CNC Concept
             </span>
-            <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] whitespace-nowrap ${darkMode ? 'bg-black border border-white text-white' : 'bg-white border border-black text-black'}`}>
-              <span>{hasLiveData ? 'Live Wokwi' : 'Simulation'}</span>
-            </div>
             <form
               className="relative"
               onSubmit={(event) => {
@@ -735,7 +838,7 @@ const [activePage, setActivePage] = useState<
                             { label: 'Pauses',   value: h.stats.totalPausees,  color: pausedColor },
                             { label: 'Pièces',   value: h.stats.piecesProduites, color: '#1d4ed8' },
                           ].map(s => (
-                            <div key={s.label} className={`${darkMode ? 'bg-[#07111f]/75' : 'bg-white'} rounded-lg p-2 text-center border ${border}`}>
+                            <div key={s.label} className={`${bgCardStrong} rounded-lg p-2 text-center border ${border}`}>
                               <div className="text-[16px] font-bold" style={{ color: s.color }}>{s.value}</div>
                               <div className={`text-[9px] ${txtMut}`}>{s.label}</div>
                             </div>
@@ -864,7 +967,7 @@ const [activePage, setActivePage] = useState<
                           <div className={`text-[10px] ${txtMut}`}>{m.username}</div>
                         </div>
                         <div className="flex items-center gap-1.5">
-                        <div className="w-16 h-1.5 rounded-full bg-black">
+                        <div className="w-16 h-1.5 rounded-full" style={railStyle}>
                             <div className="h-full rounded-full bg-[#1e3a8a]" style={{ width: '70%' }} />
                           </div>
                           <span className="text-[12px] font-bold text-[#1e3a8a]">En cours</span>
@@ -885,7 +988,7 @@ const [activePage, setActivePage] = useState<
                       <div key={e.username} className="flex items-center gap-2 mb-2">
                         <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: stColor + '20', color: stColor }}>{e.username.charAt(0).toUpperCase()}</div>
                         <span className={`text-[12px] font-semibold ${txt1} w-16 truncate`}>{e.username}</span>
-                        <div className="flex-1 h-1.5 rounded-full bg-black">
+                        <div className="flex-1 h-1.5 rounded-full" style={railStyle}>
                           <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, e.sessions * 10)}%`, background: stColor }} />
                         </div>
                         <span className="text-[11px] font-bold" style={{ color: stColor }}>{e.pcs} pcs</span>
@@ -970,11 +1073,11 @@ const [activePage, setActivePage] = useState<
                   return (
                     <div className="flex flex-col gap-3">
                       {rows.length > 0 ? rows.map((item, index) => (
-                        <div key={`${item.machine}-${index}`} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#1d4ed810', border: '1px solid #1d4ed825' }}>
+                        <div key={`${item.machine}-${index}`} className="flex items-center gap-3 p-3 rounded-xl" style={softPanelStyle}>
                           <span className='inline-flex items-center justify-center w-8 h-8 rounded-lg' style={{ background: '#1d4ed818', color: '#1d4ed8' }}><Activity size={16} /></span>
                           <div className="flex-1">
                             <div className={`text-[10px] ${txtMut} mb-1 truncate`}>{item.machine || 'Machine inconnue'}</div>
-                            <div className="h-1.5 rounded-full bg-black/20">
+                            <div className="h-1.5 rounded-full" style={railStyle}>
                               <div className="h-full rounded-full" style={{ width: `${Math.min(100, (item.seconds / maxSeconds) * 100)}%`, background: '#1d4ed8' }} />
                             </div>
                           </div>
@@ -1003,39 +1106,47 @@ const [activePage, setActivePage] = useState<
                   <span className={`text-sm font-bold ${txt1}`}>Santé des Machines</span>
                 </div>
                 <div className="flex flex-col gap-3">
-                  {[
-                    { name: 'Rectifieuse', node: 'ESP32-NODE-01', value: sante, color: '#2563eb' },
-                    { name: 'Compresseur', node: 'compresseur',   value: santeComp, color: '#1e3a8a' },
-                  ].map((m, i) => (
-                    <div key={i} className={`${darkMode ? 'bg-black' : 'bg-white'} rounded-xl p-3 border ${border}`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <div className={'text-[12px] font-bold ' + txt1}>{m.name}</div>
-                          <div className={`text-[10px] ${txtMut}`}>{m.node}</div>
-                        </div>
-                        <span className="text-[18px] font-bold" style={{ color: m.color }}>{m.value.toFixed(0)}%</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-black">
-                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${m.value}%`, background: m.value > 70 ? '#1d4ed8' : m.value > 40 ? '#1e40af' : '#ef4444' }} />
-                      </div>
-                      <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-                        {(i === 0 ? [
-                          { l: 'Courant', v: `${latest.courant}A`, c: latest.courant > 15 ? '#dc2626' : '#1e3a8a' },
-                          { l: 'Vib.', v: `${latest.vibX.toFixed(1)}g`, c: latest.vibX > 2 ? '#f97316' : '#3b82f6' },
-                          { l: 'RPM', v: `${latest.rpm}`, c: stoppedColor },
-                        ] : [
-                          { l: 'Courant', v: `${latestComp.courant.toFixed(1)}A`, c: latestComp.courant > 15 ? '#dc2626' : '#1e3a8a' },
-                          { l: 'Vib.', v: `${latestComp.vibX.toFixed(2)}g`, c: latestComp.vibX > 2 ? '#f97316' : '#3b82f6' },
-                          { l: 'Bar', v: `${(latestComp.pression ?? 0).toFixed(1)}`, c: '#2563eb' },
-                        ]).map(s => (
-                          <div key={s.l} className={`${darkMode ? 'bg-black' : 'bg-white'} rounded-lg p-1.5 text-center border ${border}`}>
-                            <div className="text-[12px] font-bold" style={{ color: s.c }}>{s.v}</div>
-                            <div className={`text-[9px] ${txtMut}`}>{s.l}</div>
+                  {liveMachineCards.map((m) => {
+                    const status = getSnapshotStatus(m.snapshot);
+                    const lastMeasure = formatSensorTime(m.snapshot.sensorUpdatedAt);
+
+                    return (
+                      <div key={m.name} className={`${bgCardStrong} rounded-xl p-3 border ${border}`}>
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <div>
+                            <div className={'text-[12px] font-bold ' + txt1}>{m.name}</div>
+                            <div className={`text-[10px] ${txtMut}`}>Node: {m.snapshot.node || '-'}</div>
                           </div>
-                        ))}
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[18px] font-bold" style={{ color: m.color }}>
+                              {m.snapshot.hasData ? `${m.value.toFixed(0)}%` : pendingMetric}
+                            </span>
+                            <span
+                              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold"
+                              style={{ background: status.background, border: status.border, color: status.color }}
+                            >
+                              {status.label}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 rounded-full" style={railStyle}>
+                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${m.snapshot.hasData ? m.value : 0}%`, background: m.value > 70 ? '#1d4ed8' : m.value > 40 ? '#1e40af' : '#ef4444' }} />
+                        </div>
+                        <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                          {m.metrics.map((metric) => (
+                            <div key={metric.label} className={`${bg2} rounded-lg p-1.5 text-center border ${border}`}>
+                              <div className="text-[12px] font-bold" style={{ color: metric.color }}>{metric.value}</div>
+                              <div className={`text-[9px] ${txtMut}`}>{metric.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className={`mt-2 flex items-center justify-between gap-2 text-[10px] ${txtMut} flex-wrap`}>
+                          <span>{lastMeasure ? `Mesure: ${lastMeasure}` : 'Aucune mesure'}</span>
+                          <span>{m.snapshot.isStreaming ? 'Flux MQTT actif' : m.snapshot.hasData ? 'Depuis historique capteurs' : 'En attente capteurs'}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

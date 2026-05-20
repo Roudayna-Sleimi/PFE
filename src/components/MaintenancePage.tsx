@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, Bot, CheckCircle, Clock, RefreshCw, Wrench } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { useTheme } from '../hooks/useTheme';
+import { SOCKET_URL, apiUrl } from '../utils/runtimeConfig';
 
-const socket = io('http://localhost:5000', { transports: ['websocket'] });
+const socket = io(SOCKET_URL, { transports: ['websocket'] });
 
 interface Prediction {
   label: string;
@@ -83,7 +84,7 @@ const MaintenancePage: React.FC = () => {
   const fetchOverview = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/maintenance/overview', {
+      const res = await fetch(apiUrl('/maintenance/overview'), {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -130,7 +131,7 @@ const MaintenancePage: React.FC = () => {
     setAnalyzing(machine.machineId);
     setMessage('');
     try {
-      const res = await fetch('http://localhost:5000/api/maintenance/analyze', {
+      const res = await fetch(apiUrl('/maintenance/analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ machineId: machine.machineId, node: machine.node }),
@@ -151,7 +152,7 @@ const MaintenancePage: React.FC = () => {
 
   const updateRequestStatus = async (requestId: string, status: MaintenanceRequest['status']) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/maintenance/requests/${requestId}`, {
+      const res = await fetch(apiUrl(`/maintenance/requests/${requestId}`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status }),

@@ -39,3 +39,12 @@ python-ai/runtime/logs/*
 python-ai/audio/
 python-ai/logs/
 python-ai/python-ai/
+
+# Temporary browser profiles
+.tmp-chrome-profile/
+.tmp-edge-profile/
+
+dist-electron/
+dist-electron-verify/
+handover-usine/backup/
+handover-usine/installer/

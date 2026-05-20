@@ -15,9 +15,9 @@ const handleError = (res, err) => {
 };
 
 // Title: Return all machines for the dashboard listing.
-const getMachines = async (_req, res) => {
+const getMachines = async (req, res) => {
   try {
-    const machines = await machineService.listMachines();
+    const machines = await machineService.listMachines({ currentUser: req.user });
     return res.json(machines);
   } catch (err) {
     return handleError(res, err);
@@ -60,9 +60,20 @@ const patchMachine = async (req, res) => {
   }
 };
 
+// Title: Return one machine history feed for the detail page.
+const getMachineHistory = async (req, res) => {
+  try {
+    const history = await machineService.getMachineHistory(req.params.id, req.query || {});
+    return res.json(history);
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
 module.exports = {
   getMachines,
   createMachine,
   removeMachine,
   patchMachine,
+  getMachineHistory,
 };

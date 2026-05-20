@@ -4,18 +4,18 @@
 
 :root {
   color-scheme: dark;
-  --app-bg: #07111d;
-  --app-surface: rgba(10, 18, 30, 0.92);
-  --app-surface-strong: #0d1726;
-  --app-card: #101c2f;
-  --app-card-alt: #13243b;
-  --app-inset: #0b1626;
-  --app-border: rgba(148, 163, 184, 0.18);
-  --app-border-strong: rgba(148, 163, 184, 0.28);
-  --app-text: #e4ecf7;
-  --app-heading: #f8fbff;
-  --app-muted: #b6c5d9;
-  --app-subtle: #8193ae;
+  --app-bg: #091422;
+  --app-surface: rgba(12, 23, 37, 0.96);
+  --app-surface-strong: #122136;
+  --app-card: #15253c;
+  --app-card-alt: #1a2d49;
+  --app-inset: #102033;
+  --app-border: rgba(191, 211, 237, 0.18);
+  --app-border-strong: rgba(191, 211, 237, 0.28);
+  --app-text: #eef4ff;
+  --app-heading: #ffffff;
+  --app-muted: #c8d5ea;
+  --app-subtle: #a2b4cf;
   --app-accent: #1d4ed8;
   --app-accent-strong: #2563eb;
   --app-accent-soft: rgba(37, 99, 235, 0.14);
@@ -24,7 +24,7 @@
   --app-warning: #f59e0b;
   --app-danger: #ef4444;
   --app-focus: rgba(37, 99, 235, 0.34);
-  --app-neutral-soft: rgba(255, 255, 255, 0.06);
+  --app-neutral-soft: rgba(255, 255, 255, 0.12);
   --app-neutral-border: rgba(148, 163, 184, 0.24);
   --app-shadow: none;
 }

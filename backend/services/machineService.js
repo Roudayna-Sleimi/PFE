@@ -2,9 +2,20 @@ const mongoose = require('mongoose');
 const MachineModel = require('../models/Machine');
 const MachineEvent = require('../models/MachineEvent');
 const Piece = require('../models/Piece');
+const User = require('../models/User');
+const Alert = require('../models/Alert');
+const SensorData = require('../models/SensorData');
+const MaintenanceReport = require('../models/MaintenanceReport');
+const MaintenanceRequest = require('../models/MaintenanceRequest');
 const { BASE_MACHINE_CATALOG, buildDerivedMachine } = require('./machineCatalog');
 const { machineMeta } = require('../utils/machineMeta');
 const { slugify } = require('../utils/slugify');
+const {
+  isRectifieuseNode,
+  isCompresseurNode,
+  canonicalNodeForMachine,
+  nodeAliasesForMachine,
+} = require('../utils/liveMachineNodes');
 
 // Title: Escape regex special characters before using a text query.
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -15,6 +26,18 @@ const normalizeMetricKey = (value = '') => String(value || '')
   .replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-z0-9]+/g, ' ')
   .trim();
+
+const normalizeMachineOperation = (value = '') => {
+  const normalized = normalizeMetricKey(value);
+  if (!normalized) return 'Fraisage';
+  if (normalized.includes('rectif')) return 'Rectification';
+  if (normalized.includes('electro') || normalized.includes('edm') || normalized.includes('agie')) return 'Électroérosion';
+  if (normalized.includes('controle') || normalized.includes('qualite') || normalized.includes('quality')) return 'Contrôle qualité';
+  if (normalized.includes('tour') || normalized.includes('tournage')) return 'Tournage';
+  if (normalized.includes('taraud')) return 'Taraudage';
+  if (normalized.includes('perca') || normalized.includes('drill')) return 'Perçage';
+  return 'Fraisage';
+};
 
 const machineFunctionPresets = {
   fraisage: [
@@ -52,6 +75,11 @@ const machineFunctionPresets = {
     { title: 'Micro-perçage', desc: 'Réalisation de petits diamètres avec précision.' },
     { title: 'Trou de départ', desc: 'Préparation des trous pour la découpe fil.' },
   ],
+  controle: [
+    { title: 'Contrôle dimensionnel', desc: 'Vérification des dimensions et tolérances.' },
+    { title: 'Contrôle qualité', desc: 'Validation de la conformité des pièces.' },
+    { title: 'Rapport de contrôle', desc: 'Suivi des mesures et résultats de contrôle.' },
+  ],
   compresseur: [
     { title: 'Air comprimé', desc: 'Alimentation pneumatique de l’atelier.' },
     { title: 'Régulation pression', desc: 'Maintien de la pression réseau.' },
@@ -64,9 +92,10 @@ const functionsForMachine = (machine = {}) => {
 
   const haystack = normalizeMetricKey(`${machine.name || ''} ${machine.marque || ''} ${machine.type || ''} ${machine.model || ''}`);
   if (haystack.includes('compresseur')) return machineFunctionPresets.compresseur;
+  if (haystack.includes('controle') || haystack.includes('qualite') || haystack.includes('quality')) return machineFunctionPresets.controle;
   if (haystack.includes('rectif')) return machineFunctionPresets.rectification;
-  if (haystack.includes('agie cut') || haystack.includes('electroerosion a fil') || haystack.includes('edm cut')) return machineFunctionPresets.edmCut;
   if (haystack.includes('agie drill') || haystack.includes('percage edm') || haystack.includes('edm drill')) return machineFunctionPresets.edmDrill;
+  if (haystack.includes('agie cut') || haystack.includes('electroerosion') || haystack.includes('edm cut')) return machineFunctionPresets.edmCut;
   if (haystack.includes('tour') || haystack.includes('tournage')) return machineFunctionPresets.tournage;
   if (haystack.includes('perca') || haystack.includes('drill')) return machineFunctionPresets.percage;
   if (haystack.includes('taraud')) return machineFunctionPresets.taraudage;
@@ -93,6 +122,86 @@ const resolveMachineId = (value, aliasMap) => {
     if (alias && (key.includes(alias) || alias.includes(key))) return id;
   }
   return null;
+};
+
+const matchesEmployeeSpecialite = (machine = {}, specialite = '') => {
+  const normalizedSpecialite = normalizeMetricKey(specialite);
+  if (!normalizedSpecialite) return true;
+  if (normalizeMetricKey(machine.name).includes('compresseur')) return false;
+
+  const operation = normalizeMachineOperation(`${machine.type || ''} ${machine.name || ''} ${machine.model || ''}`);
+  return normalizeMetricKey(operation) === normalizedSpecialite;
+};
+
+const uniqueStrings = (values = []) => Array.from(
+  new Set(
+    values
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )
+);
+
+const buildMachineAliasContext = async (machineId, context = {}) => {
+  const dbMachine = await MachineModel.findOne({ id: machineId, deletedAt: null }).lean();
+  const baseMachine = BASE_MACHINE_CATALOG.find((machine) => machine.id === machineId);
+  const inferredMeta = machineMeta(context.name || dbMachine?.name || baseMachine?.name || machineId);
+
+  return uniqueStrings([
+    machineId,
+    context.name,
+    context.node,
+    canonicalNodeForMachine(machineId, context.node),
+    ...nodeAliasesForMachine(machineId, context.node),
+    context.machId,
+    baseMachine?.id,
+    baseMachine?.name,
+    baseMachine?.node,
+    ...nodeAliasesForMachine(machineId, baseMachine?.node),
+    baseMachine?.machId,
+    dbMachine?.id,
+    dbMachine?.name,
+    dbMachine?.node,
+    ...nodeAliasesForMachine(machineId, dbMachine?.node),
+    dbMachine?.machId,
+    inferredMeta?.id,
+    inferredMeta?.node,
+    ...nodeAliasesForMachine(machineId, inferredMeta?.node),
+  ]);
+};
+
+const buildExactMatchRegexes = (values = []) => uniqueStrings(values)
+  .map((value) => new RegExp(`^${escapeRegex(value)}$`, 'i'));
+
+const hasAliasMatch = (values, normalizedAliases) => {
+  const entries = Array.isArray(values) ? values : [values];
+  return entries.some((value) => {
+    const normalizedValue = normalizeMetricKey(value);
+    if (!normalizedValue) return false;
+    if (normalizedAliases.has(normalizedValue)) return true;
+    for (const alias of normalizedAliases) {
+      if (alias.includes(normalizedValue) || normalizedValue.includes(alias)) return true;
+    }
+    return false;
+  });
+};
+
+const severityFromPriority = (priority = '') => {
+  if (priority === 'critical') return 'critical';
+  if (priority === 'high') return 'warning';
+  return null;
+};
+
+const actionLabel = (action = '') => {
+  if (action === 'started') return 'Machine demarree';
+  if (action === 'paused') return 'Machine mise en pause';
+  if (action === 'stopped') return 'Machine arretee';
+  return 'Action machine';
+};
+
+const pieceHistoryLabel = (action = '') => {
+  if (action === 'entered') return 'Piece entree sur la machine';
+  if (action === 'completed') return 'Operation terminee sur la machine';
+  return 'Transition piece';
 };
 
 const computeMachineMetrics = async (machines = []) => {
@@ -198,8 +307,70 @@ const readDistinct = async (collectionName, field, filter = {}) => {
   }
 };
 
+const LIVE_SENSOR_MACHINE_IDS = new Set(['rectifieuse', 'compresseur']);
+
+// Title: Resolve one sensor payload to a live machine id used by the UI.
+const resolveLiveSensorMachineId = (sensor = {}) => {
+  const node = String(sensor.node || sensor.machineId || '').trim();
+  const rawMachine = String(sensor.machineId || sensor.machine || '').trim();
+
+  if (/compresseur|compress/i.test(rawMachine) || isCompresseurNode(node)) return 'compresseur';
+  if (/rectifi/i.test(rawMachine) || isRectifieuseNode(node)) return 'rectifieuse';
+  return null;
+};
+
+// Title: Build UI-ready machine metrics from one raw sensor row.
+const buildLiveSensorMetrics = (sensor = null) => {
+  if (!sensor) return null;
+
+  const vibX = Number(sensor.vibX || 0);
+  const vibY = Number(sensor.vibY || 0);
+  const vibZ = Number(sensor.vibZ || 0);
+  const vibration = Number(Math.sqrt(vibX ** 2 + vibY ** 2 + vibZ ** 2).toFixed(2));
+  const courant = Number(Number(sensor.courant || 0).toFixed(2));
+  const rpm = Number(Number(sensor.rpm || 0).toFixed(0));
+  const pression = sensor.pression === undefined || sensor.pression === null
+    ? null
+    : Number(Number(sensor.pression).toFixed(2));
+
+  return {
+    node: String(sensor.node || '').trim() || null,
+    vibration,
+    courant,
+    rpm,
+    pression,
+    sante: Number(Math.max(0, Math.min(100, 100 - vibration * 5)).toFixed(1)),
+    sensorUpdatedAt: sensor.createdAt || null,
+    hasSensorData: true,
+  };
+};
+
+// Title: Read the latest real sensor row per monitored live machine.
+const getLatestSensorsByMachineId = async () => {
+  const latestRows = await SensorData.aggregate([
+    { $sort: { createdAt: -1 } },
+    { $group: { _id: '$node', doc: { $first: '$$ROOT' } } },
+    { $replaceRoot: { newRoot: '$doc' } },
+  ]);
+
+  const latestByMachineId = new Map();
+
+  for (const sensor of latestRows) {
+    const machineId = resolveLiveSensorMachineId(sensor);
+    if (!machineId) continue;
+
+    const current = latestByMachineId.get(machineId);
+    if (!current || new Date(sensor.createdAt || 0).getTime() > new Date(current.createdAt || 0).getTime()) {
+      latestByMachineId.set(machineId, sensor);
+    }
+  }
+
+  return latestByMachineId;
+};
+
 // Title: Build the full machines list from base, DB custom rows, and inferred names.
-const listMachines = async () => {
+const listMachines = async (options = {}) => {
+  const currentUser = options.currentUser || null;
   const dbRows = await MachineModel.find({}).lean();
   const dbMachines = dbRows.filter((machine) => !machine.deletedAt);
   const dbMachineIds = new Set(dbRows.map((machine) => machine.id));
@@ -228,19 +399,63 @@ const listMachines = async () => {
     });
 
   const machines = [...fallbackBaseMachines, ...dbMachines, ...extra].sort((a, b) => a.name.localeCompare(b.name));
-  const metrics = await computeMachineMetrics(machines);
+  const [metrics, latestSensorsByMachineId] = await Promise.all([
+    computeMachineMetrics(machines),
+    getLatestSensorsByMachineId(),
+  ]);
 
-  return machines.map((machine) => ({
-    ...machine,
-    ...metrics.get(machine.id),
-    objectif: 0,
-    fonctions: functionsForMachine(machine),
-  }));
+  const hydratedMachines = machines.map((machine) => {
+    const baseMachine = {
+      ...machine,
+      ...metrics.get(machine.id),
+      objectif: 0,
+      node: canonicalNodeForMachine(machine.id, machine.node),
+      type: machine.id === 'compresseur' ? machine.type : normalizeMachineOperation(`${machine.type || ''} ${machine.name || ''} ${machine.model || ''}`),
+      fonctions: functionsForMachine(machine),
+    };
+
+    if (!LIVE_SENSOR_MACHINE_IDS.has(machine.id)) {
+      return {
+        ...baseMachine,
+        hasSensorData: false,
+        sensorUpdatedAt: null,
+      };
+    }
+
+    const liveMetrics = buildLiveSensorMetrics(latestSensorsByMachineId.get(machine.id));
+    if (!liveMetrics) {
+      return {
+        ...baseMachine,
+        temperature: null,
+        courant: 0,
+        vibration: 0,
+        rpm: 0,
+        pression: machine.id === 'compresseur' ? null : 0,
+        sante: 0,
+        hasSensorData: false,
+        sensorUpdatedAt: null,
+      };
+    }
+
+    return {
+      ...baseMachine,
+      ...liveMetrics,
+      node: canonicalNodeForMachine(machine.id, liveMetrics.node),
+      temperature: null,
+    };
+  });
+
+  if (currentUser?.role !== 'employe') return hydratedMachines;
+
+  const user = await User.findOne({ username: currentUser.username }).select('specialite').lean();
+  const specialite = user?.specialite || '';
+  return hydratedMachines.filter((machine) => matchesEmployeeSpecialite(machine, specialite));
 };
 
 // Title: Create one custom machine row after validation.
 const createMachine = async (payload = {}) => {
   const { name, model, marque, type, ip, imageUrl, icon, status, hasSensors, node } = payload;
+  const normalizedType = normalizeMachineOperation(type);
   if (!name) {
     const error = new Error('Nom requis');
     error.statusCode = 400;
@@ -260,9 +475,9 @@ const createMachine = async (payload = {}) => {
           $set: {
             id,
             name,
-            model: model || type || '',
+            model: model || normalizedType || '',
             marque: marque || '',
-            type: type || '',
+            type: normalizedType,
             ip: ip || '',
             imageUrl: imageUrl || '',
             icon: icon || 'gear',
@@ -287,9 +502,9 @@ const createMachine = async (payload = {}) => {
   return MachineModel.create({
     id,
     name,
-    model: model || type || '',
+    model: model || normalizedType || '',
     marque: marque || '',
-    type: type || '',
+    type: normalizedType,
     ip: ip || '',
     imageUrl: imageUrl || '',
     icon: icon || 'gear',
@@ -326,7 +541,7 @@ const updateMachine = async (machineId, payload = {}) => {
   if (name !== undefined) updates.name = name;
   if (model !== undefined) updates.model = model;
   if (marque !== undefined) updates.marque = marque;
-  if (type !== undefined) updates.type = type;
+  if (type !== undefined) updates.type = normalizeMachineOperation(type);
   if (ip !== undefined) updates.ip = ip;
   if (imageUrl !== undefined) updates.imageUrl = imageUrl;
   if (icon !== undefined) updates.icon = icon;
@@ -348,9 +563,219 @@ const updateMachine = async (machineId, payload = {}) => {
   );
 };
 
+// Title: Build one chronological history feed for a machine.
+const getMachineHistory = async (machineId, context = {}) => {
+  const aliases = await buildMachineAliasContext(machineId, context);
+  const regexAliases = buildExactMatchRegexes(aliases);
+  const normalizedAliases = new Set(aliases.map(normalizeMetricKey).filter(Boolean));
+  const limit = Math.min(Math.max(Number(context.limit) || 80, 10), 200);
+
+  const [
+    machineEvents,
+    pieces,
+    alerts,
+    reports,
+    requests,
+    sensorRows,
+  ] = await Promise.all([
+    MachineEvent.find({ machine: { $in: regexAliases } }).sort({ createdAt: -1 }).limit(limit).lean(),
+    Piece.find({
+      $or: [
+        { machine: { $in: regexAliases } },
+        { currentMachine: { $in: regexAliases } },
+        { machineChain: { $in: regexAliases } },
+        { 'history.machine': { $in: regexAliases } },
+      ],
+    }).sort({ createdAt: -1 }).limit(limit).lean(),
+    Alert.find({
+      $or: [
+        { machineId: { $in: regexAliases } },
+        { node: { $in: regexAliases } },
+      ],
+    }).sort({ createdAt: -1 }).limit(limit).lean(),
+    MaintenanceReport.find({
+      $or: [
+        { machineId: { $in: regexAliases } },
+        { node: { $in: regexAliases } },
+      ],
+    }).sort({ createdAt: -1 }).limit(limit).lean(),
+    MaintenanceRequest.find({
+      $or: [
+        { machineId: { $in: regexAliases } },
+        { node: { $in: regexAliases } },
+      ],
+    }).sort({ createdAt: -1 }).limit(limit).lean(),
+    SensorData.find({
+      $or: [
+        { machineId: { $in: regexAliases } },
+        { node: { $in: regexAliases } },
+      ],
+    }).sort({ createdAt: -1 }).limit(Math.min(limit, 12)).lean(),
+  ]);
+
+  const pieceEntries = pieces.flatMap((piece) => {
+    const history = Array.isArray(piece.history) ? piece.history : [];
+    return history
+      .filter((entry) => hasAliasMatch(entry?.machine, normalizedAliases))
+      .map((entry, index) => ({
+        id: `${piece._id}-piece-${index}-${entry.at || piece.createdAt}`,
+        type: 'piece',
+        title: pieceHistoryLabel(entry.action),
+        description: piece.nom || 'Piece sans nom',
+        status: entry.action,
+        severity: null,
+        createdAt: entry.at || piece.createdAt,
+        actor: entry.by || piece.employe || null,
+        metadata: [
+          { label: 'Piece', value: piece.nom || '-' },
+          { label: 'Statut', value: piece.status || '-' },
+          { label: 'Quantite produite', value: Number(piece.quantiteProduite || 0) },
+        ],
+      }));
+  });
+
+  const eventEntries = machineEvents.map((event) => ({
+    id: String(event._id),
+    type: 'machine-event',
+    title: actionLabel(event.action),
+    description: event.activity || event.pieceName || 'Evenement machine',
+    status: event.action,
+    severity: null,
+    createdAt: event.createdAt,
+    actor: event.username || null,
+    metadata: [
+      { label: 'Operateur', value: event.username || '-' },
+      { label: 'Piece', value: event.pieceName || '-' },
+      { label: 'Quantite', value: event.pieceCount ?? '-' },
+      { label: 'Pieces rebutees', value: event.rubanQuantity ?? '-' },
+    ],
+  }));
+
+  const alertEntries = alerts
+    .filter((alert) => hasAliasMatch([alert.machineId, alert.node], normalizedAliases))
+    .map((alert) => ({
+      id: String(alert._id),
+      type: 'alert',
+      title: alert.message || 'Alerte machine',
+      description: `Alerte ${alert.severity}${alert.ai?.source ? ` · ${alert.ai.source}` : ''}`,
+      status: alert.status,
+      severity: alert.severity || null,
+      createdAt: alert.createdAt,
+      actor: alert.seenBy || alert.notifiedBy || null,
+      metadata: [
+        { label: 'Occurrences', value: Number(alert.occurrenceCount || 1) },
+        { label: 'Derniere detection', value: alert.lastObservedAt ? new Date(alert.lastObservedAt).toISOString() : '-' },
+      ],
+    }));
+
+  const reportEntries = reports
+    .filter((report) => hasAliasMatch([report.machineId, report.node], normalizedAliases))
+    .map((report) => ({
+      id: String(report._id),
+      type: 'maintenance-report',
+      title: report.prediction?.label || 'Rapport de maintenance',
+      description: report.recommendedAction || 'Diagnostic de maintenance predictive',
+      status: report.status,
+      severity: report.severity || null,
+      createdAt: report.createdAt,
+      actor: report.reviewedBy || null,
+      metadata: [
+        { label: 'Score anomalie', value: Number(report.anomalyScore || 0) },
+        { label: 'Confiance', value: `${Number(report.prediction?.confidence || 0)}%` },
+        { label: 'ETA', value: report.prediction?.eta || '-' },
+      ],
+    }));
+
+  const requestEntries = requests
+    .filter((request) => hasAliasMatch([request.machineId, request.node], normalizedAliases))
+    .map((request) => ({
+      id: String(request._id),
+      type: 'maintenance-request',
+      title: request.title || 'Demande de maintenance',
+      description: request.description || 'Intervention planifiee pour la machine',
+      status: request.status,
+      severity: severityFromPriority(request.priority),
+      createdAt: request.createdAt,
+      actor: request.resolvedBy || request.requestedBy || null,
+      metadata: [
+        { label: 'Priorite', value: request.priority || '-' },
+        { label: 'Demandeur', value: request.requestedBy || '-' },
+        { label: 'Resolution', value: request.resolvedAt ? new Date(request.resolvedAt).toISOString() : '-' },
+      ],
+    }));
+
+  const sensorEntries = sensorRows
+    .filter((sensor) => hasAliasMatch([sensor.machineId, sensor.node], normalizedAliases))
+    .map((sensor) => {
+      const metrics = buildLiveSensorMetrics(sensor);
+      const pressure = typeof metrics?.pression === 'number' ? metrics.pression : null;
+      const vibration = typeof metrics?.vibration === 'number' ? metrics.vibration : null;
+      const severity = pressure !== null && (pressure > 11 || pressure < 3.5)
+        ? 'critical'
+        : (pressure !== null && (pressure > 10 || pressure < 4.5)) || (vibration !== null && vibration > 2)
+          ? 'warning'
+          : 'normal';
+
+      return {
+        id: `${sensor._id}-sensor`,
+        type: 'sensor',
+        title: 'Mesure capteurs',
+        description: sensor.node || sensor.machineId || 'Lecture capteur',
+        status: severity,
+        severity,
+        createdAt: sensor.createdAt,
+        actor: null,
+        metadata: [
+          { label: 'Node', value: sensor.node || '-' },
+          { label: 'Pression', value: pressure === null ? null : `${pressure.toFixed(1)} bar` },
+          { label: 'Vibration', value: vibration === null ? null : `${vibration.toFixed(2)} mm/s` },
+          { label: 'Courant', value: metrics ? `${metrics.courant.toFixed(1)} A` : null },
+          { label: 'RPM', value: metrics ? metrics.rpm : null },
+        ],
+      };
+    });
+
+  const timeline = [
+    ...eventEntries,
+    ...pieceEntries,
+    ...alertEntries,
+    ...reportEntries,
+    ...requestEntries,
+    ...sensorEntries,
+  ]
+    .filter((entry) => entry.createdAt)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, limit)
+    .map((entry) => ({
+      ...entry,
+      metadata: (entry.metadata || []).filter((item) => item.value !== null && item.value !== undefined && item.value !== ''),
+    }));
+
+  return {
+    machine: {
+      id: machineId,
+      aliases,
+    },
+    summary: {
+      totalEvents: timeline.length,
+      machineActions: eventEntries.length,
+      pieceTransitions: pieceEntries.length,
+      alerts: alertEntries.length,
+      sensorReadings: sensorEntries.length,
+      maintenanceActions: reportEntries.length + requestEntries.length,
+      activeAlerts: alertEntries.filter((entry) => entry.status !== 'resolved').length,
+      openRequests: requestEntries.filter((entry) => ['open', 'in_progress'].includes(entry.status)).length,
+      lastEventAt: timeline[0]?.createdAt || null,
+    },
+    timeline,
+  };
+};
+
 module.exports = {
   listMachines,
   createMachine,
   deleteMachine,
   updateMachine,
+  getMachineHistory,
+  matchesEmployeeSpecialite,
 };

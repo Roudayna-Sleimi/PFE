@@ -55,6 +55,11 @@ const functionPresets: Record<string, MachineFunction[]> = {
     { title: 'Micro-percage', desc: 'Realisation de petits diametres avec precision.' },
     { title: 'Trou de depart', desc: 'Preparation des trous pour la decoupe fil.' },
   ],
+  controle: [
+    { title: 'Controle dimensionnel', desc: 'Verification des dimensions et tolerances.' },
+    { title: 'Controle qualite', desc: 'Validation de la conformite des pieces.' },
+    { title: 'Rapport de controle', desc: 'Suivi des mesures et resultats de controle.' },
+  ],
   compresseur: [
     { title: 'Air comprime', desc: 'Alimentation pneumatique de l atelier.' },
     { title: 'Regulation pression', desc: 'Maintien de la pression reseau.' },
@@ -69,9 +74,10 @@ export const getMachineFunctions = (machine: MachineFunctionSource = {}): Machin
 
   const haystack = normalizeText(`${machine.name || ''} ${machine.marque || ''} ${machine.model || ''} ${machine.type || ''}`);
   if (haystack.includes('compresseur')) return functionPresets.compresseur;
+  if (haystack.includes('controle') || haystack.includes('qualite') || haystack.includes('quality')) return functionPresets.controle;
   if (haystack.includes('rectif')) return functionPresets.rectification;
-  if (haystack.includes('agie cut') || haystack.includes('edm cut') || haystack.includes('electroerosion a fil')) return functionPresets.edmCut;
   if (haystack.includes('agie drill') || haystack.includes('edm drill') || haystack.includes('percage edm')) return functionPresets.edmDrill;
+  if (haystack.includes('agie cut') || haystack.includes('edm cut') || haystack.includes('electroerosion')) return functionPresets.edmCut;
   if (haystack.includes('tour') || haystack.includes('tournage')) return functionPresets.tournage;
   if (haystack.includes('taraud')) return functionPresets.taraudage;
   if (haystack.includes('perca') || haystack.includes('drill')) return functionPresets.percage;

@@ -1,4 +1,4 @@
-+"""
+"""
 Titre: Connecteur MongoDB
 Explication: Ce module cree les connexions MongoDB et retourne la base applicative.
 Utilite: Centralise l'acces base de donnees pour eviter des initialisations eparpillees.

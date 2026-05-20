@@ -53,6 +53,8 @@ const TRIGGER_LABELS: Record<string, string> = {
   'current-threshold': 'Seuil courant',
   'vibration-threshold': 'Seuil vibration',
   'pressure-threshold': 'Seuil pression',
+  'rpm-threshold': 'Seuil RPM',
+  'rpm-stop': 'Arret RPM',
 };
 
 const alertRecency = (alert: Pick<AlertRecord, 'createdAt' | 'lastObservedAt'>) => (

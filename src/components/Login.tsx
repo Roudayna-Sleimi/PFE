@@ -16,6 +16,7 @@ import {
   User,
 } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
+import { apiUrl } from "../utils/runtimeConfig";
 
 interface LoginProps {
   onLogin: () => void;
@@ -160,7 +161,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setLoginNotice("");
 
     try {
-      const response = await fetch("http://localhost:5000/api/auth/login", {
+      const response = await fetch(apiUrl("/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -197,7 +198,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setFormLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/demandes", {
+      const response = await fetch(apiUrl("/demandes"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -230,7 +231,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setForgotLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/auth/forgot-password", {
+      const response = await fetch(apiUrl("/auth/forgot-password"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifier: forgotIdentifier }),
@@ -270,7 +271,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setResetLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/auth/reset-password", {
+      const response = await fetch(apiUrl("/auth/reset-password"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(resetForm),

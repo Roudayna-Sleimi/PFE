@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Users, Check, X, Clock, UserPlus, PencilLine, Trash2 } from 'lucide-react';
+import { apiUrl } from '../utils/runtimeConfig';
 import './DemandesPage.css';
 
 interface Demande {
@@ -10,6 +11,7 @@ interface Demande {
   telephone: string;
   statut: string;
   username: string | null;
+  specialite?: string | null;
   createdAt: string;
 }
 
@@ -25,6 +27,16 @@ const editFields = [
   { key: 'email', label: 'Email', placeholder: 'email@exemple.com' },
   { key: 'poste', label: 'Poste', placeholder: 'Poste' },
   { key: 'telephone', label: 'Telephone', placeholder: 'Telephone' },
+] as const;
+
+const specialiteOptions = [
+  'Fraisage',
+  'Tournage',
+  'Perçage',
+  'Taraudage',
+  'Rectification',
+  'Électroérosion',
+  'Contrôle qualité',
 ] as const;
 
 const normalizeDemandeStatut = (statut: string) => {
@@ -50,6 +62,7 @@ const DemandesPage: React.FC = () => {
   const [selected, setSelected] = useState<Demande | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [specialite, setSpecialite] = useState<(typeof specialiteOptions)[number]>('Fraisage');
   const [modalErr, setModalErr] = useState('');
   const [modalLoad, setModalLoad] = useState(false);
 
@@ -65,7 +78,7 @@ const DemandesPage: React.FC = () => {
     setError('');
 
     try {
-      const res = await fetch('http://localhost:5000/api/demandes', {
+      const res = await fetch(apiUrl('/demandes'), {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -97,6 +110,7 @@ const DemandesPage: React.FC = () => {
     setSelected(null);
     setUsername('');
     setPassword('');
+    setSpecialite('Fraisage');
     setModalErr('');
   };
 
@@ -115,6 +129,7 @@ const DemandesPage: React.FC = () => {
     setSelected(demande);
     setUsername(demande.username || '');
     setPassword('');
+    setSpecialite('Fraisage');
     setModalErr('');
   };
 
@@ -122,7 +137,7 @@ const DemandesPage: React.FC = () => {
     if (!confirm('Refuser cette demande ?')) return;
 
     try {
-      await fetch(`http://localhost:5000/api/demandes/${id}/refuser`, {
+      await fetch(apiUrl(`/demandes/${id}/refuser`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -144,7 +159,7 @@ const DemandesPage: React.FC = () => {
     setEditErr('');
 
     try {
-      const res = await fetch(`http://localhost:5000/api/demandes/${editing._id}`, {
+      const res = await fetch(apiUrl(`/demandes/${editing._id}`), {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -172,7 +187,7 @@ const DemandesPage: React.FC = () => {
     if (!confirm('Supprimer cette demande ?')) return;
 
     try {
-      await fetch(`http://localhost:5000/api/demandes/${id}`, {
+      await fetch(apiUrl(`/demandes/${id}`), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -185,8 +200,8 @@ const DemandesPage: React.FC = () => {
   const handleApprouver = async () => {
     if (!selected) return;
 
-    if (!username || !password) {
-      setModalErr('Username et mot de passe requis');
+    if (!username || !password || !specialite) {
+      setModalErr('Username, mot de passe et specialite requis');
       return;
     }
 
@@ -194,13 +209,13 @@ const DemandesPage: React.FC = () => {
     setModalErr('');
 
     try {
-      const res = await fetch(`http://localhost:5000/api/demandes/${selected._id}/approuver`, {
+      const res = await fetch(apiUrl(`/demandes/${selected._id}/approuver`), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, specialite }),
       });
       const data = await res.json();
 
@@ -344,6 +359,7 @@ const DemandesPage: React.FC = () => {
                   <h2 className="demandes-card__title">{demande.nom}</h2>
                   <p className="demandes-card__meta">{formatMeta(demande.email, demande.poste)}</p>
                   {demande.username && <p className="demandes-card__detail">Utilisateur: @{demande.username}</p>}
+                  {demande.specialite && <p className="demandes-card__detail">Specialite: {demande.specialite}</p>}
                 </div>
 
                 <div className="demandes-card__aside demandes-card__aside--status">
@@ -463,6 +479,19 @@ const DemandesPage: React.FC = () => {
                   onChange={(event) => setPassword(event.target.value)}
                   className="demandes-field"
                 />
+              </label>
+
+              <label className="demandes-field-group">
+                <span className="demandes-field-group__label">Spécialité</span>
+                <select
+                  value={specialite}
+                  onChange={(event) => setSpecialite(event.target.value as (typeof specialiteOptions)[number])}
+                  className="demandes-field"
+                >
+                  {specialiteOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </label>
             </div>
 

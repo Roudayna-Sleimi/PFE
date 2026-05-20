@@ -1,11 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Zap, Thermometer, Activity, Search, Plus, X, Trash2, PencilLine } from 'lucide-react';
+import { RefreshCw, Zap, Activity, Search, Plus, X, Trash2, PencilLine } from 'lucide-react';
 import { io } from 'socket.io-client';
 import MachineDetail from './MachineDetail';
 import { getMachineVisual } from '../utils/machineVisuals';
 import { getMachineFunctions, type MachineFunction } from '../utils/machineFunctions';
+import { normalizeSensorData, type RawSensorDataPayload } from '../utils/liveSensorData';
+import { canonicalNodeForMachine, sensorBelongsToMachine } from '../utils/liveMachineNodes';
+import { API_BASE_URL, SOCKET_URL } from '../utils/runtimeConfig';
+import { useTheme } from '../hooks/useTheme';
+import './MachinesPage.css';
 
-const socket = io('http://localhost:5000', { transports: ['websocket'] });
+const socket = io(SOCKET_URL, { transports: ['websocket'] });
 
 interface Probleme {
   severity: 'critical' | 'warning';
@@ -16,7 +21,14 @@ interface Probleme {
 
 type MachineStatus = 'En marche' | 'Avertissement' | 'Arr\u00eat' | 'En maintenance';
 type MachineIcon = 'gear' | 'wrench' | 'bolt' | 'drill';
-type MachineProcessType = 'Fraisage' | 'Tournage' | 'Perçage' | 'Taraudage';
+type MachineProcessType =
+  | 'Fraisage'
+  | 'Tournage'
+  | 'Perçage'
+  | 'Taraudage'
+  | 'Rectification'
+  | 'Électroérosion'
+  | 'Contrôle qualité';
 
 interface MachineFormState {
   name: string;
@@ -45,7 +57,7 @@ interface Machine {
   objectif: number;
   efficacite: number;
   heures: number;
-  temperature: number;
+  temperature?: number | null;
   courant: number;
   vibration: number;
   rpm: number;
@@ -63,6 +75,8 @@ interface Machine {
   hasProductionData?: boolean;
   hasEfficiencyData?: boolean;
   hasWorkData?: boolean;
+  hasSensorData?: boolean;
+  sensorUpdatedAt?: string | null;
 }
 
 interface ApiMachine {
@@ -82,7 +96,7 @@ interface ApiMachine {
   objectif?: number;
   efficacite?: number;
   heures?: number;
-  temperature?: number;
+  temperature?: number | null;
   courant?: number;
   vibration?: number;
   rpm?: number;
@@ -100,6 +114,8 @@ interface ApiMachine {
   hasProductionData?: boolean;
   hasEfficiencyData?: boolean;
   hasWorkData?: boolean;
+  hasSensorData?: boolean;
+  sensorUpdatedAt?: string | null;
 }
 
 const machineTypeOptions: Array<{ value: MachineProcessType; icon: MachineIcon }> = [
@@ -107,6 +123,9 @@ const machineTypeOptions: Array<{ value: MachineProcessType; icon: MachineIcon }
   { value: 'Tournage', icon: 'wrench' },
   { value: 'Perçage', icon: 'drill' },
   { value: 'Taraudage', icon: 'bolt' },
+  { value: 'Rectification', icon: 'gear' },
+  { value: 'Électroérosion', icon: 'bolt' },
+  { value: 'Contrôle qualité', icon: 'gear' },
 ];
 
 const emptyMachineForm: MachineFormState = {
@@ -123,9 +142,25 @@ const iconForMachineType = (type: MachineProcessType): MachineIcon => (
   machineTypeOptions.find((option) => option.value === type)?.icon || 'gear'
 );
 
+const normalizeProcessText = (value = '') => String(value)
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim();
+
 const normalizeMachineProcessType = (type?: string): MachineProcessType => {
-  const found = machineTypeOptions.find((option) => option.value.toLowerCase() === String(type || '').toLowerCase());
-  return found?.value || 'Fraisage';
+  const normalized = normalizeProcessText(type);
+  const found = machineTypeOptions.find((option) => normalizeProcessText(option.value) === normalized);
+  if (found) return found.value;
+  if (normalized.includes('rectif')) return 'Rectification';
+  if (normalized.includes('electro') || normalized.includes('edm') || normalized.includes('agie')) return 'Électroérosion';
+  if (normalized.includes('controle') || normalized.includes('qualite') || normalized.includes('quality')) return 'Contrôle qualité';
+  if (normalized.includes('tour') || normalized.includes('tournage')) return 'Tournage';
+  if (normalized.includes('taraud')) return 'Taraudage';
+  if (normalized.includes('perca') || normalized.includes('drill')) return 'Perçage';
+  if (normalized.includes('frais')) return 'Fraisage';
+  return 'Fraisage';
 };
 
 const normalizeMachineIcon = (icon?: string): MachineIcon => {
@@ -146,7 +181,7 @@ const mapApiMachine = (machine: ApiMachine): Machine => ({
   model: machine.model || '-',
   marque: machine.marque || '',
   type: machine.type || '-',
-  node: machine.node || '-',
+  node: canonicalNodeForMachine(machine.id, machine.node || '-'),
   ip: machine.ip || '-',
   imageUrl: machine.imageUrl || '',
   icon: normalizeMachineIcon(machine.icon),
@@ -157,7 +192,7 @@ const mapApiMachine = (machine: ApiMachine): Machine => ({
   objectif: typeof machine.objectif === 'number' ? machine.objectif : 0,
   efficacite: typeof machine.efficacite === 'number' ? machine.efficacite : 0,
   heures: typeof machine.heures === 'number' ? machine.heures : 0,
-  temperature: typeof machine.temperature === 'number' ? machine.temperature : 0,
+  temperature: typeof machine.temperature === 'number' ? machine.temperature : null,
   courant: typeof machine.courant === 'number' ? machine.courant : 0,
   vibration: typeof machine.vibration === 'number' ? machine.vibration : 0,
   rpm: typeof machine.rpm === 'number' ? machine.rpm : 0,
@@ -175,6 +210,8 @@ const mapApiMachine = (machine: ApiMachine): Machine => ({
   hasProductionData: Boolean(machine.hasProductionData),
   hasEfficiencyData: Boolean(machine.hasEfficiencyData),
   hasWorkData: Boolean(machine.hasWorkData),
+  hasSensorData: Boolean(machine.hasSensorData),
+  sensorUpdatedAt: machine.sensorUpdatedAt || null,
 });
 
 const isLiveMachine = (machine: Pick<Machine, 'id'>) => machine.id === 'rectifieuse' || machine.id === 'compresseur';
@@ -190,6 +227,7 @@ const formatMachineHours = (value: number) => (
 const pendingMetric = '-';
 
 const MachinesPage: React.FC = () => {
+  const { darkMode } = useTheme();
   const [machines, setMachines] = useState<Machine[]>([]);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Machine | null>(null);
@@ -200,10 +238,34 @@ const MachinesPage: React.FC = () => {
   const [machineForm, setMachineForm] = useState(emptyMachineForm);
   const role = localStorage.getItem('role');
 
+  const modalShellStyle = darkMode
+    ? { background: 'rgba(0,0,0,0.7)' }
+    : { background: 'rgba(15,23,42,0.24)', backdropFilter: 'blur(3px)' };
+
+  const modalCardClass = darkMode
+    ? 'bg-slate-800 border border-white/[0.1] text-white'
+    : 'bg-white border border-slate-200 text-slate-900';
+
+  const modalLabelClass = darkMode ? 'text-slate-400' : 'text-slate-600';
+  const modalTitleClass = darkMode ? 'text-white' : 'text-slate-900';
+  const modalCloseClass = darkMode ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900';
+  const modalInputClass = darkMode
+    ? 'w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors'
+    : 'w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 outline-none focus:border-[rgba(37,99,235,0.45)] transition-colors';
+  const modalUploadClass = darkMode
+    ? 'flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-[rgba(0,212,255,0.4)]'
+    : 'flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-600 transition-colors hover:border-[rgba(37,99,235,0.45)]';
+  const modalUploadBadgeClass = darkMode
+    ? 'rounded-md bg-cyan-500/15 px-2 py-1 text-xs font-semibold text-cyan-200'
+    : 'rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700';
+  const modalCancelClass = darkMode
+    ? 'flex-1 py-2 rounded-lg text-sm font-medium text-slate-400 border border-white/10 hover:border-white/20 transition-all cursor-pointer bg-transparent'
+    : 'flex-1 py-2 rounded-lg text-sm font-medium text-slate-600 border border-slate-300 hover:border-slate-400 transition-all cursor-pointer bg-white';
+
   const fetchMachines = useCallback(async () => {
     const token = localStorage.getItem('token') || '';
     try {
-      const res = await fetch('http://localhost:5000/api/machines', {
+      const res = await fetch(`${API_BASE_URL}/machines`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -283,7 +345,7 @@ const MachinesPage: React.FC = () => {
 
     setSavingMachine(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/machines${isEditing ? `/${editingMachine?.id}` : ''}`, {
+      const res = await fetch(`${API_BASE_URL}/machines${isEditing ? `/${editingMachine?.id}` : ''}`, {
         method: isEditing ? 'PATCH' : 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -307,7 +369,7 @@ const MachinesPage: React.FC = () => {
     if (!confirm('Supprimer cette machine ?')) return;
 
     const token = localStorage.getItem('token') || '';
-    await fetch(`http://localhost:5000/api/machines/${machineId}`, {
+    await fetch(`${API_BASE_URL}/machines/${machineId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -316,23 +378,26 @@ const MachinesPage: React.FC = () => {
   };
 
   useEffect(() => {
-    const onSensorData = (data: { node: string; courant: number; vibX: number; vibY: number; vibZ: number; rpm: number; pression?: number }) => {
+    const onSensorData = (data: RawSensorDataPayload) => {
+      const normalized = normalizeSensorData(data);
       setMachines((prev) =>
         prev.map((machine) => {
-          if (machine.node !== data.node) return machine;
           if (!isLiveMachine(machine)) return machine;
+          if (!sensorBelongsToMachine(machine.id, normalized.node)) return machine;
 
-          const vibration = parseFloat(Math.sqrt(data.vibX ** 2 + data.vibY ** 2 + data.vibZ ** 2).toFixed(2));
+          const vibration = parseFloat(Math.sqrt(normalized.vibX ** 2 + normalized.vibY ** 2 + normalized.vibZ ** 2).toFixed(2));
           const nextMachine: Machine = {
             ...machine,
-            courant: data.courant,
+            courant: normalized.courant,
             vibration,
-            rpm: data.rpm,
+            rpm: normalized.rpm,
             sante: Math.max(0, Math.min(100, 100 - vibration * 5)),
+            hasSensorData: true,
+            sensorUpdatedAt: new Date().toISOString(),
           };
 
-          if (machine.id === 'compresseur' && typeof data.pression === 'number') {
-            nextMachine.pression = data.pression;
+          if (machine.id === 'compresseur' && normalized.pression !== null) {
+            nextMachine.pression = normalized.pression;
           }
 
           return nextMachine;
@@ -417,7 +482,7 @@ const MachinesPage: React.FC = () => {
             <div
               key={machine.id}
               onClick={() => setSelected(machine)}
-              className="group rounded-xl cursor-pointer transition-all duration-300"
+              className="group machine-card-layout rounded-xl cursor-pointer transition-all duration-300"
               style={{ background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.08)' }}
               onMouseEnter={(event) => {
                 event.currentTarget.style.borderColor = 'rgba(29,78,216,0.28)';
@@ -428,7 +493,7 @@ const MachinesPage: React.FC = () => {
                 event.currentTarget.style.transform = 'translateY(0)';
               }}
             >
-              <div className="p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+              <div className="machine-card-header p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
                 <div className="flex items-start justify-between mb-1">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: 'var(--app-accent)', boxShadow: 'none' }} />
@@ -466,12 +531,12 @@ const MachinesPage: React.FC = () => {
                 <p className="text-[11px] text-slate-600 ml-4 mt-1">Adresse IP : {machine.ip || '-'}</p>
               </div>
 
-              <div className="relative mx-5 my-4 h-36 overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
+              <div className="machine-card-media relative mx-5 my-4 h-36 overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
                 <img
                   src={visual.image}
                   alt={visual.alt}
                   loading="lazy"
-                  className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  className="machine-card-image h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                 />
                 <div className="absolute inset-0 bg-gradient-to-b from-slate-950/20 via-slate-950/10 to-slate-950/75" />
                 <div className="absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-cyan-300/40 bg-slate-950/70 px-2.5 py-1.5">
@@ -483,11 +548,11 @@ const MachinesPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="mb-4 grid grid-cols-1 gap-3 px-5 sm:grid-cols-3">
+              <div className="machine-card-stats mb-4 grid grid-cols-1 gap-3 px-5 sm:grid-cols-3">
                 {(machine.id === 'compresseur'
                   ? [
-                      { label: 'Pression', value: `${(machine.pression ?? 0).toFixed(1)} bar`, color: '#06b6d4' },
-                      { label: 'Courant', value: `${machine.courant.toFixed(1)}A`, color: '#3b82f6' },
+                      { label: 'Pression', value: machine.hasSensorData ? `${(machine.pression ?? 0).toFixed(1)} bar` : pendingMetric, color: '#06b6d4' },
+                      { label: 'Courant', value: machine.hasSensorData ? `${machine.courant.toFixed(1)}A` : pendingMetric, color: '#3b82f6' },
                       { label: 'Heures', value: machine.hasWorkData ? formatMachineHours(machine.heures) : pendingMetric, color: '#475569' },
                     ]
                   : [
@@ -509,21 +574,25 @@ const MachinesPage: React.FC = () => {
                 ))}
               </div>
 
-              <div className="flex items-center gap-4 px-5 pb-4 flex-wrap">
+              <div className="machine-card-footer flex items-center gap-4 px-5 pb-4 flex-wrap">
                 {isLiveMachine(machine) ? (
                   <>
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: '#22c55e' }}>
-                      <Activity size={10} /> EN DIRECT
+                      style={{
+                        background: machine.hasSensorData ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.12)',
+                        border: machine.hasSensorData ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(245,158,11,0.2)',
+                        color: machine.hasSensorData ? '#22c55e' : '#f59e0b',
+                      }}>
+                      <Activity size={10} /> {machine.hasSensorData ? 'DONNEES REELLES' : 'EN ATTENTE'}
                     </span>
                     <span className="flex items-center gap-1 text-[11px] text-slate-400">
-                      <Thermometer size={11} color="#f97316" /> {machine.temperature.toFixed(1)}C
+                      Node: {machine.node || '-'}
                     </span>
                     <span className="flex items-center gap-1 text-[11px] text-slate-400">
-                      <Zap size={11} color="#3b82f6" /> {machine.courant.toFixed(1)}A
+                      <Zap size={11} color="#3b82f6" /> {machine.hasSensorData ? `${machine.courant.toFixed(1)}A` : pendingMetric}
                     </span>
                     <span className="flex items-center gap-1 text-[11px] text-slate-400">
-                      <Activity size={11} color="#475569" /> {machine.vibration.toFixed(2)} mm/s
+                      <Activity size={11} color="#475569" /> {machine.hasSensorData ? `${machine.vibration.toFixed(2)} mm/s` : pendingMetric}
                     </span>
                   </>
                 ) : null}
@@ -534,14 +603,14 @@ const MachinesPage: React.FC = () => {
       </div>
 
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
-          <div className="bg-slate-800 border border-white/[0.1] rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={modalShellStyle}>
+          <div className={`${modalCardClass} rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto`}>
             <div className="flex items-center justify-between mb-5">
-              <span className="text-base font-bold text-white">{editingMachine ? 'Modifier machine' : 'Nouvelle machine'}</span>
+              <span className={`text-base font-bold ${modalTitleClass}`}>{editingMachine ? 'Modifier machine' : 'Nouvelle machine'}</span>
               <button
                 onClick={closeMachineModal}
                 title="Fermer"
-                className="text-slate-400 hover:text-white transition-colors cursor-pointer bg-transparent border-none"
+                className={`${modalCloseClass} transition-colors cursor-pointer bg-transparent border-none`}
               >
                 <X size={18} />
               </button>
@@ -549,54 +618,54 @@ const MachinesPage: React.FC = () => {
 
             <div className="flex flex-col gap-3">
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Nom de la machine *</label>
+                <label className={`text-xs mb-1 block ${modalLabelClass}`}>Nom de la machine *</label>
                 <input
                   value={machineForm.name}
                   onChange={(event) => setMachineForm((prev) => ({ ...prev, name: event.target.value }))}
                   placeholder="Ex : Fraiseuse DMG"
-                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
+                  className={modalInputClass}
                 />
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Marque</label>
+                  <label className={`text-xs mb-1 block ${modalLabelClass}`}>Marque</label>
                   <input
                     value={machineForm.marque}
                     onChange={(event) => setMachineForm((prev) => ({ ...prev, marque: event.target.value }))}
                     placeholder="Ex : DMG MORI"
-                    className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
+                    className={modalInputClass}
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Modèle</label>
+                  <label className={`text-xs mb-1 block ${modalLabelClass}`}>Modèle</label>
                   <input
                     value={machineForm.model}
                     onChange={(event) => setMachineForm((prev) => ({ ...prev, model: event.target.value }))}
                     placeholder="Ex : CMX 600"
-                    className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
+                    className={modalInputClass}
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Adresse IP</label>
+                <label className={`text-xs mb-1 block ${modalLabelClass}`}>Adresse IP</label>
                 <input
                   value={machineForm.ip}
                   onChange={(event) => setMachineForm((prev) => ({ ...prev, ip: event.target.value }))}
                   placeholder="Ex : 192.168.1.50"
-                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
+                  className={modalInputClass}
                 />
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Type / icône</label>
+                <label className={`text-xs mb-1 block ${modalLabelClass}`}>Opération principale</label>
                 <select
-                  aria-label="Type et icône de la machine"
+                  aria-label="Opération principale de la machine"
                   value={machineForm.type}
                   onChange={(event) => setMachineForm((prev) => ({ ...prev, type: event.target.value as MachineProcessType }))}
-                  className="w-full bg-slate-900/70 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[rgba(0,212,255,0.4)] transition-colors"
+                  className={modalInputClass}
                 >
                   {machineTypeOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.value}</option>
@@ -605,10 +674,10 @@ const MachinesPage: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Image de la machine</label>
-                <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-[rgba(0,212,255,0.4)]">
+                <label className={`text-xs mb-1 block ${modalLabelClass}`}>Image de la machine</label>
+                <label className={modalUploadClass}>
                   <span className="truncate">{machineForm.imageFile?.name || (machineForm.imageUrl ? 'Image actuelle conservée' : 'Choisir une image')}</span>
-                  <span className="rounded-md bg-cyan-500/15 px-2 py-1 text-xs font-semibold text-cyan-200">Parcourir</span>
+                  <span className={modalUploadBadgeClass}>Parcourir</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -625,7 +694,7 @@ const MachinesPage: React.FC = () => {
             <div className="flex gap-3 mt-5">
               <button
                 onClick={closeMachineModal}
-                className="flex-1 py-2 rounded-lg text-sm font-medium text-slate-400 border border-white/10 hover:border-white/20 transition-all cursor-pointer bg-transparent"
+                className={modalCancelClass}
               >
                 Annuler
               </button>

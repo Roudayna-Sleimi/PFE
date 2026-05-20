@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
   Activity,
@@ -20,6 +20,9 @@ import {
   formatAlertTrigger,
   upsertAlertEntry,
 } from '../utils/alertMetadata';
+import { normalizeSensorData, type RawSensorDataPayload } from '../utils/liveSensorData';
+import { isCompresseurNode, isRectifieuseNode } from '../utils/liveMachineNodes';
+import { API_BASE_URL, SOCKET_URL } from '../utils/runtimeConfig';
 
 type Alert = AlertRecord & {
   status: 'new' | 'seen' | 'resolved' | 'notified';
@@ -62,6 +65,9 @@ interface Machine {
   vibration: number;
   courant: number;
   rpm: number;
+  pression?: number;
+  hasSensorData?: boolean;
+  sensorUpdatedAt?: string | null;
   fonctions?: MachineFunction[];
 }
 
@@ -75,10 +81,43 @@ interface LiveData {
   courant: number;
   rpm: number;
   pression: number;
+  hasData: boolean;
   isLive: boolean;
 }
 
-const socket = io('http://localhost:5000', { transports: ['websocket'] });
+interface HistoryMetadataItem {
+  label: string;
+  value: string | number;
+}
+
+interface MachineHistoryEntry {
+  id: string;
+  type: 'machine-event' | 'piece' | 'alert' | 'maintenance-report' | 'maintenance-request' | 'sensor';
+  title: string;
+  description: string;
+  status: string | null;
+  severity: 'warning' | 'critical' | 'normal' | null;
+  createdAt: string;
+  actor: string | null;
+  metadata: HistoryMetadataItem[];
+}
+
+interface MachineHistoryResponse {
+  summary: {
+    totalEvents: number;
+    machineActions: number;
+    pieceTransitions: number;
+    alerts: number;
+    sensorReadings?: number;
+    maintenanceActions: number;
+    activeAlerts: number;
+    openRequests: number;
+    lastEventAt: string | null;
+  };
+  timeline: MachineHistoryEntry[];
+}
+
+const socket = io(SOCKET_URL, { transports: ['websocket'] });
 
 const LIVE_MACHINES = ['rectifieuse', 'compresseur'];
 
@@ -193,6 +232,63 @@ const resolveAlertStatusStyle = (status: Alert['status']) => {
   return { text: 'Resolu', color: successTone.color };
 };
 
+const resolveHistoryEntryTone = (entry: MachineHistoryEntry) => {
+  if (entry.type === 'alert') {
+    return entry.severity === 'critical' ? dangerTone : warningTone;
+  }
+  if (entry.type === 'maintenance-report' || entry.type === 'maintenance-request') {
+    if (entry.status === 'done' || entry.status === 'resolved') return successTone;
+    return entry.severity === 'critical' ? dangerTone : accentTone;
+  }
+  if (entry.type === 'sensor') {
+    if (entry.severity === 'critical') return dangerTone;
+    if (entry.severity === 'warning') return warningTone;
+    return accentTone;
+  }
+  if (entry.type === 'piece') return accentTone;
+  return successTone;
+};
+
+const resolveHistoryEntryLabel = (type: MachineHistoryEntry['type']) => {
+  if (type === 'machine-event') return 'Machine';
+  if (type === 'piece') return 'Piece';
+  if (type === 'alert') return 'Alerte';
+  if (type === 'maintenance-report') return 'Rapport';
+  if (type === 'sensor') return 'Capteurs';
+  return 'Demande';
+};
+
+const resolveHistoryEntryIcon = (type: MachineHistoryEntry['type']) => {
+  if (type === 'machine-event') return Activity;
+  if (type === 'piece') return Package;
+  if (type === 'sensor') return Activity;
+  if (type === 'alert') return Bell;
+  return History;
+};
+
+const resolveHistoryStatusText = (status: string | null) => {
+  const normalized = normalizeText(status);
+  if (!normalized) return null;
+  if (normalized === 'started') return 'Demarre';
+  if (normalized === 'paused') return 'Pause';
+  if (normalized === 'stopped') return 'Arret';
+  if (normalized === 'entered') return 'Entree';
+  if (normalized === 'completed') return 'Terminee';
+  if (normalized === 'new') return 'Nouvelle';
+  if (normalized === 'seen') return 'Vue';
+  if (normalized === 'notified') return 'Notifiee';
+  if (normalized === 'resolved') return 'Resolue';
+  if (normalized === 'normal') return 'Normal';
+  if (normalized === 'warning') return 'A surveiller';
+  if (normalized === 'critical') return 'Critique';
+  if (normalized === 'open') return 'Ouverte';
+  if (normalized === 'inprogress') return 'En cours';
+  if (normalized === 'done') return 'Terminee';
+  if (normalized === 'cancelled') return 'Annulee';
+  if (normalized === 'reviewed') return 'Revisee';
+  return status;
+};
+
 const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const tabs = getTabs(machine.id);
   const [activeTab, setActiveTab] = useState(tabs[0]);
@@ -200,11 +296,15 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const [employeesOverview, setEmployeesOverview] = useState<EmployeOverview[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
+  const [historyData, setHistoryData] = useState<MachineHistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const lastHistoryRefreshRef = useRef(0);
   const [live, setLive] = useState<LiveData>({
     vibration: machine.vibration,
     courant: machine.courant,
     rpm: machine.rpm,
-    pression: 0,
+    pression: machine.id === 'compresseur' ? (machine.pression ?? 0) : 0,
+    hasData: Boolean(machine.hasSensorData),
     isLive: false,
   });
 
@@ -217,6 +317,17 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     imageUrl: machine.imageUrl,
   });
   const machineFunctions = getMachineFunctions(machine);
+
+  useEffect(() => {
+    setLive({
+      vibration: machine.vibration,
+      courant: machine.courant,
+      rpm: machine.rpm,
+      pression: machine.id === 'compresseur' ? (machine.pression ?? 0) : 0,
+      hasData: Boolean(machine.hasSensorData),
+      isLive: false,
+    });
+  }, [machine.courant, machine.hasSensorData, machine.id, machine.pression, machine.rpm, machine.vibration]);
 
   const activePieceIds = useMemo(
     () =>
@@ -261,9 +372,9 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
       alertMachineId === machineId ||
       alertMachineId === machId ||
       alertNode === node ||
-      (machine.id === 'rectifieuse' && (alertMachineId.includes('rectif') || alertNode.includes('esp32'))) ||
+      (machine.id === 'rectifieuse' && (alertMachineId.includes('rectif') || isRectifieuseNode(alertNode))) ||
       (machine.id === 'compresseur' &&
-        (alertMachineId.includes('compress') || alertNode.includes('compress')))
+        (alertMachineId.includes('compress') || isCompresseurNode(alertNode)))
     );
   }, [machine.id, machine.machId, machine.node]);
 
@@ -274,7 +385,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     setAlertsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:5000/api/alerts?limit=50', {
+      const response = await fetch(`${API_BASE_URL}/alerts?limit=50`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
@@ -292,9 +403,60 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     }
   }, [machine.id, matchesMachineAlert]);
 
+  const fetchHistory = useCallback(async () => {
+    const token = localStorage.getItem('token') || '';
+    const query = new URLSearchParams();
+    if (machine.name) query.set('name', machine.name);
+    if (machine.node) query.set('node', machine.node);
+    if (machine.machId) query.set('machId', machine.machId);
+
+    setHistoryLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/machines/${encodeURIComponent(machine.id)}/history?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data || !Array.isArray(data.timeline)) {
+        setHistoryData(null);
+        return;
+      }
+
+      setHistoryData(data as MachineHistoryResponse);
+    } catch {
+      setHistoryData(null);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [machine.id, machine.machId, machine.name, machine.node]);
+
   useEffect(() => {
     if (activeTab === 'Alertes') fetchAlerts();
   }, [activeTab, fetchAlerts]);
+
+  useEffect(() => {
+    if (activeTab === 'Historique') fetchHistory();
+  }, [activeTab, fetchHistory]);
+
+  useEffect(() => {
+    if (activeTab !== 'Historique' || !LIVE_MACHINES.includes(machine.id)) return;
+
+    const handler = (data: RawSensorDataPayload) => {
+      const normalized = normalizeSensorData(data);
+      if (machine.id === 'compresseur' && !isCompresseurNode(normalized.node)) return;
+      if (machine.id === 'rectifieuse' && !isRectifieuseNode(normalized.node)) return;
+
+      const now = Date.now();
+      if (now - lastHistoryRefreshRef.current < 5000) return;
+      lastHistoryRefreshRef.current = now;
+      fetchHistory();
+    };
+
+    socket.on('sensor-data', handler);
+    return () => {
+      socket.off('sensor-data', handler);
+    };
+  }, [activeTab, fetchHistory, machine.id]);
 
   useEffect(() => {
     if (!LIVE_MACHINES.includes(machine.id)) return;
@@ -314,7 +476,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
   const handleMarkSeen = async (alertId: string) => {
     const token = localStorage.getItem('token') || '';
-    await fetch(`http://localhost:5000/api/alerts/${alertId}/seen`, {
+    await fetch(`${API_BASE_URL}/alerts/${alertId}/seen`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -323,7 +485,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
   const handleResolve = async (alertId: string) => {
     const token = localStorage.getItem('token') || '';
-    await fetch(`http://localhost:5000/api/alerts/${alertId}/resolve`, {
+    await fetch(`${API_BASE_URL}/alerts/${alertId}/resolve`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -334,7 +496,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     if (!hasPieces) return;
 
     const token = localStorage.getItem('token') || '';
-    fetch(`http://localhost:5000/api/pieces?machine=${encodeURIComponent(piecesMachineName)}`, {
+    fetch(`${API_BASE_URL}/pieces?machine=${encodeURIComponent(piecesMachineName)}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((response) => response.json())
@@ -346,7 +508,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
   useEffect(() => {
     const token = localStorage.getItem('token') || '';
-    fetch('http://localhost:5000/api/admin/employes-overview', {
+    fetch(`${API_BASE_URL}/admin/employes-overview`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((response) => (response.ok ? response.json() : []))
@@ -359,26 +521,22 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   useEffect(() => {
     if (!LIVE_MACHINES.includes(machine.id)) return;
 
-    const handler = (data: {
-      node: string;
-      courant: number;
-      vibX: number;
-      vibY: number;
-      vibZ: number;
-      rpm: number;
-      pression?: number;
-    }) => {
-      if (data.node !== machine.node) return;
+    const handler = (data: RawSensorDataPayload) => {
+      const normalized = normalizeSensorData(data);
+      if (machine.id === 'compresseur' && !isCompresseurNode(normalized.node)) return;
+      if (machine.id === 'rectifieuse' && !isRectifieuseNode(normalized.node)) return;
+      if (!LIVE_MACHINES.includes(machine.id) && normalized.node !== machine.node) return;
 
       const vibration = parseFloat(
-        Math.sqrt(data.vibX ** 2 + data.vibY ** 2 + data.vibZ ** 2).toFixed(2),
+        Math.sqrt(normalized.vibX ** 2 + normalized.vibY ** 2 + normalized.vibZ ** 2).toFixed(2),
       );
 
       setLive({
         vibration,
-        courant: data.courant,
-        rpm: data.rpm,
-        pression: data.pression ?? 0,
+        courant: normalized.courant,
+        rpm: normalized.rpm,
+        pression: normalized.pression ?? 0,
+        hasData: true,
         isLive: true,
       });
     };
@@ -409,38 +567,6 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
     };
   }, []);
 
-  useEffect(() => {
-    if (!LIVE_MACHINES.includes(machine.id) || live.isLive) return;
-
-    const intervalId = window.setInterval(() => {
-      const now = Date.now();
-      const isCompresseur = machine.id === 'compresseur';
-
-      setLive((prev) => {
-        if (prev.isLive) return prev;
-
-        return {
-          ...prev,
-          vibration: parseFloat(
-            ((isCompresseur ? 2.8 : 1.4) + Math.sin(now / 2000) * 0.4 + Math.random() * 0.2).toFixed(2),
-          ),
-          courant: parseFloat(
-            ((isCompresseur ? 18.5 : 12.3) + Math.sin(now / 3000) * 2 + Math.random() * 0.5).toFixed(1),
-          ),
-          rpm: isCompresseur
-            ? 1450
-            : Math.round(3096 + Math.sin(now / 4000) * 80 + Math.random() * 30),
-          pression: isCompresseur ? parseFloat((7.5 + Math.sin(now / 4000) * 1.5).toFixed(1)) : 0,
-          isLive: false,
-        };
-      });
-    }, 1000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [live.isLive, machine.id]);
-
   const vibPct = Math.min(100, (live.vibration / 5) * 100);
   const couPct = Math.min(100, (live.courant / 30) * 100);
   const rpmPct = Math.min(100, (live.rpm / 5000) * 100);
@@ -450,6 +576,9 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   const isLiveMachine = LIVE_MACHINES.includes(machine.id);
   const activeAlerts = alerts.filter((alert) => alert.status !== 'resolved');
   const resolvedAlerts = alerts.filter((alert) => alert.status === 'resolved');
+  const historySummary = historyData?.summary || null;
+  const liveStatusTone = live.isLive ? successTone : (live.hasData ? accentTone : warningTone);
+  const liveStatusLabel = live.isLive ? 'EN DIRECT' : (live.hasData ? 'DERNIERE MESURE' : 'EN ATTENTE');
 
   const metrics = [
     { label: 'Vibration', value: live.vibration, unit: 'mm/s', color: 'var(--app-accent)', pct: vibPct },
@@ -476,7 +605,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
   ];
 
   const sideFacts = [
-    { label: 'Sante', value: `${machine.sante}%`, color: santeColor(machine.sante) },
+    { label: 'Sante', value: machine.hasSensorData ? `${machine.sante}%` : '--', color: machine.hasSensorData ? santeColor(machine.sante) : 'var(--app-muted)' },
     { label: 'Latence', value: machine.latence || '-', color: 'var(--app-accent)' },
     { label: 'Uptime', value: machine.uptime || '-', color: 'var(--app-text)' },
   ];
@@ -586,10 +715,10 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                 {isLiveMachine && (
                   <span
                     className="inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-semibold"
-                    style={{ background: successTone.bg, border: `1px solid ${successTone.border}`, color: successTone.color }}
+                    style={{ background: live.hasData ? successTone.bg : warningTone.bg, border: `1px solid ${live.hasData ? successTone.border : warningTone.border}`, color: live.hasData ? successTone.color : warningTone.color }}
                   >
                     <Activity size={12} />
-                    Capteurs actifs
+                    {live.hasData ? 'Capteurs actifs' : 'Capteurs en attente'}
                   </span>
                 )}
               </div>
@@ -673,13 +802,13 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
               <span
                 className="ml-auto inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold"
                 style={{
-                  background: live.isLive ? successTone.bg : accentTone.bg,
-                  border: `1px solid ${live.isLive ? successTone.border : accentTone.border}`,
-                  color: live.isLive ? successTone.color : accentTone.color,
+                  background: liveStatusTone.bg,
+                  border: `1px solid ${liveStatusTone.border}`,
+                  color: liveStatusTone.color,
                 }}
               >
                 {live.isLive ? <Activity size={12} /> : <Clock size={12} />}
-                {live.isLive ? 'EN DIRECT' : 'SIMULATION'}
+                {liveStatusLabel}
               </span>
             </div>
 
@@ -692,7 +821,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                     </div>
                     <div className="text-right">
                       <div className="text-[24px] font-bold leading-none" style={{ color: metric.color }}>
-                        {metric.value}
+                        {live.hasData ? metric.value : '--'}
                       </div>
                       <div className="mt-1 text-xs font-semibold" style={{ color: 'var(--app-subtle)' }}>
                         {metric.unit}
@@ -714,7 +843,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
-              {live.courant > 15 && (
+              {live.hasData && live.courant > 15 && (
                 <span
                   className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
                   style={{ background: dangerTone.bg, border: `1px solid ${dangerTone.border}`, color: dangerTone.color }}
@@ -722,7 +851,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                   Courant eleve
                 </span>
               )}
-              {live.vibration > 2 && (
+              {live.hasData && live.vibration > 2 && (
                 <span
                   className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
                   style={{ background: warningTone.bg, border: `1px solid ${warningTone.border}`, color: warningTone.color }}
@@ -730,7 +859,7 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
                   Vibration elevee
                 </span>
               )}
-              {isCompresseur && live.pression > 10 && (
+              {live.hasData && isCompresseur && live.pression > 10 && (
                 <span
                   className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold"
                   style={{ background: dangerTone.bg, border: `1px solid ${dangerTone.border}`, color: dangerTone.color }}
@@ -1155,16 +1284,167 @@ const MachineDetail: React.FC<Props> = ({ machine, onBack }) => {
 
         {activeTab === 'Historique' && (
           <section className="rounded-[28px] p-5" style={panelStyle}>
-            <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-              <History size={40} style={{ color: 'var(--app-accent)' }} />
-              <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
-                Historique
+            <div className="mb-5 flex items-center gap-3 flex-wrap">
+              <div
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl"
+                style={{ background: accentTone.bg, color: accentTone.color }}
+              >
+                <History size={18} />
               </div>
-              <div className="max-w-md text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
-                Cette partie sera utilisee pour afficher les interventions, les cycles passes et les
-                changements importants sur la machine.
+              <div>
+                <div className="text-lg font-bold" style={{ color: 'var(--app-heading)' }}>
+                  Historique machine
+                </div>
+                <div className="text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Chronologie des sessions, pieces, alertes et actions de maintenance.
+                </div>
               </div>
+
+              {historySummary?.lastEventAt && (
+                <span
+                  className="ml-auto inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold"
+                  style={{ background: 'var(--app-card-alt)', border: '1px solid var(--app-border)', color: 'var(--app-muted)' }}
+                >
+                  <Clock size={12} />
+                  Dernier evenement: {new Date(historySummary.lastEventAt).toLocaleString('fr-FR')}
+                </span>
+              )}
+
+              <button
+                onClick={fetchHistory}
+                className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold"
+                style={{
+                  background: 'var(--app-surface)',
+                  border: '1px solid var(--app-border)',
+                  color: 'var(--app-accent)',
+                }}
+              >
+                Actualiser
+              </button>
             </div>
+
+            {historyLoading ? (
+              <div className="rounded-[22px] px-4 py-12 text-center" style={softPanelStyle}>
+                <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
+                  Chargement de l&apos;historique...
+                </div>
+                <div className="mt-2 text-sm" style={{ color: 'var(--app-muted)' }}>
+                  Recuperation des evenements machine en cours.
+                </div>
+              </div>
+            ) : !historyData || historyData.timeline.length === 0 ? (
+              <div className="rounded-[22px] px-4 py-12 text-center" style={softPanelStyle}>
+                <History size={40} className="mx-auto mb-3" style={{ color: 'var(--app-accent)' }} />
+                <div className="text-base font-semibold" style={{ color: 'var(--app-heading)' }}>
+                  Aucun historique disponible
+                </div>
+                <div className="mt-2 text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
+                  Cette machine n&apos;a pas encore de sessions, transitions de pieces, alertes ou
+                  evenements de maintenance enregistres.
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-5">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {[
+                    { label: 'Evenements', value: historySummary?.totalEvents || 0, tone: accentTone },
+                    { label: 'Actions machine', value: historySummary?.machineActions || 0, tone: successTone },
+                    { label: 'Transitions pieces', value: historySummary?.pieceTransitions || 0, tone: accentTone },
+                    { label: 'Mesures capteurs', value: historySummary?.sensorReadings || 0, tone: accentTone },
+                    { label: 'Alertes actives', value: historySummary?.activeAlerts || 0, tone: (historySummary?.activeAlerts || 0) > 0 ? dangerTone : successTone },
+                    { label: 'Alertes total', value: historySummary?.alerts || 0, tone: warningTone },
+                    { label: 'Actions maintenance', value: historySummary?.maintenanceActions || 0, tone: accentTone },
+                    { label: 'Demandes ouvertes', value: historySummary?.openRequests || 0, tone: (historySummary?.openRequests || 0) > 0 ? warningTone : successTone },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-[22px] p-4" style={softPanelStyle}>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--app-subtle)' }}>
+                        {item.label}
+                      </div>
+                      <div className="mt-3 text-[24px] font-bold" style={{ color: item.tone.color }}>
+                        {item.value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  {historyData.timeline.map((entry) => {
+                    const tone = resolveHistoryEntryTone(entry);
+                    const EntryIcon = resolveHistoryEntryIcon(entry.type);
+                    const statusText = resolveHistoryStatusText(entry.status);
+
+                    return (
+                      <div
+                        key={entry.id}
+                        className="rounded-[22px] p-4"
+                        style={{
+                          background: tone.bg,
+                          border: `1px solid ${tone.border}`,
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-xl"
+                              style={{ background: 'var(--app-surface)', border: '1px solid var(--app-border)', color: tone.color }}
+                            >
+                              <EntryIcon size={16} />
+                            </span>
+
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span
+                                  className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold"
+                                  style={{ background: 'var(--app-surface)', border: '1px solid var(--app-border)', color: tone.color }}
+                                >
+                                  {resolveHistoryEntryLabel(entry.type)}
+                                </span>
+
+                                {statusText && (
+                                  <span className="text-xs font-semibold" style={{ color: tone.color }}>
+                                    {statusText}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="mt-2 text-sm font-bold" style={{ color: 'var(--app-heading)' }}>
+                                {entry.title}
+                              </div>
+                              <div className="mt-1 text-sm leading-6" style={{ color: 'var(--app-muted)' }}>
+                                {entry.description}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="text-right text-xs" style={{ color: 'var(--app-muted)' }}>
+                            <div>{new Date(entry.createdAt).toLocaleString('fr-FR')}</div>
+                            {entry.actor && <div className="mt-1">Par: {entry.actor}</div>}
+                          </div>
+                        </div>
+
+                        {entry.metadata.length > 0 && (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {entry.metadata.map((item, index) => (
+                              <span
+                                key={`${entry.id}-${item.label}-${index}`}
+                                className="inline-flex items-center rounded-xl px-3 py-1.5 text-xs font-semibold"
+                                style={{
+                                  background: 'var(--app-surface)',
+                                  border: '1px solid var(--app-border)',
+                                  color: 'var(--app-text)',
+                                }}
+                              >
+                                {item.label}: {item.value}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
         )}
       </div>

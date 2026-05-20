@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../hooks/useTheme';
+import { BACKEND_ORIGIN } from '../utils/runtimeConfig';
 
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE_URL = BACKEND_ORIGIN;
 
 interface GsmContact {
   _id: string;
@@ -33,6 +34,8 @@ interface CallLogApi {
   durationSec?: number | null;
   errorMessage?: string | null;
   providerRef?: string | null;
+  audioBase64?: string | null;
+  audioFormat?: string | null;
 }
 
 interface CallLogRow extends CallLogApi {
@@ -72,6 +75,8 @@ const GsmContactsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [audioLoadingId, setAudioLoadingId] = useState<string | null>(null);
+  const [audioMessage, setAudioMessage] = useState('');
 
   const headers: HeadersInit = useMemo(
     () => ({
@@ -301,8 +306,52 @@ const GsmContactsPage: React.FC = () => {
     }
   };
 
+  const playAlertAudio = async (alertId: string) => {
+    try {
+      setAudioMessage('');
+      setAudioLoadingId(alertId);
+
+      const res = await fetch(`${API_BASE_URL}/api/call-logs/${alertId}?includeAudio=true`, { headers });
+      if (!res.ok) {
+        setAudioMessage('Unable to load audio / Impossible de recuperer l’audio pour cette alerte.');
+        return;
+      }
+
+      const logs: CallLogApi[] = await res.json();
+      const latestWithAudio = logs.find((log) => Boolean(log.audioBase64));
+      if (!latestWithAudio?.audioBase64) {
+        setAudioMessage('No audio available / Aucun audio disponible pour cette alerte.');
+        return;
+      }
+
+      const format = (latestWithAudio.audioFormat || 'wav').toLowerCase();
+      const mime = format === 'mp3' ? 'audio/mpeg' : `audio/${format}`;
+      const audio = new Audio(`data:${mime};base64,${latestWithAudio.audioBase64}`);
+      await audio.play();
+    } catch (error) {
+      console.error(error);
+      setAudioMessage('Audio playback failed / Lecture audio echouee.');
+    } finally {
+      setAudioLoadingId(null);
+    }
+  };
+
   const formatDate = (value?: string) =>
     value ? new Date(value).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
+  const getCallStatusLabel = (status: string) => {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'queued') return 'Queued / En attente';
+    if (normalized === 'success') return 'Success / Reussi';
+    if (normalized === 'failed') return 'Failed / Echec';
+    if (normalized === 'in_progress') return 'In progress / En cours';
+    if (normalized === 'cancelled') return 'Cancelled / Annule';
+    if (normalized === 'unknown') return 'Unknown / Inconnu';
+    return `${status || 'Unknown'} / Inconnu`;
+  };
+  const formatDurationLabel = (durationSec?: number | null, callStatus?: string) => {
+    if (typeof durationSec === 'number' && durationSec >= 0) return `${durationSec}s`;
+    return String(callStatus || '').toLowerCase() === 'queued' ? 'Pending / En attente' : '-';
+  };
   const panelClass = 'rounded-xl border border-[color:var(--app-border)] bg-[var(--app-card)]';
   const nestedPanelClass = 'rounded-lg border border-[color:var(--app-border)] bg-[var(--app-surface-strong)]';
   const titleClass = 'text-[var(--app-heading)]';
@@ -348,6 +397,9 @@ const GsmContactsPage: React.FC = () => {
       )}
       {successMsg && (
         <div className="mb-4 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">{successMsg}</div>
+      )}
+      {audioMessage && (
+        <div className={`mb-4 text-xs rounded-lg px-3 py-2 ${panelClass} ${bodyClass}`}>{audioMessage}</div>
       )}
 
       <div className="mb-5 grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -504,6 +556,7 @@ const GsmContactsPage: React.FC = () => {
                   <th className="text-left py-2 px-2 font-semibold">Tentative</th>
                   <th className="text-left py-2 px-2 font-semibold">Statut</th>
                   <th className="text-left py-2 px-2 font-semibold">Duree</th>
+                  <th className="text-left py-2 px-2 font-semibold">Audio</th>
                 </tr>
               </thead>
               <tbody>
@@ -525,12 +578,21 @@ const GsmContactsPage: React.FC = () => {
                           : 'text-red-300 bg-red-500/15 border border-red-500/30'
                       }`}
                       >
-                        {log.callStatus}
+                        {getCallStatusLabel(log.callStatus)}
                       </span>
                       {log.errorMessage && <div className="text-[10px] text-red-300 mt-1">{log.errorMessage}</div>}
                     </td>
                     <td className={`py-2 px-2 ${bodyClass}`}>
-                      {typeof log.durationSec === 'number' && log.durationSec >= 0 ? `${log.durationSec}s` : '-'}
+                      {formatDurationLabel(log.durationSec, log.callStatus)}
+                    </td>
+                    <td className="py-2 px-2">
+                      <button
+                        onClick={() => playAlertAudio(log.alertId)}
+                        disabled={audioLoadingId === log.alertId}
+                        className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-cyan-300 border border-cyan-500/35 bg-cyan-500/10 cursor-pointer disabled:opacity-50"
+                      >
+                        {audioLoadingId === log.alertId ? 'Playing... / Lecture...' : 'Play audio / Lire audio'}
+                      </button>
                     </td>
                   </tr>
                 ))}

@@ -1,0 +1,8 @@
+Copier tout le dossier "handover-usine" dans la cle USB.
+
+Important
+- Le fichier principal a donner a l'usine est dans :
+  installer/CNC Pulse Dashboard Setup 0.0.0.exe
+- Ajouter l'installateur MongoDB dans mongodb/ si necessaire.
+- Le backup des donnees actuelles est deja inclus dans backup/ejson/.
+- Le guide d'installation est dans docs/README.txt

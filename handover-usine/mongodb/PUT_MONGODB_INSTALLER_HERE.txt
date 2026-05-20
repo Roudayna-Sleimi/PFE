@@ -1,0 +1,16 @@
+MongoDB - liens officiels de telechargement (verifies le 20 mai 2026)
+
+1. Page officielle de telechargement MongoDB Community Server:
+https://www.mongodb.com/try/download/community
+
+2. Guide officiel d'installation MongoDB Community sur Windows:
+https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-windows/
+
+Conseil
+- Sur la page de telechargement, choisir:
+  Version: version stable proposee
+  Platform: Windows
+  Package: msi
+
+Si vous voulez, remplacez ce fichier par l'installateur .msi telecharge depuis le site officiel.
+ 

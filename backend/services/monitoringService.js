@@ -1,6 +1,14 @@
+const fs = require('fs');
+const {
+  RECTIFIEUSE_NODE,
+  COMPRESSEUR_NODE,
+  canonicalNodeForMachine,
+  nodeAliasesForMachine,
+} = require('../utils/liveMachineNodes');
+
 const SENSOR_MAINTENANCE_MACHINES = [
-  { id: 'rectifieuse', name: 'Rectifieuse', node: 'ESP32-NODE-03' },
-  { id: 'compresseur', name: 'Compresseur ABAC', node: 'compresseur' },
+  { id: 'rectifieuse', name: 'Rectifieuse', node: RECTIFIEUSE_NODE },
+  { id: 'compresseur', name: 'Compresseur ABAC', node: COMPRESSEUR_NODE },
 ];
 
 // Title: Build monitoring and maintenance service.
@@ -193,8 +201,25 @@ const createMonitoringService = (deps) => {
   };
 
   // Title: Return call logs for one alert.
-  const listCallLogs = async (alertId) => {
-    return CallLog.find({ alertId }).sort({ calledAt: -1 });
+  const listCallLogs = async (alertId, options = {}) => {
+    const { includeAudio = false } = options;
+    const logs = await CallLog.find({ alertId }).sort({ calledAt: -1 }).lean();
+    if (!includeAudio) return logs;
+
+    return Promise.all(
+      logs.map(async (log) => {
+        if (log.audioBase64 || !log.audioFilePath) return log;
+        try {
+          const fileBuffer = await fs.promises.readFile(log.audioFilePath);
+          return {
+            ...log,
+            audioBase64: fileBuffer.toString('base64'),
+          };
+        } catch {
+          return log;
+        }
+      })
+    );
   };
 
   // Title: Return maintenance reports list.
@@ -254,7 +279,7 @@ const createMonitoringService = (deps) => {
       return {
         id: baseMachine.id,
         name: machine?.name || baseMachine.name,
-        node: machine?.node || baseMachine.node,
+        node: canonicalNodeForMachine(baseMachine.id, machine?.node || baseMachine.node),
       };
     });
 
@@ -321,7 +346,10 @@ const createMonitoringService = (deps) => {
   const maintenanceAnalyze = async (payload = {}) => {
     const { machineId, node } = payload;
     const filter = {};
-    if (node) filter.node = node;
+    const nodeAliases = nodeAliasesForMachine(machineId, node);
+    if (machineId && nodeAliases.length > 0) filter.$or = [{ machineId }, { node: { $in: nodeAliases } }];
+    else if (nodeAliases.length === 1) filter.node = nodeAliases[0];
+    else if (nodeAliases.length > 1) filter.node = { $in: nodeAliases };
     else if (machineId) filter.$or = [{ machineId }, { node: machineId }];
 
     const latest = await SensorData.findOne(filter).sort({ createdAt: -1 }).lean();

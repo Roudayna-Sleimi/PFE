@@ -1,4 +1,5 @@
 const { normalizePhone } = require('../utils/normalizePhone');
+const { listMachines, matchesEmployeeSpecialite } = require('./machineService');
 
 // Title: Normalize a piece status string for tolerant comparisons.
 const normalizeStatus = (value = '') => String(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -15,6 +16,33 @@ const MACHINE_POWER_ESTIMATES = [
   { key: 'percage', kw: 2.2 },
   { key: 'taraudage', kw: 2 },
 ];
+
+const inferSpecialiteFromMachine = (machineName = '') => {
+  const normalized = normalizeStatus(machineName);
+  if (!normalized) return null;
+  if (normalized.includes('rectif')) return 'Rectification';
+  if (normalized.includes('agie') || normalized.includes('electro') || normalized.includes('edm')) return 'Électroérosion';
+  if (normalized.includes('tour') || normalized.includes('tournage')) return 'Tournage';
+  if (normalized.includes('taraud')) return 'Taraudage';
+  if (normalized.includes('perca') || normalized.includes('drill')) return 'Perçage';
+  if (normalized.includes('controle') || normalized.includes('qualite')) return 'Contrôle qualité';
+  if (normalized.includes('haas') || normalized.includes('frais')) return 'Fraisage';
+  return null;
+};
+
+const backfillMissingSpecialites = async (User) => {
+  const users = await User.find({
+    role: 'employe',
+    $or: [{ specialite: { $exists: false } }, { specialite: null }, { specialite: '' }],
+  }).select('assignedMachine');
+
+  await Promise.all(users.map(async (user) => {
+    const specialite = inferSpecialiteFromMachine(user.assignedMachine);
+    if (!specialite) return;
+    user.specialite = specialite;
+    await user.save();
+  }));
+};
 
 const asPositiveNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -181,6 +209,16 @@ const buildProductionReports = (events = [], employes = [], pieces = []) => {
 };
 
 // Title: Build demandes workflow and workforce related services.
+const EMPLOYEE_SPECIALITES = new Set([
+  'Fraisage',
+  'Tournage',
+  'Perçage',
+  'Taraudage',
+  'Rectification',
+  'Électroérosion',
+  'Contrôle qualité',
+]);
+
 const createWorkforceService = (deps) => {
   const {
     Demande,
@@ -214,9 +252,15 @@ const createWorkforceService = (deps) => {
 
   // Title: Approve a demande and create employee account.
   const approveDemande = async (demandeId, payload = {}) => {
-    const { username, password } = payload;
-    if (!username || !password) {
-      const error = new Error('Username et mot de passe requis');
+    const { username, password, specialite } = payload;
+    if (!username || !password || !specialite) {
+      const error = new Error('Username, mot de passe et specialite requis');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!EMPLOYEE_SPECIALITES.has(specialite)) {
+      const error = new Error('Specialite invalide');
       error.statusCode = 400;
       throw error;
     }
@@ -271,9 +315,11 @@ const createWorkforceService = (deps) => {
       phone: normalizedPhone,
       password: hashed,
       role: 'employe',
+      specialite,
     });
     demande.statut = 'approuvee';
     demande.username = username;
+    demande.specialite = specialite;
     await demande.save();
 
     return { message: `Compte cree pour ${username}` };
@@ -334,7 +380,8 @@ const createWorkforceService = (deps) => {
 
   // Title: List users with lightweight fields.
   const listUsers = async () => {
-    return User.find({}, 'username role phone isOnline lastSeen assignedMachine machineStatus currentActivity machineStatusUpdatedAt');
+    await backfillMissingSpecialites(User);
+    return User.find({}, 'username role phone specialite isOnline lastSeen assignedMachine machineStatus currentActivity machineStatusUpdatedAt');
   };
 
   // Title: Assign a machine to an employee.
@@ -346,11 +393,38 @@ const createWorkforceService = (deps) => {
       throw error;
     }
 
+    const existingUser = await User.findOne({ _id: userId, role: 'employe' }).select('specialite').lean();
+    if (!existingUser) {
+      const error = new Error('Employe introuvable');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const machines = await listMachines();
+    const normalizedAssignedMachine = normalizeStatus(assignedMachine);
+    const matchedMachine = machines.find((row) => (
+      normalizeStatus(row.name) === normalizedAssignedMachine
+      || normalizeStatus(row.id) === normalizedAssignedMachine
+      || normalizeStatus(row.type) === normalizedAssignedMachine
+    ));
+
+    if (!matchedMachine) {
+      const error = new Error('Machine introuvable');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!matchesEmployeeSpecialite(matchedMachine, existingUser.specialite)) {
+      const error = new Error('Cette machine ne correspond pas a la specialite de cet employe');
+      error.statusCode = 403;
+      throw error;
+    }
+
     const user = await User.findOneAndUpdate(
       { _id: userId, role: 'employe' },
       { assignedMachine },
       { returnDocument: 'after' }
-    ).select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt isOnline');
+    ).select('username specialite assignedMachine machineStatus currentActivity machineStatusUpdatedAt isOnline');
 
     if (!user) {
       const error = new Error('Employe introuvable');
@@ -364,13 +438,15 @@ const createWorkforceService = (deps) => {
 
   // Title: Return admin overview for all employees.
   const employesOverview = async () => {
+    await backfillMissingSpecialites(User);
     return User.find({ role: 'employe' })
-      .select('username phone assignedMachine currentPieceName currentPieceId machineStatus currentActivity machineStatusUpdatedAt connectedAt isOnline lastSeen')
+      .select('username phone specialite assignedMachine currentPieceName currentPieceId machineStatus currentActivity machineStatusUpdatedAt connectedAt isOnline lastSeen')
       .sort({ username: 1 });
   };
 
   // Title: Return one employee detailed history.
   const employeHistory = async (username, query = {}) => {
+    await backfillMissingSpecialites(User);
     const { limit = 50 } = query;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -378,7 +454,7 @@ const createWorkforceService = (deps) => {
     const [events, pieces, user] = await Promise.all([
       MachineEvent.find({ username }).sort({ createdAt: -1 }).limit(Number(limit)).lean(),
       Piece.find({ employe: username }).lean(),
-      User.findOne({ username }).select('connectedAt isOnline assignedMachine currentPieceName machineStatus machineStatusUpdatedAt').lean(),
+      User.findOne({ username }).select('connectedAt isOnline specialite assignedMachine currentPieceName machineStatus machineStatusUpdatedAt').lean(),
     ]);
 
     const todayEvents = [...events].filter((event) => new Date(event.createdAt) >= todayStart);
@@ -443,7 +519,8 @@ const createWorkforceService = (deps) => {
 
   // Title: Build employee dashboard payload for current user.
   const employeDashboard = async (username) => {
-    const me = await User.findOne({ username }).select('username assignedMachine machineStatus currentActivity machineStatusUpdatedAt currentPieceId currentPieceName role');
+    await backfillMissingSpecialites(User);
+    const me = await User.findOne({ username }).select('username specialite assignedMachine machineStatus currentActivity machineStatusUpdatedAt currentPieceId currentPieceName role');
     if (!me) {
       const error = new Error('Utilisateur introuvable');
       error.statusCode = 404;
@@ -502,6 +579,29 @@ const createWorkforceService = (deps) => {
       error.statusCode = 400;
       throw error;
     }
+
+    if (action === 'started') {
+      const machines = await listMachines();
+      const normalizedRequestedMachine = normalizeStatus(machine);
+      const matchedMachine = machines.find((row) => (
+        normalizeStatus(row.name) === normalizedRequestedMachine
+        || normalizeStatus(row.id) === normalizedRequestedMachine
+        || normalizeStatus(row.type) === normalizedRequestedMachine
+      ));
+
+      if (!matchedMachine) {
+        const error = new Error('Machine introuvable');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      if (!matchesEmployeeSpecialite(matchedMachine, user.specialite)) {
+        const error = new Error('Cette machine ne correspond pas a la specialite de cet employe');
+        error.statusCode = 403;
+        throw error;
+      }
+    }
+
     if (action === 'started') {
       user.assignedMachine = machine;
     }

@@ -4,9 +4,10 @@ import { useCallback } from 'react';
 import DossierPage from './DossierPage';
 import type { DossierPieceContext } from './DossierPage';
 import { io } from 'socket.io-client';
+import { API_BASE_URL, BACKEND_ORIGIN, SOCKET_URL } from '../utils/runtimeConfig';
 
-const APP_BASE = 'http://localhost:5000';
-const API = `${APP_BASE}/api`;
+const APP_BASE = BACKEND_ORIGIN;
+const API = API_BASE_URL;
 
 // ── Types ──
 interface UserAPI {
@@ -465,7 +466,7 @@ const ProductionPage: React.FC = () => {
       .catch(() => { });
 
     // Socket — listen for real-time piece updates
-    const socket = io('http://localhost:5000', { transports: ['websocket'] });
+    const socket = io(SOCKET_URL, { transports: ['websocket'] });
     socket.on('piece-progressed', (updatedPiece: Piece) => {
       setPieces(prev => prev.map(p => p._id === updatedPiece._id ? { ...p, ...updatedPiece } : p));
       setSelectedPiece(prev => prev?._id === updatedPiece._id ? { ...prev, ...updatedPiece } : prev);
@@ -1081,7 +1082,7 @@ const ProductionPage: React.FC = () => {
                       Qté produite: <span style={{ color: '#ffffff', fontWeight: 700 }}>{producedQty} pcs</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                      Qté ruban: <span style={{ color: '#e2e8f0' }}>{rubanQty}</span>
+                      Pieces rebutées: <span style={{ color: '#e2e8f0' }}>{rubanQty}</span>
                     </div>
                     {piece.dimension && (
                       <div style={{ fontSize: 11, color: '#94a3b8' }}>
@@ -1257,7 +1258,7 @@ const ProductionPage: React.FC = () => {
                         { label: 'Employé', value: selectedPiece.employe, icon: <User size={13} /> },
                         { label: 'Qté requise', value: `${toNumber(selectedPiece.quantite)} pcs`, icon: <Package size={13} /> },
                         { label: 'Qté produite', value: `${toNumber(selectedPiece.quantiteProduite)} pcs`, icon: <CheckCircle size={13} /> },
-                        { label: 'Qté ruban', value: `${toNumber(selectedPiece.quantiteRuban)}`, icon: <Package size={13} /> },
+                        { label: 'Pieces rebutées', value: `${toNumber(selectedPiece.quantiteRuban)}`, icon: <Package size={13} /> },
                         { label: 'Dimension', value: selectedPiece.dimension || 'Non renseignée', icon: <Package size={13} /> },
                         { label: 'Type matière', value: selectedPiece.matiereType || 'Non renseigné', icon: <Package size={13} /> },
                         { label: 'Référence matière', value: selectedPiece.matiereReference || 'Non renseignée', icon: <Package size={13} /> },
@@ -1294,7 +1295,7 @@ const ProductionPage: React.FC = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: editingPieceInfo ? 12 : 0 }}>
                         <div>
                           <div style={{ color: 'var(--app-heading)', fontSize: 13, fontWeight: 800 }}>Formulaire pièce</div>
-                          <div style={{ color: 'var(--app-muted)', fontSize: 11, marginTop: 3 }}>Les champs manquants peuvent etre completes par l'employe. La quantite ruban se remplit seulement en production.</div>
+                          <div style={{ color: 'var(--app-muted)', fontSize: 11, marginTop: 3 }}>Les champs manquants peuvent etre completes par l'employe. Les pieces rebutees se remplissent seulement en production.</div>
                         </div>
                         <button
                           type="button"
@@ -1645,7 +1646,7 @@ const ProductionPage: React.FC = () => {
                   />
                 </div>
                 <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
-                  La quantite ruban sera saisie plus tard par l'employe dans sa session de production.
+                  Les pieces rebutees seront saisies plus tard par l'employe dans sa session de production.
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>

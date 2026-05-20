@@ -15,7 +15,7 @@ from pathlib import Path
 import paho.mqtt.publish as publish
 
 from app.db.mongo import get_database
-from app.shared.config import AppSettings, load_settings
+from app.shared.config import AppSettings, load_settings, parse_utc_timestamp
 
 try:
     import pyttsx3
@@ -85,6 +85,7 @@ class GsmSupervisorService:
     def __init__(self, settings: AppSettings | None = None):
         self.settings = settings or load_settings()
         self.db = get_database(self.settings)
+        self._last_status_message: str | None = None
 
     def _get_active_contact(self):
         return self.db.contacts.find_one({"isActive": True}, sort=[("createdAt", -1)])
@@ -99,6 +100,20 @@ class GsmSupervisorService:
                 "callAttempts": {"$lt": max(1, self.settings.gsm.max_attempts)},
             }
         ).sort("createdAt", 1)
+
+    def _find_waiting_alerts(self):
+        return self.db.alerts.find(
+            {
+                "status": "new",
+                "seenAt": None,
+                "callAttempts": {"$lt": max(1, self.settings.gsm.max_attempts)},
+            }
+        ).sort("createdAt", 1)
+
+    def _print_status_once(self, message: str) -> None:
+        if message != self._last_status_message:
+            print(message)
+            self._last_status_message = message
 
     def _publish_call(
         self,
@@ -127,7 +142,14 @@ class GsmSupervisorService:
             port=self.settings.mqtt.port,
         )
 
-    def _insert_call_log(self, alert: dict, phone_number: str, attempt_no: int, audio_info: dict | None) -> None:
+    def _insert_call_log(
+        self,
+        alert: dict,
+        phone_number: str,
+        attempt_no: int,
+        audio_info: dict | None,
+        audio_base64: str | None,
+    ) -> None:
         self.db.calllogs.insert_one(
             {
                 "alertId": alert["_id"],
@@ -137,6 +159,7 @@ class GsmSupervisorService:
                 "providerRef": None,
                 "audioFilePath": audio_info["path"] if audio_info else None,
                 "audioFormat": audio_info["format"] if audio_info else None,
+                "audioBase64": audio_base64,
                 "calledAt": datetime.now(timezone.utc),
                 "endedAt": None,
                 "durationSec": None,
@@ -160,10 +183,28 @@ class GsmSupervisorService:
     def process_once(self) -> None:
         contact = self._get_active_contact()
         if not contact:
-            print("[supervisor] no active contact configured")
+            self._print_status_once("[supervisor] no active contact configured")
             return
 
-        for alert in self._find_pending_alerts():
+        pending_alerts = list(self._find_pending_alerts())
+        if not pending_alerts:
+            waiting_alerts = list(self._find_waiting_alerts())
+            if not waiting_alerts:
+                self._print_status_once("[supervisor] no new unseen alerts")
+                return
+
+            next_alert = waiting_alerts[0]
+            created_at = parse_utc_timestamp(next_alert.get("createdAt"))
+            eligible_at = created_at + timedelta(minutes=max(1, self.settings.gsm.unseen_minutes))
+            remaining_seconds = max(0, int((eligible_at - datetime.now(timezone.utc)).total_seconds()))
+            eligible_local = eligible_at.astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+            self._print_status_once(
+                f"[supervisor] waiting for {len(waiting_alerts)} alert(s); next eligible at {eligible_local} ({remaining_seconds}s remaining)"
+            )
+            return
+
+        self._last_status_message = None
+        for alert in pending_alerts:
             attempt_no = int(alert.get("callAttempts", 0)) + 1
             text_to_read = build_tts_message(alert)
             audio_info = generate_audio(
@@ -194,12 +235,15 @@ class GsmSupervisorService:
                 phone_number=contact["phonePrimary"],
                 attempt_no=attempt_no,
                 audio_info=audio_info,
+                audio_base64=audio_base64,
             )
             self._mark_alert_notified(alert["_id"])
             print(f"[supervisor] call queued for alert {alert['_id']} attempt={attempt_no}")
 
     def run_forever(self) -> None:
-        print("[supervisor] started")
+        print(
+            f"[supervisor] started (poll={self.settings.gsm.poll_sec}s, unseen={self.settings.gsm.unseen_minutes}min, tts={'on' if self.settings.gsm.enable_tts else 'off'})"
+        )
         while True:
             try:
                 self.process_once()

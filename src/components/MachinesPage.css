@@ -1,0 +1,53 @@
+.machine-card-media {
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 40%),
+    linear-gradient(145deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.82));
+}
+
+.machine-card-image {
+  object-fit: contain !important;
+  padding: 16px;
+  filter: drop-shadow(0 18px 32px rgba(15, 23, 42, 0.35));
+}
+
+@media (min-width: 1024px) {
+  .machine-card-layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 1.08fr) minmax(280px, 0.92fr);
+    grid-template-rows: auto auto auto;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .machine-card-header {
+    grid-column: 2;
+    grid-row: 1;
+    border-bottom: none !important;
+    padding-bottom: 14px;
+  }
+
+  .machine-card-media {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    margin: 0;
+    min-height: 100%;
+    height: 100%;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: none !important;
+    border-radius: 0.75rem 0 0 0.75rem;
+  }
+
+  .machine-card-stats {
+    grid-column: 2;
+    grid-row: 2;
+    margin-bottom: 0;
+    padding-top: 4px;
+    padding-bottom: 0;
+  }
+
+  .machine-card-footer {
+    grid-column: 2;
+    grid-row: 3;
+    padding-top: 16px;
+  }
+}

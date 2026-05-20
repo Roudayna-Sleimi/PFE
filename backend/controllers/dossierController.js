@@ -33,6 +33,26 @@ const createDossierController = (deps) => {
     }
   };
 
+  // Title: Handle watcher directory update endpoint.
+  const updateWatchDir = async (req, res) => {
+    try {
+      const result = await service.updateWatchDir(req.body || {});
+      return res.json(result);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  };
+
+  // Title: Handle watcher directory picker endpoint.
+  const selectWatchDir = async (_req, res) => {
+    try {
+      const result = await service.selectWatchDir();
+      return res.json(result);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  };
+
   // Title: Handle dossiers listing endpoint.
   const listDossiers = async (req, res) => {
     try {
@@ -127,6 +147,8 @@ const createDossierController = (deps) => {
   return {
     watcherStatus,
     rescan,
+    updateWatchDir,
+    selectWatchDir,
     listDossiers,
     createDossiers,
     listClients,

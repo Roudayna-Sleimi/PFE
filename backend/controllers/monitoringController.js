@@ -136,7 +136,9 @@ const createMonitoringController = (deps) => {
   // Title: Handle list call logs endpoint.
   const listCallLogs = async (req, res) => {
     try {
-      const logs = await service.listCallLogs(req.params.alertId);
+      const logs = await service.listCallLogs(req.params.alertId, {
+        includeAudio: String(req.query.includeAudio || '').toLowerCase() === 'true',
+      });
       return res.json(logs);
     } catch (err) {
       return handleError(res, err);

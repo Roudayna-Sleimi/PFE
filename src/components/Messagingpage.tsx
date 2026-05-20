@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { apiUrl } from '../utils/runtimeConfig';
 
 // ─── Types ───────────────────────────────────
 interface AppUser {
@@ -90,14 +91,14 @@ export default function MessagingPage({ currentUsername, currentRole, token, soc
 
   // ── Load users & unread counts ──
   useEffect(() => {
-    fetch('http://localhost:5000/api/users', {
+    fetch(apiUrl('/users'), {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => r.json())
       .then(data => setUsers(data.filter((u: AppUser) => u.username !== currentUsername)))
       .catch(console.error);
 
-    fetch('http://localhost:5000/api/messages/unread/counts', {
+    fetch(apiUrl('/messages/unread/counts'), {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(r => r.json())
@@ -160,7 +161,7 @@ export default function MessagingPage({ currentUsername, currentRole, token, soc
     setActiveUser(u);
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/messages/${u.username}`, {
+      const res = await fetch(apiUrl(`/messages/${u.username}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
       const msgs = await res.json();

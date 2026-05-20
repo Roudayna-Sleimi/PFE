@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema({
   passwordResetExpiresAt: { type: Date, default: null },
   passwordResetRequestedAt: { type: Date, default: null },
   role: { type: String, default: 'user' },
+  specialite: { type: String, default: null },
   assignedMachine: { type: String, default: null },
   currentPieceName: { type: String, default: null },
   currentPieceId: { type: String, default: null },

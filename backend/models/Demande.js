@@ -7,6 +7,7 @@ const demandeSchema = new mongoose.Schema({
   telephone: { type: String, required: true },
   statut: { type: String, default: 'en attente' },
   username: { type: String, default: null },
+  specialite: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
 });
 

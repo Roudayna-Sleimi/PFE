@@ -10,9 +10,15 @@ const { Server } = require('socket.io');
 const multer     = require('multer');
 const path       = require('path');
 const fs         = require('fs');
+const dotenv     = require('dotenv');
 const { startDossierWatcher } = require('./dossierWatcher');
 const { ensureBaseMachines } = require('./services/machineCatalog');
 const { slugify } = require('./utils/slugify');
+const {
+  isRectifieuseNode,
+  isCompresseurNode,
+  nodeAliasesForMachine,
+} = require('./utils/liveMachineNodes');
 const { createAuthRoutes } = require('./routes/authRoutes');
 const { createPasswordResetMailer } = require('./services/passwordResetMailer');
 const { createWorkforceRoutes } = require('./routes/workforceRoutes');
@@ -21,18 +27,75 @@ const { createMonitoringRoutes } = require('./routes/monitoringRoutes');
 const { createPieceRoutes } = require('./routes/pieceRoutes');
 const { createDossierRoutes } = require('./routes/dossierRoutes');
 const { createMachineRoutes } = require('./routes/machineRoutes');
-require('dotenv').config();
+
+const backendEnvPath = path.resolve(__dirname, '.env');
+const rootEnvPath = path.resolve(__dirname, '..', '.env');
+const resolvedEnvPath = [backendEnvPath, rootEnvPath].find((candidate) => fs.existsSync(candidate));
+
+if (resolvedEnvPath) {
+  dotenv.config({ path: resolvedEnvPath });
+} else {
+  dotenv.config();
+}
+
+const validateEnv = () => {
+  const missingEnv = ['MONGO_URI', 'JWT_SECRET'].filter((key) => !process.env[key]);
+  if (missingEnv.length === 0) return;
+
+  throw new Error(
+    `Variables d'environnement manquantes: ${missingEnv.join(', ')}. `
+    + `Le backend charge d'abord ${backendEnvPath} puis ${rootEnvPath}.`,
+  );
+};
 
 const app    = express();
 const server = http.createServer(app);
+const frontendDistDir = path.resolve(__dirname, '..', 'dist');
+const runtimeDataDir = process.env.CNC_PULSE_DATA_DIR
+  ? path.resolve(process.env.CNC_PULSE_DATA_DIR)
+  : __dirname;
+const watchSettingsPath = path.join(runtimeDataDir, 'watch-settings.json');
+
+const readStoredWatchDir = () => {
+  try {
+    if (!fs.existsSync(watchSettingsPath)) return '';
+    const parsed = JSON.parse(fs.readFileSync(watchSettingsPath, 'utf8'));
+    return typeof parsed?.watchDir === 'string' ? parsed.watchDir.trim() : '';
+  } catch {
+    return '';
+  }
+};
+
+const writeStoredWatchDir = (watchDir) => {
+  fs.writeFileSync(watchSettingsPath, JSON.stringify({ watchDir }, null, 2));
+};
+
+const resolveInitialWatchDir = () => {
+  const stored = readStoredWatchDir();
+  const fallback = process.env.DOSSIER_WATCH_DIR || 'C:\\data CNC CONCEPT';
+  return path.resolve(stored || fallback);
+};
+
+const canSelectWatchDir = () => typeof global.__cncPulseDesktop?.selectWatchDir === 'function';
+
+const selectWatchDirFromDesktop = async (preferredDir) => {
+  if (!canSelectWatchDir()) {
+    const error = new Error('Selection de dossier disponible uniquement dans la version desktop Electron');
+    error.statusCode = 501;
+    throw error;
+  }
+
+  return global.__cncPulseDesktop.selectWatchDir(preferredDir);
+};
 
 // Multer
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+if (!fs.existsSync(runtimeDataDir)) fs.mkdirSync(runtimeDataDir, { recursive: true });
+const uploadDir = path.join(runtimeDataDir, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const dossierUploadDir = path.join(uploadDir, 'dossiers');
-if (!fs.existsSync(dossierUploadDir)) fs.mkdirSync(dossierUploadDir);
+if (!fs.existsSync(dossierUploadDir)) fs.mkdirSync(dossierUploadDir, { recursive: true });
 const machineUploadDir = path.join(uploadDir, 'machines');
-if (!fs.existsSync(machineUploadDir)) fs.mkdirSync(machineUploadDir);
+if (!fs.existsSync(machineUploadDir)) fs.mkdirSync(machineUploadDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadDir),
   filename:    (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
@@ -68,6 +131,15 @@ const io = new Server(server, {
 
 app.use(express.json());
 app.use(cors({ origin: '*' }));
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    mongoConnected,
+    port: Number(process.env.PORT || 5000),
+    runtimeDataDir,
+    watchDir: currentWatchDir,
+  });
+});
 
 // MongoDB
 // Start the folder watcher only after MongoDB + the Dossier model are ready,
@@ -75,25 +147,87 @@ app.use(cors({ origin: '*' }));
 let dossierWatcherHandle = null;
 let mongoConnected = false;
 let dossierModelRef = null;
-const WATCH_DIR = process.env.DOSSIER_WATCH_DIR || 'C:\\data CNC CONCEPT';
-const maybeStartWatcher = async () => {
-  if (dossierWatcherHandle) return;
+let mqttClientRef = null;
+let startupPromise = null;
+let currentWatchDir = resolveInitialWatchDir();
+
+const stopDossierWatcher = async () => {
+  const activeHandle = dossierWatcherHandle;
+  dossierWatcherHandle = null;
+
+  if (activeHandle?.watcher?.close) {
+    await activeHandle.watcher.close();
+  }
+};
+
+const clearWatchedDossiers = async () => {
+  if (!dossierModelRef) return;
+  await dossierModelRef.deleteMany({ publicPath: { $in: ['', null] } });
+};
+
+const maybeStartWatcher = async ({ suppressErrors = true } = {}) => {
+  if (dossierWatcherHandle) return dossierWatcherHandle;
   if (!mongoConnected) return;
   if (!dossierModelRef) return;
   try {
-    dossierWatcherHandle = await startDossierWatcher({ rootDir: WATCH_DIR, Dossier: dossierModelRef, logger: console });
+    dossierWatcherHandle = await startDossierWatcher({ rootDir: currentWatchDir, Dossier: dossierModelRef, logger: console });
+    return dossierWatcherHandle;
   } catch (err) {
-    console.error('[dossier-watcher] failed to start:', err?.message || err);
+    dossierWatcherHandle = null;
+    if (suppressErrors) {
+      console.error('[dossier-watcher] failed to start:', err?.message || err);
+      return null;
+    }
+    throw err;
   }
 };
-mongoose.connect(process.env.MONGO_URI)
-  .then(async () => {
-    console.log('MongoDB connecte');
-    mongoConnected = true;
-    await ensureBaseMachines({ MachineModel, logger: console });
-    await maybeStartWatcher();
-  })
-  .catch(err => console.error('Erreur MongoDB:', err));
+
+const setWatchDir = async (nextWatchDir, options = {}) => {
+  const rawWatchDir = String(nextWatchDir || '').trim();
+  if (!rawWatchDir) {
+    const error = new Error('Chemin dossier vide');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const resolvedWatchDir = path.resolve(rawWatchDir);
+  if (!fs.existsSync(resolvedWatchDir)) {
+    const error = new Error('Le dossier selectionne est introuvable');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!fs.statSync(resolvedWatchDir).isDirectory()) {
+    const error = new Error('Le chemin selectionne doit etre un dossier');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const shouldRestartWatcher = resolvedWatchDir !== currentWatchDir || !dossierWatcherHandle;
+  currentWatchDir = resolvedWatchDir;
+  process.env.DOSSIER_WATCH_DIR = resolvedWatchDir;
+  writeStoredWatchDir(resolvedWatchDir);
+
+  if (!shouldRestartWatcher) {
+    return { watchDir: currentWatchDir, running: true, restarted: false };
+  }
+
+  await stopDossierWatcher();
+
+  if (options.clearIndexed !== false) {
+    await clearWatchedDossiers();
+  }
+
+  if (mongoConnected && dossierModelRef) {
+    await maybeStartWatcher({ suppressErrors: false });
+  }
+
+  return {
+    watchDir: currentWatchDir,
+    running: Boolean(dossierWatcherHandle),
+    restarted: true,
+  };
+};
 
 // Models
 const User = require('./models/User');
@@ -202,16 +336,29 @@ const MAINTENANCE_REPORT_COOLDOWN_MIN = Number(process.env.MAINTENANCE_REPORT_CO
 const SENSOR_ALERT_COOLDOWN_SEC = Number(process.env.SENSOR_ALERT_COOLDOWN_SEC || 20);
 
 const resolveMachineIdentity = (data = {}) => {
-  const node = String(data.node || data.machineId || 'UNKNOWN');
+  const node = String(data.node || data.machineId || 'UNKNOWN').trim() || 'UNKNOWN';
   const rawMachine = String(data.machineId || data.machine || '');
-  if (/compresseur|compress/i.test(rawMachine) || /compresseur|compress/i.test(node)) {
+  if (/compresseur|compress/i.test(rawMachine) || isCompresseurNode(node)) {
     return { machineId: 'compresseur', machineName: 'Compresseur ABAC', node };
   }
-  if (/rectifi/i.test(rawMachine) || /ESP32-NODE-03/i.test(node) || /ESP32-NODE-01/i.test(node)) {
+  if (/rectifi/i.test(rawMachine) || isRectifieuseNode(node)) {
     return { machineId: 'rectifieuse', machineName: 'Rectifieuse', node };
   }
   const machineId = rawMachine ? slugify(rawMachine) : node;
   return { machineId: machineId || 'UNKNOWN', machineName: rawMachine || node, node };
+};
+
+const buildSensorHistoryFilter = (identity = {}) => {
+  const aliases = nodeAliasesForMachine(identity.machineId, identity.node);
+  const filters = [];
+
+  if (aliases.length === 1) filters.push({ node: aliases[0] });
+  else if (aliases.length > 1) filters.push({ node: { $in: aliases } });
+
+  if (identity.machineId) filters.push({ machineId: identity.machineId });
+
+  if (!filters.length) return {};
+  return filters.length === 1 ? filters[0] : { $or: filters };
 };
 
 const sensorNumber = (value, fallback = 0) => {
@@ -394,6 +541,47 @@ const buildAlertAiPayload = (assessment = {}, ruleAlert = {}) => ({
   version: 'rules-v2',
 });
 
+const mapDeviceAlertPayload = (payload = {}) => {
+  const alertCode = String(payload.alert || '').trim().toUpperCase();
+  if (!alertCode) return null;
+
+  if (alertCode === 'RPM_HIGH') {
+    return {
+      severity: 'warning',
+      type: 'sensor',
+      message: payload.msg || 'RPM eleve detecte',
+      ai: {
+        source: 'manual',
+        label: 'warning',
+        summary: 'Seuil RPM depasse',
+        contributor: 'Capteur RPM ESP32',
+        trigger: 'rpm-threshold',
+        model: 'esp32-device-alert',
+        version: 'mqtt-v1',
+      },
+    };
+  }
+
+  if (alertCode === 'RPM_STOP') {
+    return {
+      severity: 'critical',
+      type: 'sensor',
+      message: payload.msg || 'Arret machine detecte',
+      ai: {
+        source: 'manual',
+        label: 'critical',
+        summary: 'Rotation stoppee',
+        contributor: 'Capteur RPM ESP32',
+        trigger: 'rpm-stop',
+        model: 'esp32-device-alert',
+        version: 'mqtt-v1',
+      },
+    };
+  }
+
+  return null;
+};
+
 const upsertSensorAlert = async ({ identity, payload, ruleAlert, assessment }) => {
   const severity = sanitizeSeverity(ruleAlert.severity);
   const snapshot = sensorSnapshot(payload);
@@ -438,9 +626,53 @@ const upsertSensorAlert = async ({ identity, payload, ruleAlert, assessment }) =
   return { alert: created, isNew: true };
 };
 
+const upsertDeviceAlert = async (payload = {}) => {
+  const mapped = mapDeviceAlertPayload(payload);
+  if (!mapped) return null;
+
+  const identity = resolveMachineIdentity(payload);
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - (SENSOR_ALERT_COOLDOWN_SEC * 1000));
+  const snapshot = sensorSnapshot(payload);
+
+  const existing = await Alert.findOne({
+    machineId: identity.machineId,
+    node: identity.node || payload.node || 'UNKNOWN',
+    type: mapped.type,
+    severity: sanitizeSeverity(mapped.severity),
+    message: mapped.message,
+    status: { $ne: 'resolved' },
+    lastObservedAt: { $gte: cutoff },
+  }).sort({ lastObservedAt: -1 });
+
+  if (existing) {
+    existing.lastObservedAt = now;
+    existing.occurrenceCount = (existing.occurrenceCount || 1) + 1;
+    existing.sensorSnapshot = { ...(existing.sensorSnapshot?.toObject ? existing.sensorSnapshot.toObject() : existing.sensorSnapshot), ...snapshot };
+    existing.ai = { ...(existing.ai?.toObject ? existing.ai.toObject() : existing.ai), ...mapped.ai };
+    await existing.save();
+    io.emit('alert-updated', existing);
+    return existing;
+  }
+
+  const created = await Alert.create({
+    machineId: identity.machineId,
+    node: identity.node || payload.node || 'UNKNOWN',
+    type: mapped.type,
+    severity: sanitizeSeverity(mapped.severity),
+    message: mapped.message,
+    lastObservedAt: now,
+    occurrenceCount: 1,
+    ai: mapped.ai,
+    sensorSnapshot: snapshot,
+  });
+  io.emit('alert', created);
+  return created;
+};
+
 const assessMaintenanceRisk = async (data = {}) => {
   const identity = resolveMachineIdentity(data);
-  const history = await SensorData.find({ node: identity.node }).sort({ createdAt: -1 }).limit(120).lean();
+  const history = await SensorData.find(buildSensorHistoryFilter(identity)).sort({ createdAt: -1 }).limit(120).lean();
   return buildMaintenanceAssessment(data, history);
 };
 
@@ -590,7 +822,10 @@ app.use('/api', createDossierRoutes({
   dossierUpload,
   Dossier,
   fs,
-  watchDir: WATCH_DIR,
+  getWatchDir: () => currentWatchDir,
+  setWatchDir,
+  selectWatchDir: selectWatchDirFromDesktop,
+  canSelectWatchDir,
   getDossierWatcherHandle: () => dossierWatcherHandle,
   isMongoConnected: () => mongoConnected,
   parseStorageDate,
@@ -608,57 +843,75 @@ app.use((err, _req, res, next) => {
   return next(err);
 });
 
-const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
+if (fs.existsSync(frontendDistDir)) {
+  app.use(express.static(frontendDistDir));
+  app.get(/^\/(?!api(?:\/|$)|uploads(?:\/|$)|socket\.io(?:\/|$)).*/, (_req, res) => {
+    res.sendFile(path.join(frontendDistDir, 'index.html'));
+  });
+}
 
-mqttClient.on('connect', () => {
-  mqttClient.subscribe('cncpulse/gsm/result', err => { if (!err) console.log('Subscribed: cncpulse/gsm/result'); });
-  console.log('MQTT connecte a HiveMQ');
-  mqttClient.subscribe('cncpulse/sensors', err => { if (!err) console.log('Abonne au topic: cncpulse/sensors'); });
-});
+const setupMqttClient = () => {
+  if (mqttClientRef) return mqttClientRef;
+  const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
 
-mqttClient.on('message', async (topic, message) => {
-  try {
-    const data = JSON.parse(message.toString());
-    if (topic === 'cncpulse/gsm/result') {
-      const { alertId, status, phoneNumber, providerRef, durationSec, errorMessage } = data;
-      if (!alertId) return;
-      const alert = await Alert.findById(alertId);
-      if (!alert) return;
-      const nextAttempt = (alert.callAttempts || 0) + 1;
-      await CallLog.create({
-        alertId, phoneNumber: phoneNumber || 'unknown', attemptNo: nextAttempt,
-        callStatus: status || 'unknown', providerRef: providerRef || null,
-        durationSec: durationSec || null, errorMessage: errorMessage || null,
-      });
-      if (status === 'success') { alert.status = 'notified'; alert.notifiedAt = new Date(); alert.notifiedBy = 'gsm'; }
-      alert.callAttempts = nextAttempt;
-      await alert.save();
-      io.emit('gsm-result', { alertId, status: status || 'unknown' });
-      return;
+  mqttClient.on('connect', () => {
+    mqttClient.subscribe('cncpulse/gsm/result', err => { if (!err) console.log('Subscribed: cncpulse/gsm/result'); });
+    console.log('MQTT connecte a HiveMQ');
+    mqttClient.subscribe('cncpulse/sensors', err => { if (!err) console.log('Abonne au topic: cncpulse/sensors'); });
+    mqttClient.subscribe('cncpulse/alerts', err => { if (!err) console.log('Abonne au topic: cncpulse/alerts'); });
+  });
+
+  mqttClient.on('message', async (topic, message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      if (topic === 'cncpulse/gsm/result') {
+        const { alertId, status, phoneNumber, providerRef, durationSec, errorMessage } = data;
+        if (!alertId) return;
+        const alert = await Alert.findById(alertId);
+        if (!alert) return;
+        const nextAttempt = (alert.callAttempts || 0) + 1;
+        await CallLog.create({
+          alertId, phoneNumber: phoneNumber || 'unknown', attemptNo: nextAttempt,
+          callStatus: status || 'unknown', providerRef: providerRef || null,
+          durationSec: durationSec || null, errorMessage: errorMessage || null,
+        });
+        if (status === 'success') { alert.status = 'notified'; alert.notifiedAt = new Date(); alert.notifiedBy = 'gsm'; }
+        alert.callAttempts = nextAttempt;
+        await alert.save();
+        io.emit('gsm-result', { alertId, status: status || 'unknown' });
+        return;
+      }
+      if (topic === 'cncpulse/alerts') {
+        await upsertDeviceAlert(data);
+        return;
+      }
+      const savedSensor = await SensorData.create(data);
+      const sensorPayload = savedSensor.toObject ? savedSensor.toObject() : data;
+      io.emit('sensor-data', sensorPayload);
+      const assessment = await assessMaintenanceRisk(sensorPayload);
+      const alerts = buildSensorRuleAlerts(sensorPayload);
+      const identity = resolveMachineIdentity(sensorPayload);
+      let primaryAlert = null;
+      for (const alert of alerts) {
+        const { alert: savedAlert } = await upsertSensorAlert({
+          identity,
+          payload: sensorPayload,
+          ruleAlert: alert,
+          assessment,
+        });
+        if (!primaryAlert && savedAlert) primaryAlert = savedAlert;
+      }
+      if (assessment.severity !== 'normal') {
+        await createMaintenanceCase(sensorPayload, primaryAlert, assessment, 'backend-predictive-maintenance');
+      }
+    } catch (err) {
+      console.error('Erreur MQTT:', err.message);
     }
-    const savedSensor = await SensorData.create(data);
-    const sensorPayload = savedSensor.toObject ? savedSensor.toObject() : data;
-    io.emit('sensor-data', data);
-    const assessment = await assessMaintenanceRisk(sensorPayload);
-    const alerts = buildSensorRuleAlerts(sensorPayload);
-    const identity = resolveMachineIdentity(sensorPayload);
-    let primaryAlert = null;
-    for (const alert of alerts) {
-      const { alert: savedAlert } = await upsertSensorAlert({
-        identity,
-        payload: sensorPayload,
-        ruleAlert: alert,
-        assessment,
-      });
-      if (!primaryAlert && savedAlert) primaryAlert = savedAlert;
-    }
-    if (assessment.severity !== 'normal') {
-      await createMaintenanceCase(sensorPayload, primaryAlert, assessment, 'backend-predictive-maintenance');
-    }
-  } catch (err) {
-    console.error('Erreur MQTT:', err.message);
-  }
-});
+  });
+
+  mqttClientRef = mqttClient;
+  return mqttClient;
+};
 
 // Socket.IO
 const connectedUsers = new Map();
@@ -747,13 +1000,72 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.on('error', (err) => {
-  if (err?.code === 'EADDRINUSE') {
-    console.error(`Le port ${PORT} est deja utilise. Un autre serveur tourne deja sur cette machine.`);
-    process.exit(1);
+
+const listenHttpServer = () => new Promise((resolve, reject) => {
+  if (server.listening) {
+    resolve();
+    return;
   }
-  console.error('Erreur serveur HTTP:', err);
-  process.exit(1);
+
+  const handleError = (err) => {
+    server.off('listening', handleListening);
+    reject(err);
+  };
+
+  const handleListening = () => {
+    server.off('error', handleError);
+    console.log(`Serveur demarre sur le port ${PORT}`);
+    resolve();
+  };
+
+  server.once('error', handleError);
+  server.once('listening', handleListening);
+  server.listen(PORT, '0.0.0.0');
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`Serveur demarre sur le port ${PORT}`));
+const startServer = async () => {
+  if (server.listening) return { app, server, port: Number(PORT) };
+  if (startupPromise) return startupPromise;
+
+  startupPromise = (async () => {
+    validateEnv();
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(process.env.MONGO_URI);
+      console.log('MongoDB connecte');
+    }
+
+    mongoConnected = true;
+    await ensureBaseMachines({ MachineModel, logger: console });
+    setupMqttClient();
+    await listenHttpServer();
+    void maybeStartWatcher();
+
+    return { app, server, port: Number(PORT) };
+  })();
+
+  try {
+    return await startupPromise;
+  } catch (err) {
+    startupPromise = null;
+    throw err;
+  }
+};
+
+module.exports = {
+  app,
+  server,
+  startServer,
+};
+
+if (require.main === module) {
+  startServer().catch((err) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.error(`Le port ${PORT} est deja utilise. Un autre serveur tourne deja sur cette machine.`);
+      process.exit(1);
+    }
+
+    console.error('Erreur au demarrage du backend:', err);
+    process.exit(1);
+  });
+}

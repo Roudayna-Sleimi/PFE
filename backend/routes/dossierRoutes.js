@@ -20,6 +20,8 @@ const createDossierRoutes = (deps) => {
 
   router.get('/dossiers/watcher-status', authMiddleware, controller.watcherStatus);
   router.post('/dossiers/rescan', authMiddleware, adminMiddleware, controller.rescan);
+  router.post('/dossiers/watch-dir', authMiddleware, adminMiddleware, controller.updateWatchDir);
+  router.post('/dossiers/watch-dir/select', authMiddleware, adminMiddleware, controller.selectWatchDir);
 
   router.get('/dossiers', authMiddleware, controller.listDossiers);
   router.post('/dossiers', authMiddleware, uploadMiddleware, controller.createDossiers);

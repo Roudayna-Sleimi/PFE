@@ -10,6 +10,7 @@ const createMachineRoutes = ({ authMiddleware, adminMiddleware, machineImageUplo
     : ((_req, _res, next) => next());
 
   router.get('/', authMiddleware, machineController.getMachines);
+  router.get('/:id/history', authMiddleware, machineController.getMachineHistory);
   router.post('/', authMiddleware, requireAdmin, uploadMachineImage, machineController.createMachine);
   router.delete('/:id', authMiddleware, requireAdmin, machineController.removeMachine);
   router.patch('/:id', authMiddleware, requireAdmin, uploadMachineImage, machineController.patchMachine);

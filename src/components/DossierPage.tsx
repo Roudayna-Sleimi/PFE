@@ -1,8 +1,9 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, ExternalLink, FileText, FileImage, FileCog, File, Grid2x2, List } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
+import { API_BASE_URL } from '../utils/runtimeConfig';
 
-const API = 'http://localhost:5000/api';
+const API = API_BASE_URL;
 
 interface DossierDocument {
   _id: string;
@@ -31,15 +32,6 @@ interface DossierPageProps {
   showAddPieceActions?: boolean;
   onAddPieceFromDossier?: (context: DossierPieceContext) => void;
 }
-
-type WatcherStatus = {
-  running: boolean;
-  watchDir: string;
-  exists?: boolean;
-  mongoConnected?: boolean;
-  indexedCount?: number;
-  message?: string;
-};
 
 type DossierViewMode = 'list' | 'icons';
 
@@ -285,11 +277,9 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
 
   const [clientOptions, setClientOptions] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
-  const [watcherStatus, setWatcherStatus] = useState<WatcherStatus | null>(null);
   const [viewMode, setViewMode] = useState<DossierViewMode>('list');
 
   const token = localStorage.getItem('token') || '';
-  const role = localStorage.getItem('role') || 'user';
 
   const [expandedClients, setExpandedClients] = useState<Record<string, boolean>>({});
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
@@ -383,42 +373,6 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     };
     loadOptions();
   }, [token]);
-
-  useEffect(() => {
-    const loadWatcher = async () => {
-      try {
-        const res = await fetch(`${API}/dossiers/watcher-status`, { headers: { Authorization: `Bearer ${token}` } });
-        const data = await readJsonMaybe(res);
-        if (res.ok) setWatcherStatus(data);
-        else setWatcherStatus({ running: false, watchDir: '', message: data.message || 'Watcher status indisponible' });
-      } catch (e) {
-        setWatcherStatus({ running: false, watchDir: '', message: e instanceof Error ? e.message : 'Watcher status indisponible' });
-      }
-    };
-    loadWatcher();
-  }, [token]);
-
-  const triggerRescan = async () => {
-    try {
-      setError('');
-      setMessage('');
-      const res = await fetch(`${API}/dossiers/rescan`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-      const data = await readJsonMaybe(res);
-      if (!res.ok) throw new Error(data.message || 'Rescan impossible');
-      setMessage('Rescan lancé.');
-      // refresh status + list
-      try {
-        const st = await fetch(`${API}/dossiers/watcher-status`, { headers: { Authorization: `Bearer ${token}` } });
-        const stData = await readJsonMaybe(st);
-        if (st.ok) setWatcherStatus(stData);
-      } catch {
-        // ignore
-      }
-      fetchDocuments();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur rescan');
-    }
-  };
 
   const openDocument = async (doc: DossierDocument) => {
     let popup: Window | null = null;
@@ -561,54 +515,10 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
         <div>
           <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: theme.pageTitle }}>Dossier</h2>
           <p style={{ margin: '6px 0 0', fontSize: 13, color: theme.bodyText, maxWidth: 900 }}>
-            Synchronisation automatique côté serveur depuis <span style={{ color: theme.strongText, fontWeight: 700 }}>DOSSIER_WATCH_DIR</span>. Aucun upload manuel.
+            Synchronisation automatique côté serveur depuis le dossier choisi au premier démarrage de l'application desktop.
           </p>
         </div>
       </div>
-
-      {watcherStatus && (
-        <div
-          style={{
-            ...cardStyle,
-            padding: '12px 16px',
-            marginBottom: 18,
-            borderColor: watcherStatus.running ? 'rgba(34,197,94,0.22)' : 'rgba(239,68,68,0.22)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
-          <div style={{ color: watcherStatus.running ? (darkMode ? '#86efac' : '#15803d') : (darkMode ? '#fca5a5' : '#b91c1c'), fontSize: 12, fontWeight: 600 }}>
-            {watcherStatus.running ? 'Watcher: ON' : 'Watcher: OFF'}
-            {watcherStatus.watchDir ? ` | Dir: ${watcherStatus.watchDir}` : ''}
-            {typeof watcherStatus.exists === 'boolean' ? ` | Exists: ${watcherStatus.exists ? 'yes' : 'no'}` : ''}
-            {typeof watcherStatus.indexedCount === 'number' ? ` | Indexed: ${watcherStatus.indexedCount}` : ''}
-            {watcherStatus.message ? ` | ${watcherStatus.message}` : ''}
-          </div>
-          {role === 'admin' && (
-            <button
-              onClick={triggerRescan}
-              style={{
-                height: 36,
-                padding: '0 12px',
-                borderRadius: 10,
-                border: `1px solid ${theme.buttonBorder}`,
-                background: theme.buttonBg,
-                color: theme.buttonText,
-                cursor: 'pointer',
-                fontWeight: 900,
-                fontSize: 12,
-                boxShadow: theme.blueShadow,
-              }}
-              title="Forcer un rescan du répertoire"
-            >
-              Rescan
-            </button>
-          )}
-        </div>
-      )}
       <div style={{ ...cardStyle, padding: 18, marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
           <div>

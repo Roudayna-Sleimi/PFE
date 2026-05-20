@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart2, Clock, Package, Search, Users, Zap } from 'lucide-react';
+import { apiUrl } from '../utils/runtimeConfig';
 
 interface ReportRowMachine {
   machine: string;
@@ -83,7 +84,7 @@ const ReportsPage: React.FC<Props> = ({ darkMode = true }) => {
       try {
         setLoading(true);
         setError('');
-        const res = await fetch('http://localhost:5000/api/reports/overview', {
+        const res = await fetch(apiUrl('/reports/overview'), {
           headers: { Authorization: `Bearer ${token}` },
         });
         const json = await res.json();

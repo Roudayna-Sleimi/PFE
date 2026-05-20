@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useTheme } from '../hooks/useTheme';
+import { SOCKET_URL, apiUrl } from '../utils/runtimeConfig';
 import {
   type AlertRecord,
   formatAlertAnalysis,
@@ -17,7 +18,7 @@ interface CallLog {
   audioFormat?: string | null;
 }
 
-const socket = io('http://localhost:5000', { transports: ['websocket'] });
+const socket = io(SOCKET_URL, { transports: ['websocket'] });
 
 const AlertesPage: React.FC = () => {
   useTheme();
@@ -30,7 +31,7 @@ const AlertesPage: React.FC = () => {
 
   const fetchAlerts = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/alerts?limit=50', {
+      const res = await fetch(apiUrl('/alerts?limit=50'), {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -56,7 +57,7 @@ const AlertesPage: React.FC = () => {
   }, [fetchAlerts]);
 
   const markResolved = async (id: string) => {
-    await fetch(`http://localhost:5000/api/alerts/${id}/resolve`, {
+    await fetch(apiUrl(`/alerts/${id}/resolve`), {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -68,7 +69,7 @@ const AlertesPage: React.FC = () => {
       setAudioMessage('');
       setAudioLoadingId(alertId);
 
-      const res = await fetch(`http://localhost:5000/api/call-logs/${alertId}`, {
+      const res = await fetch(apiUrl(`/call-logs/${alertId}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {

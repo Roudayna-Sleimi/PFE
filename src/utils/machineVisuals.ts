@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import { Cog, Drill, Gauge, Wrench, Zap } from 'lucide-react';
+import { backendUrl } from './runtimeConfig';
 
 export type MachineIconKind = 'gear' | 'wrench' | 'bolt' | 'drill';
 
@@ -65,7 +66,7 @@ const pickByName = (name = ''): MachineVisual | null => {
 const resolveImageUrl = (imageUrl?: string) => {
   if (!imageUrl) return '';
   if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
-  return `http://localhost:5000${imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`}`;
+  return backendUrl(imageUrl);
 };
 
 export const getMachineVisual = (params: { id?: string; name?: string; icon?: MachineIconKind; imageUrl?: string }): MachineVisual => {

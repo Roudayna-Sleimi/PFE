@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { getMachineVisual, type MachineIconKind } from "../utils/machineVisuals";
 import { useTheme } from "../hooks/useTheme";
+import { BACKEND_ORIGIN, SOCKET_URL } from "../utils/runtimeConfig";
 
-const BASE_URL = "http://localhost:5000";
+const BASE_URL = BACKEND_ORIGIN;
 
 interface Machine {
   id: string;
@@ -132,11 +133,15 @@ interface TrackingEvent {
 }
 
 interface ProductionSession {
+  id: string;
   machine: Machine;
   piece: Piece;
   startTime: Date;
   statut: "en_cours" | "pause" | "terminee";
   events: TrackingEvent[];
+  count: number;
+  rebutCount: number;
+  elapsed: number;
 }
 
 type Step = "pieces" | "machines" | "production";
@@ -389,6 +394,7 @@ const EmployePage: React.FC = () => {
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<ProductionSession | null>(null);
+  const [activeSessions, setActiveSessions] = useState<ProductionSession[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [count, setCount] = useState(0);
   const [sessionRuban, setSessionRuban] = useState(0);
@@ -398,12 +404,14 @@ const EmployePage: React.FC = () => {
   const [savingPiece, setSavingPiece] = useState(false);
   const [pieceSaveError, setPieceSaveError] = useState("");
   const [workState, setWorkState] = useState<EmployeeWorkState>({ machineStatus: "stopped", currentPieceId: null });
+  const [employeeSpecialite, setEmployeeSpecialite] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgText, setMsgText] = useState("");
   const [unread, setUnread] = useState(0);
   const [isCompactLayout, setIsCompactLayout] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 1100 : false));
 
   const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const activeSessionsStorageKey = `cnc-active-sessions:${username || "anonymous"}`;
   const theme = useMemo(() => (
     {
       bg: "var(--app-bg)",
@@ -494,6 +502,45 @@ const EmployePage: React.FC = () => {
     fontWeight: 700,
     letterSpacing: 0.2,
   };
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(activeSessionsStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      setActiveSessions(parsed.map((item) => ({
+        ...item,
+        startTime: new Date(item.startTime),
+        events: Array.isArray(item.events)
+          ? item.events.map((event: TrackingEvent) => ({ ...event, time: new Date(event.time) }))
+          : [],
+      })));
+    } catch {
+      localStorage.removeItem(activeSessionsStorageKey);
+    }
+  }, [activeSessionsStorageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(activeSessionsStorageKey, JSON.stringify(activeSessions));
+  }, [activeSessions, activeSessionsStorageKey]);
+
+  useEffect(() => {
+    if (!session || saved) return;
+    const snapshot = {
+      ...session,
+      count,
+      rebutCount: sessionRuban,
+      elapsed,
+      statut: isPaused ? "pause" as const : session.statut,
+    };
+    setActiveSessions((prev) => (
+      prev.some((item) => item.id === snapshot.id)
+        ? prev.map((item) => (item.id === snapshot.id ? snapshot : item))
+        : [snapshot, ...prev]
+    ));
+  }, [count, elapsed, isPaused, saved, session, sessionRuban]);
+
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -515,6 +562,7 @@ const EmployePage: React.FC = () => {
           machineStatus: employeeDashboard?.user?.machineStatus || "stopped",
           currentPieceId: employeeDashboard?.user?.currentPieceId || null,
         });
+        setEmployeeSpecialite(employeeDashboard?.user?.specialite || "");
         setMachines(Array.isArray(machinesData) ? machinesData.filter((m) => !String(m.name || "").toLowerCase().includes("compresseur")) : []);
         setPieces(Array.isArray(piecesData) ? piecesData.map((piece) => enrichPieceWithPlan(piece, dossierDocs)) : []);
         setMessages(Array.isArray(messagesData) ? messagesData : []);
@@ -541,7 +589,7 @@ const EmployePage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const socket = io(BASE_URL, { transports: ["websocket"] });
+    const socket = io(SOCKET_URL, { transports: ["websocket"] });
     socketRef.current = socket;
     socket.emit("user-online", { username, role: "employe" });
     socket.on("direct-message", (data: Message) => {
@@ -627,6 +675,56 @@ const EmployePage: React.FC = () => {
     ? toNumber(session?.piece.quantiteRuban, 0)
     : toNumber(session?.piece.quantiteRuban, 0) + sessionRuban;
   const progressPct = Math.round((totalProducedInSession / Math.max(1, session?.piece.quantite ?? 1)) * 100);
+  const snapshotCurrentSession = () => {
+    if (!session || saved) return null;
+    return {
+      ...session,
+      count,
+      rebutCount: sessionRuban,
+      elapsed,
+      statut: isPaused ? "pause" as const : session.statut,
+    };
+  };
+  const persistCurrentSession = () => {
+    const snapshot = snapshotCurrentSession();
+    if (!snapshot) return;
+    setActiveSessions((prev) => {
+      const exists = prev.some((item) => item.id === snapshot.id);
+      return exists
+        ? prev.map((item) => (item.id === snapshot.id ? snapshot : item))
+        : [snapshot, ...prev];
+    });
+  };
+  const resumeSession = (targetSession: ProductionSession) => {
+    persistCurrentSession();
+    const freshPiece = pieces.find((piece) => piece._id === targetSession.piece._id) || targetSession.piece;
+    const freshMachine = machines.find((machine) => machine.id === targetSession.machine.id) || targetSession.machine;
+    const restoredElapsed = targetSession.statut === "pause"
+      ? targetSession.elapsed || 0
+      : Math.max(targetSession.elapsed || 0, Math.round((Date.now() - new Date(targetSession.startTime).getTime()) / 1000));
+    const restored = {
+      ...targetSession,
+      piece: freshPiece,
+      machine: freshMachine,
+      elapsed: restoredElapsed,
+    };
+    setSession(restored);
+    setSelectedPiece(freshPiece);
+    setSelectedMachine(freshMachine);
+    setCount(restored.count || 0);
+    setSessionRuban(restored.rebutCount || 0);
+    setElapsed(restoredElapsed);
+    setSaved(false);
+    setIsPaused(restored.statut === "pause");
+    setWorkState({ machineStatus: restored.statut === "pause" ? "paused" : "started", currentPieceId: freshPiece._id });
+    setStep("production");
+    setTab("workflow");
+  };
+  const getSessionElapsed = (item: ProductionSession) => (
+    item.statut === "pause"
+      ? item.elapsed || 0
+      : Math.max(item.elapsed || 0, Math.round((Date.now() - new Date(item.startTime).getTime()) / 1000))
+  );
   const selectedMaterialReferences = useMemo(
     () => (pieceDraft.matiereType ? materialOptions[pieceDraft.matiereType] || [] : []),
     [pieceDraft.matiereType]
@@ -635,9 +733,10 @@ const EmployePage: React.FC = () => {
     const baseStatus = normalizeStatus(piece.status);
     if (baseStatus === "Controle") return baseStatus;
     const isSessionPiece = session?.piece._id === piece._id && (session.statut === "en_cours" || session.statut === "pause");
+    const isParallelSessionPiece = activeSessions.some((item) => item.piece._id === piece._id && (item.statut === "en_cours" || item.statut === "pause"));
     const isActivePiece = workState.currentPieceId === piece._id && (workState.machineStatus === "started" || workState.machineStatus === "paused");
     if (baseStatus === "Termine" && hasCompletedHistory(piece)) return baseStatus;
-    return isSessionPiece || isActivePiece ? "En cours" : "Arrêté";
+    return isSessionPiece || isParallelSessionPiece || isActivePiece ? "En cours" : "Arrêté";
   };
 
   const saveSelectedPiece = async () => {
@@ -715,17 +814,24 @@ const EmployePage: React.FC = () => {
 
   const startSession = async () => {
     if (!selectedPiece || !selectedMachine) return;
+    persistCurrentSession();
     const activePiece = pieces.find((piece) => piece._id === selectedPiece._id) || selectedPiece;
     await postMachineAction("started", activePiece._id);
     setWorkState({ machineStatus: "started", currentPieceId: activePiece._id });
     const now = new Date();
-    setSession({
+    const nextSession: ProductionSession = {
+      id: `${activePiece._id}-${selectedMachine.id}-${Date.now()}`,
       machine: selectedMachine,
       piece: { ...activePiece, status: normalizeStatus(activePiece.status) === "Termine" ? activePiece.status : "En cours" },
       startTime: now,
       statut: "en_cours",
       events: [{ type: "start", time: now }],
-    });
+      count: 0,
+      rebutCount: 0,
+      elapsed: 0,
+    };
+    setSession(nextSession);
+    setActiveSessions((prev) => [nextSession, ...prev.filter((item) => item.id !== nextSession.id)]);
     setElapsed(0);
     setCount(0);
     setSessionRuban(0);
@@ -740,13 +846,13 @@ const EmployePage: React.FC = () => {
     if (isPaused) {
       await postMachineAction("started", session.piece._id);
       setWorkState({ machineStatus: "started", currentPieceId: session.piece._id });
-      setSession((prev) => prev ? { ...prev, statut: "en_cours", events: [...prev.events, { type: "resume", time: now }] } : prev);
+      setSession((prev) => prev ? { ...prev, statut: "en_cours", count, rebutCount: sessionRuban, elapsed, events: [...prev.events, { type: "resume", time: now }] } : prev);
       setIsPaused(false);
       return;
     }
     await postMachineAction("paused");
     setWorkState({ machineStatus: "paused", currentPieceId: session.piece._id });
-    setSession((prev) => prev ? { ...prev, statut: "pause", events: [...prev.events, { type: "pause", time: now }] } : prev);
+    setSession((prev) => prev ? { ...prev, statut: "pause", count, rebutCount: sessionRuban, elapsed, events: [...prev.events, { type: "pause", time: now }] } : prev);
     setIsPaused(true);
   };
 
@@ -758,6 +864,9 @@ const EmployePage: React.FC = () => {
     setSession((prev) => prev ? {
       ...prev,
       statut: "terminee",
+      count,
+      rebutCount: sessionRuban,
+      elapsed,
       piece: {
         ...prev.piece,
         quantiteProduite: toNumber(prev.piece.quantiteProduite, 0) + count,
@@ -765,10 +874,12 @@ const EmployePage: React.FC = () => {
       },
       events: [...prev.events, { type: "stop", time: endTime, pieceCount: count, rubanQuantity: sessionRuban }],
     } : prev);
+    setActiveSessions((prev) => prev.filter((item) => item.id !== session.id));
     setSaved(true);
   };
 
   const resetWorkflow = (target: Step) => {
+    persistCurrentSession();
     setStep(target);
     setSession(null);
     setElapsed(0);
@@ -800,6 +911,7 @@ const EmployePage: React.FC = () => {
 
   const openWorkflowStep = (target: Step) => {
     if (!canOpenStep(target)) return;
+    persistCurrentSession();
     setTab("workflow");
     setStep(target);
   };
@@ -928,6 +1040,39 @@ const EmployePage: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                  {activeSessions.length > 0 && (
+                    <div style={{ ...cardStyle, marginBottom: 18, display: "grid", gap: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                        <div>
+                          <div style={{ fontWeight: 900, color: theme.text }}>Travaux en cours</div>
+                          <div style={{ color: theme.muted, fontSize: 12, marginTop: 4 }}>
+                            Vous pouvez revenir directement a une piece deja demarree.
+                          </div>
+                        </div>
+                        <span style={badge(theme.accentSoft, theme.accent)}>{activeSessions.length} active(s)</span>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 10 }}>
+                        {activeSessions.map((item) => (
+                          <button
+                            key={item.id}
+                            onClick={() => resumeSession(item)}
+                            style={{ ...subtlePanelStyle, textAlign: "left", cursor: "pointer", color: theme.text }}
+                          >
+                            <div style={{ fontWeight: 900, marginBottom: 5 }}>{item.piece.nom}</div>
+                            <div style={{ color: theme.muted, fontSize: 12 }}>{item.machine.name}</div>
+                            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                              <span style={badge(item.statut === "pause" ? "rgba(251,191,36,0.16)" : theme.accentSoft, item.statut === "pause" ? theme.warning : theme.accent)}>
+                                {item.statut === "pause" ? "Pause" : "En cours"}
+                              </span>
+                              <span style={badge(darkMode ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.06)", theme.textSoft)}>
+                                {fmt(getSessionElapsed(item))}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {loading ? <div style={{ ...cardStyle, color: theme.muted }}>Chargement...</div> : myPieces.length === 0 ? <div style={{ ...cardStyle, color: theme.muted }}>Aucune piece assignee pour le moment.</div> : (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 16 }}>
                       {myPieces.map((piece) => {
@@ -1175,6 +1320,12 @@ const EmployePage: React.FC = () => {
                 Choisissez la machine qui va travailler cette piece. La machine deja utilisee reste marquee pour garder le suivi clair.
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16 }}>
+                {machines.length === 0 && (
+                  <div style={{ ...cardStyle, color: theme.muted, lineHeight: 1.7 }}>
+                    Aucune machine disponible pour votre specialite{employeeSpecialite ? ` (${employeeSpecialite})` : ""}.
+                    Contactez l'administrateur si cette affectation doit changer.
+                  </div>
+                )}
                 {machines.map((machine) => {
                   const visual = getMachineVisual({ id: machine.id, name: machine.name, icon: machine.icon, imageUrl: machine.imageUrl });
                   const Icon = visual.Icon;
@@ -1273,7 +1424,7 @@ const EmployePage: React.FC = () => {
                   <div style={{ fontSize: 30, fontWeight: 900, color: theme.accent }}>{fmt(elapsed)}</div>
                 </div>
                 <div style={cardStyle}>
-                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Pieces faites</div>
+                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Pieces produites</div>
                   <input
                     type="number"
                     min={0}
@@ -1285,7 +1436,7 @@ const EmployePage: React.FC = () => {
                   <div style={{ fontSize: 12, color: theme.subtle, marginTop: 10 }}>Entrez juste un nombre.</div>
                 </div>
                 <div style={cardStyle}>
-                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Quantite ruban</div>
+                  <div style={{ color: theme.subtle, marginBottom: 8 }}>Pieces rebutees</div>
                   <input
                     type="number"
                     min={0}
@@ -1294,7 +1445,7 @@ const EmployePage: React.FC = () => {
                     disabled={saved}
                     style={bigInputStyle}
                   />
-                  <div style={{ fontSize: 12, color: theme.subtle, marginTop: 10 }}>Total ruban apres session: {totalRubanInSession}</div>
+                  <div style={{ fontSize: 12, color: theme.subtle, marginTop: 10 }}>Total pieces rebutees apres session: {totalRubanInSession}</div>
                 </div>
                 <div style={cardStyle}>
                   <div style={{ color: theme.subtle, marginBottom: 8 }}>Objectif</div>

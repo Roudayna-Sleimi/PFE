@@ -3,18 +3,22 @@ const createDossierService = (deps) => {
   const {
     Dossier,
     fs,
-    watchDir,
+    getWatchDir,
+    setWatchDir,
+    selectWatchDir,
+    canSelectWatchDir,
     getDossierWatcherHandle,
     isMongoConnected,
     parseStorageDate,
     escapeRegex,
   } = deps;
 
-  // Title: Return watcher status payload.
-  const watcherStatus = async () => {
+  const buildWatcherStatus = async (message = '') => {
+    const watchDir = getWatchDir();
     const exists = fs.existsSync(watchDir);
     const indexedCount = await Dossier.countDocuments({});
     const watcher = getDossierWatcherHandle();
+
     if (!watcher) {
       return {
         running: false,
@@ -22,16 +26,25 @@ const createDossierService = (deps) => {
         exists,
         mongoConnected: isMongoConnected(),
         indexedCount,
-        message: 'Watcher non demarre',
+        canPickDirectory: canSelectWatchDir(),
+        message: message || 'Watcher non demarre',
       };
     }
+
     return {
       running: true,
       watchDir: watcher.rootAbs || watchDir,
       exists,
       mongoConnected: isMongoConnected(),
       indexedCount,
+      canPickDirectory: canSelectWatchDir(),
+      message: message || undefined,
     };
+  };
+
+  // Title: Return watcher status payload.
+  const watcherStatus = async () => {
+    return buildWatcherStatus();
   };
 
   // Title: Trigger a manual dossier rescan.
@@ -44,6 +57,53 @@ const createDossierService = (deps) => {
     }
     await watcher.rescan('manual-rescan');
     return { message: 'Rescan termine' };
+  };
+
+  // Title: Update the watched directory manually.
+  const updateWatchDir = async (payload = {}) => {
+    const watchDir = String(payload.watchDir || '').trim();
+    if (!watchDir) {
+      const error = new Error('Chemin dossier requis');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    await setWatchDir(watchDir);
+    const status = await buildWatcherStatus('Dossier surveille mis a jour');
+    return {
+      message: 'Dossier surveille mis a jour',
+      watchDir: status.watchDir,
+      status,
+    };
+  };
+
+  // Title: Select watched directory from Electron desktop.
+  const selectWatchDirAction = async () => {
+    if (!canSelectWatchDir()) {
+      const error = new Error('Selection graphique disponible uniquement dans la version desktop');
+      error.statusCode = 501;
+      throw error;
+    }
+
+    const selectedDir = await selectWatchDir(getWatchDir());
+    if (!selectedDir) {
+      const status = await buildWatcherStatus('Selection annulee');
+      return {
+        canceled: true,
+        message: 'Selection annulee',
+        watchDir: status.watchDir,
+        status,
+      };
+    }
+
+    await setWatchDir(selectedDir);
+    const status = await buildWatcherStatus('Dossier surveille mis a jour');
+    return {
+      canceled: false,
+      message: 'Dossier surveille mis a jour',
+      watchDir: status.watchDir,
+      status,
+    };
   };
 
   // Title: Build a Mongo date range from start and end.
@@ -279,6 +339,8 @@ const createDossierService = (deps) => {
   return {
     watcherStatus,
     rescan,
+    updateWatchDir,
+    selectWatchDir: selectWatchDirAction,
     listDossiers,
     createDossiers,
     listClients,
