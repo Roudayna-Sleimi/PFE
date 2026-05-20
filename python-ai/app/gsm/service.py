@@ -10,23 +10,17 @@ import base64
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from importlib import import_module
 from pathlib import Path
-from typing import Any
 
 import paho.mqtt.publish as publish
 
 from app.db.mongo import get_database
 from app.shared.config import AppSettings, load_settings
 
-def load_optional_tts_engine() -> Any | None:
-    try:
-        return import_module("pyttsx3")
-    except Exception:
-        return None
-
-
-pyttsx3 = load_optional_tts_engine()
+try:
+    import pyttsx3
+except Exception:
+    pyttsx3 = None
 
 
 def build_tts_message(alert: dict) -> str:

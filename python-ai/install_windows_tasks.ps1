@@ -87,9 +87,9 @@ function Register-PfeTask {
 
 $tasks = @(
   @{ TaskName = 'PFE_BackendService'; Execute = $nodeExe; Arguments = 'server.js'; WorkingDirectory = $backendDir; DelaySeconds = 15 },
-  @{ TaskName = 'PFE_AIInferenceService'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'lstm_inference_service.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 45 },
-  @{ TaskName = 'PFE_AIRulesScheduler'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'auto_rules_scheduler.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 75 },
-  @{ TaskName = 'PFE_AISupervisorService'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'supervisor.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 105 }
+  @{ TaskName = 'PFE_AIInferenceService'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'scripts\run_maintenance_inference.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 45 },
+  @{ TaskName = 'PFE_AIRetrainScheduler'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'scripts\run_retraining_scheduler.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 75 },
+  @{ TaskName = 'PFE_AISupervisorService'; Execute = $pythonExe; Arguments = ('"{0}"' -f (Join-Path $pythonAiDir 'scripts\run_gsm_supervisor.py')); WorkingDirectory = $pythonAiDir; DelaySeconds = 105 }
 )
 
 $mode = 'system'
@@ -108,7 +108,7 @@ try {
 if ($RunNow) {
   Start-ScheduledTask -TaskName 'PFE_BackendService'
   Start-ScheduledTask -TaskName 'PFE_AIInferenceService'
-  Start-ScheduledTask -TaskName 'PFE_AIRulesScheduler'
+  Start-ScheduledTask -TaskName 'PFE_AIRetrainScheduler'
   Start-ScheduledTask -TaskName 'PFE_AISupervisorService'
   Write-Host 'Started tasks now.'
 }

@@ -177,14 +177,13 @@ class MaintenanceLSTMPredictor:
         return {
             "machine_id": safe_machine_id,
             "label": label,
-            "severity": label if label in {"normal", "warning", "critical"} else "warning",
+            "severity": "critical" if label == "critical" else "warning",
             "confidence": confidence,
             "proba": proba,
             "contributors": self._contributors(snapshot, label),
             "snapshot": snapshot,
             "history_size": history_size,
             "sequence_length": self.artifacts.sequence_length,
-            "is_warmup": history_size < self.artifacts.sequence_length,
             "model_name": "MaintenanceLSTMClassifier",
             "model_version": self.artifacts.version,
         }

@@ -48,12 +48,6 @@ class MaintenanceService:
         elapsed = (now_utc() - self.last_alert_at[machine_id]).total_seconds()
         return elapsed >= self.settings.inference.alert_cooldown_sec
 
-    def _minimum_history_for_alert(self) -> int:
-        return max(
-            int(self.settings.inference.min_history_for_alert),
-            int(self.predictor.artifacts.sequence_length),
-        )
-
     def maybe_reload_model(self) -> None:
         reload_sec = self.settings.inference.model_reload_sec
         if reload_sec <= 0:
@@ -144,34 +138,50 @@ class MaintenanceService:
         history_size = int(result.get("history_size") or 0)
         if label == "normal":
             return False
-        if history_size < self._minimum_history_for_alert():
+        if history_size < self.settings.inference.min_history_for_alert:
             return False
         if not self._should_emit_alert(machine_id):
             return False
 
         created_at = now_utc()
-        self._create_maintenance_report(payload, None, result)
+        alert_doc = {
+            "machineId": machine_id,
+            "node": payload.get("node", "UNKNOWN"),
+            "type": "maintenance-ai",
+            "severity": result["severity"],
+            "message": f"Maintenance risk {result['severity']} detected on {machine_id}",
+            "status": "new",
+            "createdAt": created_at,
+            "seenAt": None,
+            "seenBy": None,
+            "notifiedAt": None,
+            "notifiedBy": None,
+            "callAttempts": 0,
+            "ai": {
+                "source": "lstm-inference",
+                "label": label,
+                "proba": result["proba"],
+                "model": result.get("model_name", "MaintenanceLSTMClassifier"),
+                "version": result.get("model_version", "lstm-v1"),
+            },
+            "sensorSnapshot": result["snapshot"],
+        }
+        alert_id = self.db.alerts.insert_one(alert_doc).inserted_id
+        self._create_maintenance_report(payload, alert_id, result)
         self.last_alert_at[machine_id] = created_at
         return True
 
     def handle_message(self, payload: dict) -> None:
         machine_id = machine_id_from_payload(payload)
         result = self.predictor.predict(machine_id=machine_id, payload=payload)
-        if result.get("is_warmup"):
-            print(
-                f"[AI] {machine_id} -> warming-up "
-                f"[history={result['history_size']}/{result['sequence_length']}, "
-                f"provisional={result['label']} {result['confidence']:.2f}]"
-            )
-        else:
-            print(
-                f"[AI] {machine_id} -> {result['label']} "
-                f"({result['confidence']:.2f}) [lstm history={result['history_size']}]"
-            )
+        print(
+            f"[AI] {machine_id} -> {result['label']} "
+            f"({result['confidence']:.2f}) [lstm history={result['history_size']}]"
+        )
         created = self._persist_prediction(payload=payload, result=result)
         if created:
             print(
-                f"[AI] {result['severity'].upper()} maintenance report - {machine_id} - "
+                f"[AI] {result['severity'].upper()} alert - {machine_id} - "
                 f"{result['label']} ({result['confidence']:.2f})"
             )
 
@@ -199,12 +209,7 @@ def run_service(settings: AppSettings | None = None) -> None:
     print(f"[AI] Model: {config.paths.model_path}")
     print(f"[AI] Preprocessor: {config.paths.preprocessor_path}")
     print(f"[AI] Reload interval: {config.inference.model_reload_sec}s")
-    print(
-        "[AI] Minimum history before alerts: "
-        f"{runtime._minimum_history_for_alert()} points "
-        f"(configured={config.inference.min_history_for_alert}, "
-        f"model_window={runtime.predictor.artifacts.sequence_length})"
-    )
+    print(f"[AI] Minimum history before alerts: {config.inference.min_history_for_alert} points")
 
     client.loop_forever()
 

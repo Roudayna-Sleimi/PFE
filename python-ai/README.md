@@ -1,93 +1,124 @@
-# Python Maintenance Module (Simple Version)
+# Python AI Backend (Version Finale Simplifiee)
 
-This folder now uses a simple and clear rule engine.
-No TensorFlow, no sklearn model files, no heavy training pipeline.
+Cette version est volontairement minimaliste:
 
-## Flow
+- peu de fichiers
+- separation nette des responsabilites
+- aucune couche inutile
+- logique lisible pour un projet de fin d'etudes
 
-1. `build_lstm_dataset.py`
-   - Reads sensor data from MongoDB (`sensordatas`)
-   - Creates CSV dataset with labels (`normal`, `warning`, `critical`)
+## Structure Finale
 
-2. `train_lstm.py`
-   - Builds simple baseline rules from normal behavior in the CSV
-   - Saves one JSON rules file: `models/maintenance_rules.json`
+```text
+python-ai/
+  .env
+  .env.example
+  install_windows_tasks.ps1
+  requirements.txt
+  README.md
+  app/
+    db/
+      mongo.py
+    gsm/
+      service.py
+    maintenance/
+      dataset.py
+      predictor.py
+      scheduler.py
+      service.py
+      trainer.py
+    shared/
+      config.py
+  scripts/
+    build_dataset.py
+    train_model.py
+    run_maintenance_inference.py
+    run_gsm_supervisor.py
+    run_retraining_scheduler.py
+    predict_payload.py
+  data/
+    lstm_dataset.csv
+    lstm_dataset.metadata.json
+  models/
+    maintenance_lstm.h5
+    lstm_preprocessor.json
+    lstm_training_metrics.json
+    lstm_training_curves.png
+    lstm_confusion_matrix.png
+  runtime/
+    audio/
+    logs/
+```
 
-3. `lstm_inference_service.py`
-   - Listens to MQTT sensor messages
-   - Applies threshold + baseline rules
-   - Creates alerts, maintenance reports, and maintenance requests
+## Roles des Fichiers (Titre + Explication)
 
-## Install
+### Configuration et partage
+
+- `app/shared/config.py`
+  - Titre: **Configuration et Utilitaires Partages**
+  - Ce que ca fait: charge `.env`, expose les constantes metier et la configuration globale.
+  - Pourquoi utile: un seul endroit pour la config et les helpers, donc moins de duplication.
+
+### Base de donnees
+
+- `app/db/mongo.py`
+  - Titre: **Connecteur MongoDB**
+  - Ce que ca fait: cree la connexion MongoDB et retourne la base active.
+  - Pourquoi utile: la logique DB est centralisee et reutilisable.
+
+### Maintenance (IA / LSTM)
+
+- `app/maintenance/dataset.py`
+  - Titre: **Construction Dataset Maintenance**
+  - Ce que ca fait: extrait les donnees capteurs et genere le CSV d'apprentissage.
+  - Pourquoi utile: separer preparation des donnees et entrainement simplifie le pipeline.
+
+- `app/maintenance/trainer.py`
+  - Titre: **Entrainement LSTM Maintenance**
+  - Ce que ca fait: prepare les sequences, gere l'equilibrage synthetique et entraine le modele.
+  - Pourquoi utile: la chaine d'entrainement reste isolee du runtime.
+
+- `app/maintenance/predictor.py`
+  - Titre: **Predicteur LSTM**
+  - Ce que ca fait: charge le modele/preprocessor et calcule label + probabilites.
+  - Pourquoi utile: reutilisable par le service MQTT et par le CLI.
+
+- `app/maintenance/service.py`
+  - Titre: **Service Maintenance Temps Reel**
+  - Ce que ca fait: consomme MQTT, applique l'inference, cree alertes/rapports MongoDB.
+  - Pourquoi utile: runtime IA clair, direct, et facile a presenter.
+
+- `app/maintenance/scheduler.py`
+  - Titre: **Planificateur Re-entrainement**
+  - Ce que ca fait: lance periodiquement `build_dataset` puis `train_model`.
+  - Pourquoi utile: maintient automatiquement le modele a jour.
+
+### GSM
+
+- `app/gsm/service.py`
+  - Titre: **Service GSM Unifie**
+  - Ce que ca fait: recupere les alertes, genere le TTS et publie les appels via MQTT.
+  - Pourquoi utile: toute la logique GSM est dans un seul module lisible.
+
+### Scripts d'entree
+
+- `scripts/build_dataset.py`: lance la generation du dataset.
+- `scripts/train_model.py`: lance l'entrainement du modele.
+- `scripts/run_maintenance_inference.py`: lance le service IA temps reel.
+- `scripts/run_gsm_supervisor.py`: lance le superviseur GSM.
+- `scripts/run_retraining_scheduler.py`: lance la boucle de re-entrainement.
+- `scripts/predict_payload.py`: test rapide d'inference par JSON.
+
+## Commandes Utiles
 
 ```bash
 python -m pip install -r python-ai/requirements.txt
-copy python-ai\.env.example python-ai\.env
+
+python python-ai/scripts/build_dataset.py
+python python-ai/scripts/train_model.py
+python python-ai/scripts/run_maintenance_inference.py
+python python-ai/scripts/run_gsm_supervisor.py
+python python-ai/scripts/run_retraining_scheduler.py
+python python-ai/scripts/predict_payload.py --machine-id M1 --input-json "{\"vibX\":0.3,\"vibY\":0.2,\"vibZ\":0.1,\"courant\":8.5,\"rpm\":1400,\"pression\":6.2}"
 ```
 
-## Main Config
-
-```env
-DATASET_PATH=data/lstm_dataset.csv
-RULES_PATH=models/maintenance_rules.json
-RULES_RELOAD_SEC=15
-
-THRESHOLD_CURRENT_WARNING=15
-THRESHOLD_CURRENT_CRITICAL=20
-THRESHOLD_VIB_WARNING=2
-THRESHOLD_VIB_CRITICAL=3
-THRESHOLD_PRESSURE_WARNING_LOW=4.5
-THRESHOLD_PRESSURE_WARNING_HIGH=10
-THRESHOLD_PRESSURE_CRITICAL_LOW=3.5
-THRESHOLD_PRESSURE_CRITICAL_HIGH=11
-```
-
-## Commands
-
-Build dataset:
-
-```bash
-python python-ai/build_lstm_dataset.py
-```
-
-Build rules:
-
-```bash
-python python-ai/train_lstm.py
-```
-
-Run inference:
-
-```bash
-python python-ai/lstm_inference_service.py
-```
-
-Run automatic rules refresh (scheduler):
-
-```bash
-python python-ai/auto_rules_scheduler.py
-```
-
-Run GSM supervisor:
-
-```bash
-python python-ai/supervisor.py
-```
-
-Install Windows auto-start tasks (one time):
-
-```bash
-powershell -ExecutionPolicy Bypass -File python-ai/install_windows_tasks.ps1 -RunNow
-```
-
-This creates 4 scheduled tasks:
-- Backend service
-- AI inference service
-- AI rules scheduler
-- AI supervisor service
-
-Names:
-- `PFE_BackendService`
-- `PFE_AIInferenceService`
-- `PFE_AIRulesScheduler`
-- `PFE_AISupervisorService`
