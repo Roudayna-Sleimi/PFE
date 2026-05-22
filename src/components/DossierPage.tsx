@@ -157,8 +157,6 @@ const canPreviewInBrowser = (doc: DossierDocument) => {
   return mimeType === 'application/pdf' || mimeType.startsWith('image/');
 };
 
-const isImageDoc = (doc: DossierDocument) => getDisplayMimeType(doc).startsWith('image/');
-
 const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string | null) => {
   const mimeType = getDisplayMimeType(doc);
   const ext = getFileExtension(doc.originalName).toUpperCase() || 'FILE';
@@ -287,12 +285,13 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
   const [project, setProject] = useState('');
   const [viewMode, setViewMode] = useState<DossierViewMode>('list');
   const [rescanBusy, setRescanBusy] = useState(false);
-  const [imagePreviewUrls, setImagePreviewUrls] = useState<Record<string, string>>({});
+  const [filePreviewUrls, setFilePreviewUrls] = useState<Record<string, string>>({});
 
   const token = localStorage.getItem('token') || '';
   const role = localStorage.getItem('role') || 'user';
   const isAdmin = role === 'admin';
   const previewUrlCacheRef = React.useRef<Record<string, string>>({});
+  const previewUnavailableRef = React.useRef<Record<string, true>>({});
 
   const [expandedClients, setExpandedClients] = useState<Record<string, boolean>>({});
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
@@ -464,34 +463,56 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     });
   }, [documents, search, project, client, piece]);
 
-  const imageDocsToPreview = useMemo(() => (
-    viewMode === 'icons' ? filteredDocuments.filter((doc) => isImageDoc(doc)) : []
+  const docsToPreview = useMemo(() => (
+    viewMode === 'icons' ? filteredDocuments : []
   ), [filteredDocuments, viewMode]);
 
   useEffect(() => {
-    const pendingDocs = imageDocsToPreview.filter((doc) => !previewUrlCacheRef.current[doc._id]);
+    const pendingDocs = docsToPreview.filter((doc) => (
+      !previewUrlCacheRef.current[doc._id] && !previewUnavailableRef.current[doc._id]
+    ));
     if (!pendingDocs.length) return;
 
     const controller = new AbortController();
     let cancelled = false;
 
     const loadPreviews = async () => {
-      const fetchedEntries = await Promise.all(pendingDocs.map(async (doc) => {
+      const fetchedEntries: Array<{ id: string; url: string } | null> = [];
+      const queue = [...pendingDocs];
+      const workerCount = Math.min(6, queue.length);
+
+      const loadOnePreview = async (doc: DossierDocument) => {
         try {
-          const res = await fetch(`${API}/dossiers/${doc._id}/download`, {
+          const res = await fetch(`${API}/dossiers/${doc._id}/thumbnail?size=256`, {
             headers: { Authorization: `Bearer ${token}` },
             signal: controller.signal,
           });
+          if (res.status === 204 || res.status === 404 || res.status === 415 || res.status === 501) {
+            previewUnavailableRef.current[doc._id] = true;
+            return null;
+          }
           if (!res.ok) return null;
 
-          const rawBlob = await res.blob();
-          const mimeType = getDisplayMimeType(doc);
-          const blob = rawBlob.type === mimeType ? rawBlob : new Blob([rawBlob], { type: mimeType });
+          const blob = await res.blob();
+          if (!blob.size) {
+            previewUnavailableRef.current[doc._id] = true;
+            return null;
+          }
+
           const url = window.URL.createObjectURL(blob);
           return { id: doc._id, url };
         } catch (e) {
           const aborted = e instanceof Error && e.name === 'AbortError';
           return aborted ? null : null;
+        }
+      };
+
+      await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (queue.length) {
+          const nextDoc = queue.shift();
+          if (!nextDoc) return;
+          const entry = await loadOnePreview(nextDoc);
+          fetchedEntries.push(entry);
         }
       }));
 
@@ -510,7 +531,7 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
       }
 
       if (Object.keys(nextUrls).length) {
-        setImagePreviewUrls((prev) => ({ ...prev, ...nextUrls }));
+        setFilePreviewUrls((prev) => ({ ...prev, ...nextUrls }));
       }
     };
 
@@ -520,7 +541,7 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
       cancelled = true;
       controller.abort();
     };
-  }, [imageDocsToPreview, token]);
+  }, [docsToPreview, token]);
 
   useEffect(() => () => {
     for (const url of Object.values(previewUrlCacheRef.current)) {
@@ -1043,8 +1064,8 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
                                       const badge = getFileBadge(doc);
                                       const visual = getFileVisualMeta(doc);
                                       const VisualIcon = visual.icon;
-                                      const imagePreviewUrl = imagePreviewUrls[doc._id] || '';
-                                      const showImagePreview = isImageDoc(doc) && Boolean(imagePreviewUrl);
+                                      const filePreviewUrl = filePreviewUrls[doc._id] || '';
+                                      const showFilePreview = Boolean(filePreviewUrl);
 
                                       return viewMode === 'icons' ? (
                                         <div
@@ -1074,9 +1095,9 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
                                               overflow: 'hidden',
                                             }}
                                           >
-                                            {showImagePreview ? (
+                                            {showFilePreview ? (
                                               <img
-                                                src={imagePreviewUrl}
+                                                src={filePreviewUrl}
                                                 alt={doc.originalName}
                                                 style={{
                                                   width: '100%',

@@ -7,11 +7,15 @@ const createDossierService = (deps) => {
     setWatchDir,
     selectWatchDir,
     canSelectWatchDir,
+    createFilePreview,
+    canCreateFilePreview,
     getDossierWatcherHandle,
     isMongoConnected,
     parseStorageDate,
     escapeRegex,
   } = deps;
+  const canPickDirectory = typeof canSelectWatchDir === 'function' ? canSelectWatchDir : () => false;
+  const canGeneratePreview = typeof canCreateFilePreview === 'function' ? canCreateFilePreview : () => false;
 
   const buildWatcherStatus = async (message = '') => {
     const watchDir = getWatchDir();
@@ -26,7 +30,8 @@ const createDossierService = (deps) => {
         exists,
         mongoConnected: isMongoConnected(),
         indexedCount,
-        canPickDirectory: canSelectWatchDir(),
+        canPickDirectory: canPickDirectory(),
+        canCreatePreview: canGeneratePreview(),
         message: message || 'Watcher non demarre',
       };
     }
@@ -37,7 +42,8 @@ const createDossierService = (deps) => {
       exists,
       mongoConnected: isMongoConnected(),
       indexedCount,
-      canPickDirectory: canSelectWatchDir(),
+      canPickDirectory: canPickDirectory(),
+      canCreatePreview: canGeneratePreview(),
       message: message || undefined,
     };
   };
@@ -83,7 +89,7 @@ const createDossierService = (deps) => {
 
   // Title: Select watched directory from Electron desktop.
   const selectWatchDirAction = async () => {
-    if (!canSelectWatchDir()) {
+    if (!canPickDirectory()) {
       const error = new Error('Selection graphique disponible uniquement dans la version desktop');
       error.statusCode = 501;
       throw error;
@@ -290,6 +296,35 @@ const createDossierService = (deps) => {
     return { filePath: dossier.filePath, filename: dossier.originalName };
   };
 
+  // Title: Build dossier thumbnail metadata for desktop previews.
+  const dossierThumbnailMeta = async (dossierId, options = {}) => {
+    if (typeof createFilePreview !== 'function' || !canGeneratePreview()) {
+      const error = new Error('Miniatures disponibles uniquement dans la version desktop');
+      error.statusCode = 501;
+      throw error;
+    }
+
+    const dossier = await Dossier.findById(dossierId);
+    if (!dossier) {
+      const error = new Error('Document introuvable');
+      error.statusCode = 404;
+      throw error;
+    }
+    if (!fs.existsSync(dossier.filePath)) {
+      const error = new Error('Fichier introuvable sur le disque');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const preview = await createFilePreview(dossier.filePath, options);
+    if (!preview?.buffer) return null;
+
+    return {
+      buffer: preview.buffer,
+      contentType: preview.contentType || 'image/png',
+    };
+  };
+
   // Title: Delete one dossier and its disk file.
   const deleteDossier = async (dossierId) => {
     const dossier = await Dossier.findById(dossierId);
@@ -352,6 +387,7 @@ const createDossierService = (deps) => {
     listPieceNames,
     listBatches,
     dossierDownloadMeta,
+    dossierThumbnailMeta,
     deleteDossier,
     updateDossier,
   };

@@ -77,6 +77,7 @@ const resolveInitialWatchDir = () => {
 };
 
 const canSelectWatchDir = () => typeof global.__cncPulseDesktop?.selectWatchDir === 'function';
+const canCreateFilePreview = () => typeof global.__cncPulseDesktop?.createFilePreview === 'function';
 
 const selectWatchDirFromDesktop = async (preferredDir) => {
   if (!canSelectWatchDir()) {
@@ -86,6 +87,16 @@ const selectWatchDirFromDesktop = async (preferredDir) => {
   }
 
   return global.__cncPulseDesktop.selectWatchDir(preferredDir);
+};
+
+const createFilePreviewFromDesktop = async (filePath, options = {}) => {
+  if (!canCreateFilePreview()) {
+    const error = new Error('Miniatures disponibles uniquement dans la version desktop Electron');
+    error.statusCode = 501;
+    throw error;
+  }
+
+  return global.__cncPulseDesktop.createFilePreview(filePath, options);
 };
 
 // Multer
@@ -831,6 +842,8 @@ app.use('/api', createDossierRoutes({
   setWatchDir,
   selectWatchDir: selectWatchDirFromDesktop,
   canSelectWatchDir,
+  createFilePreview: createFilePreviewFromDesktop,
+  canCreateFilePreview,
   getDossierWatcherHandle: () => dossierWatcherHandle,
   isMongoConnected: () => mongoConnected,
   parseStorageDate,
