@@ -35,6 +35,15 @@ interface DossierPageProps {
 
 type DossierViewMode = 'list' | 'icons';
 
+const getClientLabel = (doc: Pick<DossierDocument, 'clientLastName' | 'clientFirstName'>) =>
+  `${doc.clientLastName || ''} ${doc.clientFirstName || ''}`.trim() || 'Inconnu';
+
+const getProjectLabel = (doc: Pick<DossierDocument, 'projectName'>) =>
+  String(doc.projectName || '').trim() || 'Sans projet';
+
+const getPieceLabel = (doc: Pick<DossierDocument, 'pieceName'>) =>
+  String(doc.pieceName || '').trim() || 'Sans pièce';
+
 const readJsonMaybe = async (res: Response) => {
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('application/json')) return await res.json();
@@ -274,9 +283,6 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
   const [client, setClient] = useState('');
   const [piece, setPiece] = useState('');
   const [project, setProject] = useState('');
-
-  const [clientOptions, setClientOptions] = useState<string[]>([]);
-  const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<DossierViewMode>('list');
   const [rescanBusy, setRescanBusy] = useState(false);
 
@@ -337,14 +343,7 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
       setLoading(true);
       setError('');
 
-      const params = new URLSearchParams();
-      if (search.trim()) params.set('q', search.trim());
-      if (client.trim()) params.set('client', client.trim());
-      if (piece.trim()) params.set('piece', piece.trim());
-      if (project.trim()) params.set('project', project.trim());
-
-      const url = `${API}/dossiers${params.toString() ? `?${params.toString()}` : ''}`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/dossiers`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await readJsonMaybe(res);
       if (!res.ok) throw new Error(data.message || 'Impossible de charger les documents');
       setDocuments(Array.isArray(data) ? data : []);
@@ -353,30 +352,11 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     } finally {
       setLoading(false);
     }
-  }, [search, client, piece, project, token]);
+  }, [token]);
 
   useEffect(() => {
     fetchDocuments();
   }, [fetchDocuments]);
-
-  const loadOptions = useCallback(async () => {
-    try {
-      const [clientsRes, projectsRes] = await Promise.all([
-        fetch(`${API}/dossiers/clients`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API}/dossiers/projects`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      const clientsData = await readJsonMaybe(clientsRes);
-      const projectsData = await readJsonMaybe(projectsRes);
-      if (clientsRes.ok && Array.isArray(clientsData)) setClientOptions(clientsData);
-      if (projectsRes.ok && Array.isArray(projectsData)) setProjectOptions(projectsData);
-    } catch {
-      // optional
-    }
-  }, [token]);
-
-  useEffect(() => {
-    loadOptions();
-  }, [loadOptions]);
 
   const handleRescan = useCallback(async () => {
     if (!isAdmin || rescanBusy) return;
@@ -392,7 +372,7 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
       const data = await readJsonMaybe(res);
       if (!res.ok) throw new Error(data.message || 'Rescan impossible');
 
-      await Promise.all([fetchDocuments(), loadOptions()]);
+      await fetchDocuments();
       setMessage(data.message || 'Rescan termine');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur rescan');
@@ -400,7 +380,51 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     } finally {
       setRescanBusy(false);
     }
-  }, [fetchDocuments, isAdmin, loadOptions, rescanBusy, token]);
+  }, [fetchDocuments, isAdmin, rescanBusy, token]);
+
+  const projectOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const doc of documents) names.add(getProjectLabel(doc));
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [documents]);
+
+  const clientOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const doc of documents) {
+      if (project && getProjectLabel(doc) !== project) continue;
+      names.add(getClientLabel(doc));
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [documents, project]);
+
+  const pieceOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const doc of documents) {
+      if (project && getProjectLabel(doc) !== project) continue;
+      if (client && getClientLabel(doc) !== client) continue;
+      names.add(getPieceLabel(doc));
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [documents, project, client]);
+
+  const filteredDocuments = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return documents.filter((doc) => {
+      if (project && getProjectLabel(doc) !== project) return false;
+      if (client && getClientLabel(doc) !== client) return false;
+      if (piece && getPieceLabel(doc) !== piece) return false;
+      if (!query) return true;
+
+      const haystack = [
+        getClientLabel(doc),
+        getProjectLabel(doc),
+        getPieceLabel(doc),
+        doc.originalName || '',
+      ].join(' ').toLowerCase();
+
+      return haystack.includes(query);
+    });
+  }, [documents, search, project, client, piece]);
 
   const openDocument = async (doc: DossierDocument) => {
     let popup: Window | null = null;
@@ -487,10 +511,10 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
 
     const normKey = (v: string) => String(v || '').trim().toLowerCase();
 
-    for (const doc of documents) {
-      const clientLabel = `${doc.clientLastName} ${doc.clientFirstName}`.trim() || 'Inconnu';
-      const projectLabel = String(doc.projectName || '').trim() || 'Sans projet';
-      const pieceLabel = String(doc.pieceName || '').trim() || 'Sans pièce';
+    for (const doc of filteredDocuments) {
+      const clientLabel = getClientLabel(doc);
+      const projectLabel = getProjectLabel(doc);
+      const pieceLabel = getPieceLabel(doc);
 
       const cKey = normKey(clientLabel) || 'inconnu';
       const pKey = `${cKey}::${normKey(projectLabel) || 'sans-projet'}`;
@@ -531,7 +555,7 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
       .sort((a, b) => a.label.localeCompare(b.label));
 
     return out;
-  }, [documents]);
+  }, [filteredDocuments]);
 
   const toggleClient = (key: string) => setExpandedClients((p) => ({ ...p, [key]: !p[key] }));
   const toggleProject = (key: string) => setExpandedProjects((p) => ({ ...p, [key]: !p[key] }));
@@ -591,7 +615,17 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginTop: 12 }}>
           <div>
             <label htmlFor="dossier-project-filter" style={{ display: 'block', fontSize: 12, color: theme.label, marginBottom: 6, fontWeight: 600 }}>Projet</label>
-            <select id="dossier-project-filter" value={project} onChange={(e) => setProject(e.target.value)} style={inputStyle} title="Projet">
+            <select
+              id="dossier-project-filter"
+              value={project}
+              onChange={(e) => {
+                setProject(e.target.value);
+                setClient('');
+                setPiece('');
+              }}
+              style={inputStyle}
+              title="Projet"
+            >
               <option value="">Tous les projets</option>
               {projectOptions.map((name) => (
                 <option key={name} value={name}>{name}</option>
@@ -600,7 +634,16 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
           </div>
           <div>
             <label htmlFor="dossier-client-filter" style={{ display: 'block', fontSize: 12, color: theme.label, marginBottom: 6, fontWeight: 600 }}>Client</label>
-            <select id="dossier-client-filter" value={client} onChange={(e) => setClient(e.target.value)} style={inputStyle} title="Client">
+            <select
+              id="dossier-client-filter"
+              value={client}
+              onChange={(e) => {
+                setClient(e.target.value);
+                setPiece('');
+              }}
+              style={inputStyle}
+              title="Client"
+            >
               <option value="">Tous les clients</option>
               {clientOptions.map((name) => (
                 <option key={name} value={name}>{name}</option>
@@ -609,13 +652,18 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
           </div>
           <div>
             <label htmlFor="dossier-piece-filter" style={{ display: 'block', fontSize: 12, color: theme.label, marginBottom: 6, fontWeight: 600 }}>Pièce</label>
-            <input
+            <select
               id="dossier-piece-filter"
               value={piece}
               onChange={(e) => setPiece(e.target.value)}
-              placeholder="Ex: Piece1"
               style={inputStyle}
-            />
+              title="Pièce"
+            >
+              <option value="">Toutes les pièces</option>
+              {pieceOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
           </div>
         </div>
 
