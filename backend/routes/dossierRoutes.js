@@ -29,6 +29,7 @@ const createDossierRoutes = (deps) => {
   router.get('/dossiers/projects', authMiddleware, controller.listProjects);
   router.get('/dossiers/piece-names', authMiddleware, controller.listPieceNames);
   router.get('/dossiers/batches', authMiddleware, controller.listBatches);
+  router.get('/dossiers/:id/thumbnail', authMiddleware, controller.thumbnailDossier);
   router.get('/dossiers/:id/download', authMiddleware, controller.downloadDossier);
   router.delete('/dossiers/:id', authMiddleware, adminMiddleware, controller.deleteDossier);
   router.put('/dossiers/:id', authMiddleware, adminMiddleware, controller.updateDossier);

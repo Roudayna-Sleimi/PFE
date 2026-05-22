@@ -124,6 +124,22 @@ const createDossierController = (deps) => {
     }
   };
 
+  // Title: Handle dossier thumbnail endpoint.
+  const thumbnailDossier = async (req, res) => {
+    try {
+      const rawSize = Number(req.query?.size || 256);
+      const size = Number.isFinite(rawSize) ? rawSize : 256;
+      const preview = await service.dossierThumbnailMeta(req.params.id, { size });
+      if (!preview?.buffer) return res.status(204).end();
+
+      res.setHeader('Content-Type', preview.contentType || 'image/png');
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.send(preview.buffer);
+    } catch (err) {
+      return handleError(res, err);
+    }
+  };
+
   // Title: Handle delete dossier endpoint.
   const deleteDossier = async (req, res) => {
     try {
@@ -156,6 +172,7 @@ const createDossierController = (deps) => {
     listPieceNames,
     listBatches,
     downloadDossier,
+    thumbnailDossier,
     deleteDossier,
     updateDossier,
   };

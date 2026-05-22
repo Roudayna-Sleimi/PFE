@@ -340,6 +340,9 @@ const formatDimension = ({ largeur, longueur, hauteur }: DimensionFields) => (
   ].filter(Boolean).join(' | ')
 );
 
+const buildAutoPieceReference = (value: string) => String(value || '').replace(/\s+/g, ' ').trim();
+const normalizeAutoPieceReference = (value: string) => buildAutoPieceReference(value).toLowerCase();
+
 const ProductionPage: React.FC = () => {
   const [pieces, setPieces] = useState<Piece[]>([]);
   const [mainTab, setMainTab] = useState<'production' | 'clients'>(getInitialProductionTab);
@@ -377,6 +380,7 @@ const ProductionPage: React.FC = () => {
   const role = localStorage.getItem('role') || 'user';
   const isAdmin = role === 'admin';
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const autoRefEnabledRef = React.useRef(true);
 
   useEffect(() => {
     try {
@@ -584,6 +588,8 @@ const ProductionPage: React.FC = () => {
     if (!isAdmin) return;
     const cadDoc = context.docs.find((doc) => isCadDoc(doc));
     const planDoc = context.sourceDoc || context.docs.find((doc) => isImageDoc(doc)) || context.docs.find((doc) => isPdfDoc(doc)) || cadDoc || null;
+    const initialPieceName = String(context.pieceLabel || '').trim();
+    const initialReference = buildAutoPieceReference(initialPieceName);
 
     setCreatePieceError('');
     setCreationContext(context);
@@ -592,10 +598,11 @@ const ProductionPage: React.FC = () => {
     setSelectedDossierPiece(context.pieceLabel);
     setChainSteps([]);
     setChainNext('');
+    autoRefEnabledRef.current = true;
     setNewPiece({
       ...emptyDimensions(),
-      nom: context.pieceLabel,
-      ref: '',
+      nom: initialPieceName,
+      ref: initialReference,
       employe: '',
       quantite: 0,
       quantiteProduite: 0,
@@ -675,6 +682,7 @@ const ProductionPage: React.FC = () => {
           matiereReference: data.matiereReference || newPiece.matiereReference || '',
         };
         setPieces(prev => [createdPiece, ...prev]);
+        autoRefEnabledRef.current = true;
         setShowForm(false);
         setCreationContext(null);
         setNewPiece({ ...emptyDimensions(), ref: '', quantite: 0, quantiteProduite: 0, matiere: false, status: 'Arrêté' });
@@ -884,6 +892,40 @@ const ProductionPage: React.FC = () => {
   const card: React.CSSProperties = { background: 'var(--app-card)', border: '1px solid var(--app-border)', borderRadius: 12 };
   const inputStyle: React.CSSProperties = { width: '100%', background: 'var(--app-surface-strong)', border: '1px solid var(--app-border)', borderRadius: 8, padding: '10px 12px', color: 'var(--app-heading)', fontSize: 13, outline: 'none', boxSizing: 'border-box' };
   const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
+  const createModalColors = {
+    panelBg: '#f4f8ff',
+    panelBorder: 'rgba(148,163,184,0.32)',
+    panelShadow: '0 30px 80px -38px rgba(15,23,42,0.45)',
+    headerBg: 'linear-gradient(135deg,#eef5ff 0%, #f8fbff 100%)',
+    headerBorder: 'rgba(148,163,184,0.22)',
+    sectionBg: '#ffffff',
+    sectionSoftBg: '#f8fbff',
+    sectionBorder: 'rgba(148,163,184,0.22)',
+    title: '#0f172a',
+    text: '#0f172a',
+    label: '#475569',
+    muted: '#64748b',
+    softActionBg: 'rgba(37,99,235,0.12)',
+    softActionText: '#1d4ed8',
+    primaryActionBg: '#2563eb',
+    primaryActionText: '#ffffff',
+  } as const;
+  const modalInputStyle: React.CSSProperties = {
+    ...inputStyle,
+    background: '#ffffff',
+    border: '1px solid rgba(148,163,184,0.45)',
+    color: createModalColors.title,
+    boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
+  };
+  const modalSelectStyle: React.CSSProperties = { ...modalInputStyle, cursor: 'pointer' };
+  const modalLabelStyle: React.CSSProperties = { fontSize: 12, color: createModalColors.label, marginBottom: 6, display: 'block', fontWeight: 700 };
+  const modalHintStyle: React.CSSProperties = { fontSize: 11, color: createModalColors.muted, lineHeight: 1.6 };
+  const closeCreatePieceModal = () => {
+    setShowForm(false);
+    setCreationContext(null);
+    setCreatePieceError('');
+    autoRefEnabledRef.current = true;
+  };
 
   return (
     <div style={{ flex: 1, padding: 24, overflowY: 'auto', minWidth: 0, width: '100%' }}>
@@ -1523,36 +1565,36 @@ const ProductionPage: React.FC = () => {
         MODAL — Ajouter Pièce
     ══════════════════════════════════════ */}
       {showForm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
-          <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '88vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-              <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>+ Ajouter une pièce depuis le dossier</div>
-              <button onClick={() => { setShowForm(false); setCreationContext(null); setCreatePieceError(''); }} aria-label="Fermer" title="Fermer"
-                style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.68)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
+          <div style={{ background: createModalColors.panelBg, border: `1px solid ${createModalColors.panelBorder}`, borderRadius: 18, width: '100%', maxWidth: 760, maxHeight: '88vh', overflowY: 'auto', boxShadow: createModalColors.panelShadow }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 22px', borderBottom: `1px solid ${createModalColors.headerBorder}`, background: createModalColors.headerBg }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: createModalColors.title }}>+ Ajouter une pièce depuis le dossier</div>
+              <button onClick={closeCreatePieceModal} aria-label="Fermer" title="Fermer"
+                style={{ background: 'rgba(148,163,184,0.14)', border: '1px solid rgba(148,163,184,0.20)', borderRadius: 10, width: 34, height: 34, cursor: 'pointer', color: createModalColors.muted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <X size={16} />
               </button>
             </div>
 
             <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               {createPieceError && (
-                <div style={{ borderRadius: 12, border: '1px solid rgba(239,68,68,0.28)', background: 'rgba(239,68,68,0.1)', color: '#fecaca', padding: '12px 14px', fontSize: 12, fontWeight: 700 }}>
+                <div style={{ borderRadius: 12, border: '1px solid rgba(239,68,68,0.22)', background: '#fef2f2', color: '#b91c1c', padding: '12px 14px', fontSize: 12, fontWeight: 700 }}>
                   {createPieceError}
                 </div>
               )}
-              <div style={{ background: 'rgba(30,41,59,0.45)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Contexte dossier</div>
+              <div style={{ background: createModalColors.sectionBg, border: `1px solid ${createModalColors.sectionBorder}`, borderRadius: 14, padding: 14 }}>
+                <div style={{ fontSize: 12, color: createModalColors.label, marginBottom: 10, fontWeight: 800 }}>Contexte dossier</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: '10px 12px' }}>
-                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Client</div>
-                    <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>{creationContext?.clientLabel || selectedDossierClient || '-'}</div>
+                  <div style={{ background: createModalColors.sectionSoftBg, border: `1px solid ${createModalColors.sectionBorder}`, borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: createModalColors.label, marginBottom: 4, fontWeight: 700 }}>Client</div>
+                    <div style={{ fontSize: 13, color: createModalColors.text, fontWeight: 800 }}>{creationContext?.clientLabel || selectedDossierClient || '-'}</div>
                   </div>
-                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: '10px 12px' }}>
-                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Projet</div>
-                    <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>{creationContext?.projectLabel || selectedDossierProject || '-'}</div>
+                  <div style={{ background: createModalColors.sectionSoftBg, border: `1px solid ${createModalColors.sectionBorder}`, borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: createModalColors.label, marginBottom: 4, fontWeight: 700 }}>Projet</div>
+                    <div style={{ fontSize: 13, color: createModalColors.text, fontWeight: 800 }}>{creationContext?.projectLabel || selectedDossierProject || '-'}</div>
                   </div>
-                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: '10px 12px' }}>
-                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Pièce dossier</div>
-                    <div style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>{creationContext?.pieceLabel || selectedDossierPiece || '-'}</div>
+                  <div style={{ background: createModalColors.sectionSoftBg, border: `1px solid ${createModalColors.sectionBorder}`, borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: createModalColors.label, marginBottom: 4, fontWeight: 700 }}>Pièce dossier</div>
+                    <div style={{ fontSize: 13, color: createModalColors.text, fontWeight: 800 }}>{creationContext?.pieceLabel || selectedDossierPiece || '-'}</div>
                   </div>
                 </div>
 
@@ -1570,13 +1612,14 @@ const ProductionPage: React.FC = () => {
                           gap: 10,
                           padding: '10px 12px',
                           borderRadius: 10,
-                          background: 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${createModalColors.sectionBorder}`,
+                          background: createModalColors.sectionSoftBg,
                           cursor: 'pointer',
                         }}
                       >
                         <div>
-                          <div style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>{doc.originalName}</div>
-                          <div style={{ color: '#64748b', fontSize: 11 }}>
+                          <div style={{ color: createModalColors.text, fontSize: 12, fontWeight: 800 }}>{doc.originalName}</div>
+                          <div style={{ color: createModalColors.muted, fontSize: 11 }}>
                             {isImageDoc(doc) ? 'Image' : isPdfDoc(doc) ? 'PDF / Plan' : isCadDoc(doc) ? 'Fichier CAD' : 'Document'}
                           </div>
                         </div>
@@ -1586,7 +1629,7 @@ const ProductionPage: React.FC = () => {
                             event.stopPropagation();
                             openDocumentPreview(doc);
                           }}
-                          style={{ padding: '8px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(14,165,233,0.15)', color: '#38bdf8', fontSize: 11, fontWeight: 700 }}
+                          style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(37,99,235,0.15)', cursor: 'pointer', background: createModalColors.softActionBg, color: createModalColors.softActionText, fontSize: 11, fontWeight: 800 }}
                         >
                           Ouvrir
                         </button>
@@ -1597,13 +1640,20 @@ const ProductionPage: React.FC = () => {
               </div>
 
               <div>
-                <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Nom de la pièce</label>
+                <label style={modalLabelStyle}>Nom de la pièce</label>
                 <input
                   list="dossier-piece-names"
                   placeholder="ex: Engrenage 50mm"
                   value={newPiece.nom || ''}
-                  onChange={e => setNewPiece(p => ({ ...p, nom: e.target.value }))}
-                  style={inputStyle} />
+                  onChange={e => {
+                    const nextName = e.target.value;
+                    setNewPiece((prev) => ({
+                      ...prev,
+                      nom: nextName,
+                      ref: autoRefEnabledRef.current ? buildAutoPieceReference(nextName) : prev.ref,
+                    }));
+                  }}
+                  style={modalInputStyle} />
                 <datalist id="dossier-piece-names">
                   {dossierPieceNames.map((pieceName) => (
                     <option key={pieceName} value={pieceName} />
@@ -1613,45 +1663,54 @@ const ProductionPage: React.FC = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Référence</label>
+                  <label style={modalLabelStyle}>Référence</label>
                   <input
                     type="text"
                     placeholder="ex: REF-001"
                     value={newPiece.ref || ''}
-                    onChange={e => setNewPiece(p => ({ ...p, ref: e.target.value }))}
-                    style={inputStyle}
+                    onChange={e => {
+                      const nextRef = e.target.value;
+                      const autoRef = buildAutoPieceReference(String(newPiece.nom || ''));
+                      autoRefEnabledRef.current = !nextRef.trim()
+                        || normalizeAutoPieceReference(nextRef) === normalizeAutoPieceReference(autoRef);
+                      setNewPiece(p => ({ ...p, ref: nextRef }));
+                    }}
+                    style={modalInputStyle}
                   />
+                  <div style={{ ...modalHintStyle, marginTop: 8 }}>
+                    Préremplie depuis le nom de la pièce. Tu peux la modifier si besoin.
+                  </div>
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité requise</label>
+                  <label style={modalLabelStyle}>Quantité requise</label>
                   <input
                     type="number"
                     placeholder="0"
                     value={newPiece.quantite || ''}
                     onChange={e => setNewPiece(p => ({ ...p, quantite: Number(e.target.value) }))}
-                    style={inputStyle}
+                    style={modalInputStyle}
                   />
                 </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
                 <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Quantité produite</label>
+                  <label style={modalLabelStyle}>Quantité produite</label>
                   <input
                     type="number"
                     placeholder="0"
                     value={newPiece.quantiteProduite || ''}
                     onChange={e => setNewPiece(p => ({ ...p, quantiteProduite: Number(e.target.value) }))}
-                    style={inputStyle}
+                    style={modalInputStyle}
                   />
                 </div>
-                <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
+                <div style={modalHintStyle}>
                   Les pieces rebutees seront saisies plus tard par l'employe dans sa session de production.
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>
                 <div>
-                  <label htmlFor="select-machine" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Machine principale</label>
+                  <label htmlFor="select-machine" style={modalLabelStyle}>Machine principale</label>
                   <select
                     id="select-machine"
                     title="Machine principale"
@@ -1661,7 +1720,7 @@ const ProductionPage: React.FC = () => {
                       setNewPiece(p => ({ ...p, machine: value }));
                       setChainSteps(prev => prev.filter((name) => name !== value));
                     }}
-                    style={selectStyle}
+                    style={modalSelectStyle}
                   >
                     <option value="">Choisir une machine</option>
                     {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
@@ -1669,12 +1728,12 @@ const ProductionPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Ajouter une autre machine</label>
+                  <label style={modalLabelStyle}>Ajouter une autre machine</label>
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     <select
                       value={chainNext}
                       onChange={(e) => setChainNext(e.target.value)}
-                      style={selectStyle}
+                      style={modalSelectStyle}
                       title="Ajouter une machine"
                     >
                       <option value="">Laisser vide</option>
@@ -1695,7 +1754,7 @@ const ProductionPage: React.FC = () => {
                         setChainSteps((prev) => [...prev, chainNext]);
                         setChainNext('');
                       }}
-                      style={{ padding: '10px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#1e40af', color: 'white', fontWeight: 700, whiteSpace: 'nowrap' }}
+                      style={{ padding: '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', background: createModalColors.primaryActionBg, color: createModalColors.primaryActionText, fontWeight: 800, whiteSpace: 'nowrap', boxShadow: '0 12px 24px -18px rgba(37,99,235,0.7)' }}
                     >
                       + Ajouter
                     </button>
@@ -1704,21 +1763,21 @@ const ProductionPage: React.FC = () => {
               </div>
 
               {(newPiece.machine || chainSteps.length > 0) && (
-                <div style={{ background: 'rgba(15,23,42,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12, padding: '12px 14px' }}>
-                  <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 10, fontWeight: 700 }}>Ordre des machines</div>
+                <div style={{ background: createModalColors.sectionBg, border: `1px solid ${createModalColors.sectionBorder}`, borderRadius: 12, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 12, color: createModalColors.label, marginBottom: 10, fontWeight: 800 }}>Ordre des machines</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {newPiece.machine && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 999, background: 'rgba(34,197,94,0.16)', color: '#bbf7d0', fontSize: 12, fontWeight: 700 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 999, background: 'rgba(34,197,94,0.14)', color: '#15803d', fontSize: 12, fontWeight: 800 }}>
                         1. {newPiece.machine}
                       </span>
                     )}
                     {chainSteps.map((machineName, index) => (
-                      <span key={machineName} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 999, background: 'rgba(59,130,246,0.16)', color: '#bfdbfe', fontSize: 12, fontWeight: 700 }}>
+                      <span key={machineName} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 999, background: 'rgba(59,130,246,0.12)', color: '#1d4ed8', fontSize: 12, fontWeight: 800 }}>
                         {index + 2}. {machineName}
                         <button
                           type="button"
                           onClick={() => setChainSteps(prev => prev.filter((name) => name !== machineName))}
-                          style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.16)', color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                          style={{ width: 18, height: 18, borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'rgba(29,78,216,0.12)', color: '#1d4ed8', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
                           title={`Retirer ${machineName}`}
                         >
                           <X size={11} />
@@ -1730,7 +1789,7 @@ const ProductionPage: React.FC = () => {
               )}
 
               <div>
-                <label htmlFor="select-employe" style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>
+                <label htmlFor="select-employe" style={modalLabelStyle}>
                   Employe responsable *
                 </label>
                 <select
@@ -1738,14 +1797,14 @@ const ProductionPage: React.FC = () => {
                   title="Employe responsable"
                   value={newPiece.employe || ''}
                   onChange={e => setNewPiece(p => ({ ...p, employe: e.target.value }))}
-                  style={selectStyle}
+                  style={modalSelectStyle}
                 >
                   <option value="">
                     {employes.length === 0 ? 'Aucun employe trouve' : 'Choisir un employe'}
                   </option>
                   {employes.map(e => <option key={e} value={e}>{e}</option>)}
                 </select>
-                <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.6 }}>
+                <div style={{ ...modalHintStyle, marginTop: 8 }}>
                   Les champs matiere restent optionnels. L'employe peut completer la matiere et signaler si elle manque.
                 </div>
               </div>
@@ -1753,42 +1812,42 @@ const ProductionPage: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
                   <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Largeur</label>
+                    <label style={modalLabelStyle}>Largeur</label>
                     <input
                       type="text"
                       placeholder="ex: 120 mm"
                       value={newPiece.largeur || ''}
                       onChange={e => setNewPiece(p => ({ ...p, largeur: e.target.value }))}
-                      style={inputStyle}
+                      style={modalInputStyle}
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Longueur</label>
+                    <label style={modalLabelStyle}>Longueur</label>
                     <input
                       type="text"
                       placeholder="ex: 40 mm"
                       value={newPiece.longueur || ''}
                       onChange={e => setNewPiece(p => ({ ...p, longueur: e.target.value }))}
-                      style={inputStyle}
+                      style={modalInputStyle}
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Hauteur</label>
+                    <label style={modalLabelStyle}>Hauteur</label>
                     <input
                       type="text"
                       placeholder="ex: 12 mm"
                       value={newPiece.hauteur || ''}
                       onChange={e => setNewPiece(p => ({ ...p, hauteur: e.target.value }))}
-                      style={inputStyle}
+                      style={modalInputStyle}
                     />
                   </div>
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Type de matiere</label>
+                  <label style={modalLabelStyle}>Type de matiere</label>
                   <select
                     value={newPiece.matiereType || ''}
                     onChange={e => setNewPiece(p => ({ ...p, matiereType: e.target.value, matiereReference: '' }))}
-                    style={selectStyle}
+                    style={modalSelectStyle}
                     title="Type de matiere"
                   >
                     <option value="">Choisir une matiere</option>
@@ -1798,11 +1857,11 @@ const ProductionPage: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, color: '#64748b', marginBottom: 6, display: 'block' }}>Reference matiere</label>
+                  <label style={modalLabelStyle}>Reference matiere</label>
                   <select
                     value={newPiece.matiereReference || ''}
                     onChange={e => setNewPiece(p => ({ ...p, matiereReference: e.target.value }))}
-                    style={selectStyle}
+                    style={modalSelectStyle}
                     title="Reference matiere"
                     disabled={!newPiece.matiereType}
                   >
@@ -1817,7 +1876,7 @@ const ProductionPage: React.FC = () => {
               <button onClick={ajouterPiece}
                 type="button"
                 disabled={!newPiece.employe || isCreatingPiece}
-                style={{ width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: newPiece.employe && !isCreatingPiece ? 'pointer' : 'not-allowed', opacity: newPiece.employe && !isCreatingPiece ? 1 : 0.65, background: 'linear-gradient(135deg,#0066ff,#00d4ff)', color: 'white', fontSize: 14, fontWeight: 700, marginTop: 4 }}>
+                style={{ width: '100%', padding: '13px 16px', borderRadius: 12, border: 'none', cursor: newPiece.employe && !isCreatingPiece ? 'pointer' : 'not-allowed', opacity: newPiece.employe && !isCreatingPiece ? 1 : 0.65, background: 'linear-gradient(135deg,#2563eb,#0ea5e9)', color: 'white', fontSize: 14, fontWeight: 800, marginTop: 6, boxShadow: '0 18px 36px -22px rgba(37,99,235,0.75)' }}>
                 {isCreatingPiece ? 'Ajout en cours...' : 'Ajouter la piece'}
               </button>
             </div>

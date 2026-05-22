@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, nativeImage } = require("electron");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
@@ -60,9 +60,49 @@ const promptForWatchDir = async (preferredDir, options = {}) => {
   return result.filePaths[0];
 };
 
+const clampPreviewSize = (rawSize) => {
+  const size = Number(rawSize);
+  if (!Number.isFinite(size)) return 256;
+  return Math.max(32, Math.min(Math.round(size), 512));
+};
+
+const createFilePreview = async (filePath, options = {}) => {
+  const resolvedPath = path.resolve(String(filePath || "").trim());
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) return null;
+
+  const size = clampPreviewSize(options.size);
+  let image = null;
+
+  try {
+    image = await nativeImage.createThumbnailFromPath(resolvedPath, { width: size, height: size });
+  } catch {
+    image = null;
+  }
+
+  if (!image || image.isEmpty()) {
+    try {
+      const iconSize = size >= 192 ? "large" : size <= 48 ? "small" : "normal";
+      image = await app.getFileIcon(resolvedPath, { size: iconSize });
+    } catch {
+      image = null;
+    }
+  }
+
+  if (!image || image.isEmpty()) return null;
+
+  const png = image.toPNG();
+  if (!png || png.length === 0) return null;
+
+  return {
+    buffer: png,
+    contentType: "image/png",
+  };
+};
+
 const registerDesktopBridge = () => {
   global.__cncPulseDesktop = {
     selectWatchDir: (preferredDir) => promptForWatchDir(preferredDir),
+    createFilePreview: (filePath, options) => createFilePreview(filePath, options),
   };
 };
 

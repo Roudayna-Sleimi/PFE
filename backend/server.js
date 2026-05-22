@@ -28,13 +28,22 @@ const { createPieceRoutes } = require('./routes/pieceRoutes');
 const { createDossierRoutes } = require('./routes/dossierRoutes');
 const { createMachineRoutes } = require('./routes/machineRoutes');
 
+const runtimeDataDir = process.env.CNC_PULSE_DATA_DIR
+  ? path.resolve(process.env.CNC_PULSE_DATA_DIR)
+  : __dirname;
+const runtimeEnvPath = path.join(runtimeDataDir, '.env');
 const backendEnvPath = path.resolve(__dirname, '.env');
 const rootEnvPath = path.resolve(__dirname, '..', '.env');
-const resolvedEnvPath = [backendEnvPath, rootEnvPath].find((candidate) => fs.existsSync(candidate));
+const envLoadOrder = Array.from(new Set([runtimeEnvPath, backendEnvPath, rootEnvPath]));
+const loadedEnvPaths = [];
 
-if (resolvedEnvPath) {
-  dotenv.config({ path: resolvedEnvPath });
-} else {
+for (const candidate of envLoadOrder) {
+  if (!fs.existsSync(candidate)) continue;
+  dotenv.config({ path: candidate });
+  loadedEnvPaths.push(candidate);
+}
+
+if (loadedEnvPaths.length === 0) {
   dotenv.config();
 }
 
@@ -42,18 +51,18 @@ const validateEnv = () => {
   const missingEnv = ['MONGO_URI', 'JWT_SECRET'].filter((key) => !process.env[key]);
   if (missingEnv.length === 0) return;
 
-  throw new Error(
+  const error = new Error(
     `Variables d'environnement manquantes: ${missingEnv.join(', ')}. `
-    + `Le backend charge d'abord ${backendEnvPath} puis ${rootEnvPath}.`,
+    + `Le backend charge dans cet ordre: ${envLoadOrder.join(' -> ')}.`,
   );
+  error.code = 'ENV_CONFIG_INVALID';
+  error.configPath = fs.existsSync(runtimeEnvPath) ? runtimeEnvPath : null;
+  throw error;
 };
 
 const app    = express();
 const server = http.createServer(app);
 const frontendDistDir = path.resolve(__dirname, '..', 'dist');
-const runtimeDataDir = process.env.CNC_PULSE_DATA_DIR
-  ? path.resolve(process.env.CNC_PULSE_DATA_DIR)
-  : __dirname;
 const watchSettingsPath = path.join(runtimeDataDir, 'watch-settings.json');
 
 const readStoredWatchDir = () => {
@@ -776,6 +785,8 @@ app.use('/api/auth', createAuthRoutes({
     ttlMs: Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15) * 60 * 1000,
     cooldownMs: Number(process.env.PASSWORD_RESET_COOLDOWN_SECONDS || 60) * 1000,
     debugCode: parseBooleanEnv(process.env.PASSWORD_RESET_DEBUG_CODE),
+    adminRecoveryEmail: process.env.ADMIN_RECOVERY_EMAIL,
+    adminRecoveryUsername: process.env.ADMIN_RECOVERY_USERNAME,
   },
 }));
 
