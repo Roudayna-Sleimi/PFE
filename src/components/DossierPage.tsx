@@ -82,7 +82,7 @@ const displayMimeByExt: Record<string, string> = {
   tiff: 'image/tiff',
 };
 
-const cadExtensions = new Set(['stp', 'step', 'sldasm', 'sldprt', 'slddrw', 'igs', 'iges', 'dxf', 'dwg']);
+const cadExtensions = new Set(['stp', 'step', 'sldasm', 'sldprt', 'slddrw', 'igs', 'iges', 'dxf', 'dwg', '3mf', 'stl', 'obj']);
 
 const getFileExtension = (filename = '') => {
   const ext = filename.includes('.') ? filename.split('.').pop() || '' : '';
@@ -113,6 +113,7 @@ const getFileVisualMeta = (doc: DossierDocument) => {
     return {
       label: 'PDF',
       kind: 'Document PDF',
+      hint: 'Apercu direct quand le navigateur le supporte',
       color: '#dc2626',
       bg: 'rgba(220,38,38,0.10)',
       border: 'rgba(220,38,38,0.22)',
@@ -124,6 +125,7 @@ const getFileVisualMeta = (doc: DossierDocument) => {
     return {
       label: 'IMG',
       kind: 'Image',
+      hint: 'Miniature directe',
       color: '#1e3a8a',
       bg: 'rgba(30,58,138,0.10)',
       border: 'rgba(30,58,138,0.20)',
@@ -132,9 +134,78 @@ const getFileVisualMeta = (doc: DossierDocument) => {
   }
 
   if (cadExtensions.has(ext)) {
-    return {
-      label: ext === 'sldprt' || ext === 'sldasm' || ext === 'slddrw' ? 'SLD' : 'CAD',
+    const cadVisuals: Record<string, { label: string; kind: string; hint: string }> = {
+      sldprt: {
+        label: 'SLDPRT',
+        kind: 'Piece SolidWorks',
+        hint: 'Miniature disponible sur PC avec SolidWorks',
+      },
+      sldasm: {
+        label: 'SLDASM',
+        kind: 'Assemblage SolidWorks',
+        hint: 'Miniature disponible sur PC avec SolidWorks',
+      },
+      slddrw: {
+        label: 'SLDDRW',
+        kind: 'Plan SolidWorks',
+        hint: 'Miniature disponible sur PC avec SolidWorks',
+      },
+      step: {
+        label: 'STEP',
+        kind: 'Modele STEP',
+        hint: 'Miniature selon le viewer CAO du PC',
+      },
+      stp: {
+        label: 'STEP',
+        kind: 'Modele STEP',
+        hint: 'Miniature selon le viewer CAO du PC',
+      },
+      igs: {
+        label: 'IGS',
+        kind: 'Modele IGES',
+        hint: 'Miniature selon le viewer CAO du PC',
+      },
+      iges: {
+        label: 'IGES',
+        kind: 'Modele IGES',
+        hint: 'Miniature selon le viewer CAO du PC',
+      },
+      dxf: {
+        label: 'DXF',
+        kind: 'Plan DXF',
+        hint: 'Miniature selon le viewer CAO du PC',
+      },
+      dwg: {
+        label: 'DWG',
+        kind: 'Plan DWG',
+        hint: 'Miniature selon le viewer CAO du PC',
+      },
+      '3mf': {
+        label: '3MF',
+        kind: 'Modele 3D',
+        hint: 'Miniature selon le viewer 3D du PC',
+      },
+      stl: {
+        label: 'STL',
+        kind: 'Modele 3D',
+        hint: 'Miniature selon le viewer 3D du PC',
+      },
+      obj: {
+        label: 'OBJ',
+        kind: 'Modele 3D',
+        hint: 'Miniature selon le viewer 3D du PC',
+      },
+    };
+    const cadVisual = cadVisuals[ext] || {
+      label: (ext || 'CAD').toUpperCase(),
       kind: 'Fichier CAO',
+      hint: 'Miniature selon le logiciel installe sur ce PC',
+    };
+
+    return {
+      label: cadVisual.label,
+      kind: cadVisual.kind,
+      hint: cadVisual.hint,
       color: '#1d4ed8',
       bg: 'rgba(29,78,216,0.10)',
       border: 'rgba(29,78,216,0.20)',
@@ -145,6 +216,7 @@ const getFileVisualMeta = (doc: DossierDocument) => {
   return {
     label: (ext || 'FILE').slice(0, 4).toUpperCase(),
     kind: 'Fichier',
+    hint: ext ? `Extension .${ext}` : 'Type non detecte',
     color: '#1e3a8a',
     bg: 'rgba(30,58,138,0.10)',
     border: 'rgba(30,58,138,0.20)',
@@ -1109,12 +1181,29 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
                                                 }}
                                               />
                                             ) : (
-                                              <div style={{ display: 'grid', justifyItems: 'center', gap: 10 }}>
+                                              <div style={{ display: 'grid', justifyItems: 'center', gap: 10, padding: '12px 10px' }}>
                                                 <div style={{ width: 72, height: 72, borderRadius: 22, background: '#ffffff', display: 'grid', placeItems: 'center', boxShadow: '0 14px 32px -24px rgba(15,23,42,0.35)' }}>
                                                   <VisualIcon size={34} color={visual.color} />
                                                 </div>
-                                                <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.5, color: visual.color }}>{visual.label}</div>
-                                                <div style={{ fontSize: 12, color: theme.bodyText }}>{visual.kind}</div>
+                                                <div style={{
+                                                  maxWidth: '100%',
+                                                  padding: '5px 10px',
+                                                  borderRadius: 999,
+                                                  background: '#ffffff',
+                                                  border: `1px solid ${visual.border}`,
+                                                  fontSize: visual.label.length > 5 ? 12 : 15,
+                                                  fontWeight: 900,
+                                                  letterSpacing: 0.4,
+                                                  color: visual.color,
+                                                  lineHeight: 1,
+                                                }}
+                                                >
+                                                  {visual.label}
+                                                </div>
+                                                <div style={{ fontSize: 12, fontWeight: 800, color: theme.strongText }}>{visual.kind}</div>
+                                                <div style={{ maxWidth: 180, fontSize: 11, lineHeight: 1.4, color: theme.bodyText }}>
+                                                  {visual.hint}
+                                                </div>
                                               </div>
                                             )}
                                           </div>
