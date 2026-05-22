@@ -157,6 +157,8 @@ const canPreviewInBrowser = (doc: DossierDocument) => {
   return mimeType === 'application/pdf' || mimeType.startsWith('image/');
 };
 
+const isImageDoc = (doc: DossierDocument) => getDisplayMimeType(doc).startsWith('image/');
+
 const renderDocumentWindow = (popup: Window, doc: DossierDocument, url: string | null) => {
   const mimeType = getDisplayMimeType(doc);
   const ext = getFileExtension(doc.originalName).toUpperCase() || 'FILE';
@@ -285,10 +287,12 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
   const [project, setProject] = useState('');
   const [viewMode, setViewMode] = useState<DossierViewMode>('list');
   const [rescanBusy, setRescanBusy] = useState(false);
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<Record<string, string>>({});
 
   const token = localStorage.getItem('token') || '';
   const role = localStorage.getItem('role') || 'user';
   const isAdmin = role === 'admin';
+  const previewUrlCacheRef = React.useRef<Record<string, string>>({});
 
   const [expandedClients, setExpandedClients] = useState<Record<string, boolean>>({});
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
@@ -459,6 +463,70 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
       return haystack.includes(query);
     });
   }, [documents, search, project, client, piece]);
+
+  const imageDocsToPreview = useMemo(() => (
+    viewMode === 'icons' ? filteredDocuments.filter((doc) => isImageDoc(doc)) : []
+  ), [filteredDocuments, viewMode]);
+
+  useEffect(() => {
+    const pendingDocs = imageDocsToPreview.filter((doc) => !previewUrlCacheRef.current[doc._id]);
+    if (!pendingDocs.length) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const loadPreviews = async () => {
+      const fetchedEntries = await Promise.all(pendingDocs.map(async (doc) => {
+        try {
+          const res = await fetch(`${API}/dossiers/${doc._id}/download`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          });
+          if (!res.ok) return null;
+
+          const rawBlob = await res.blob();
+          const mimeType = getDisplayMimeType(doc);
+          const blob = rawBlob.type === mimeType ? rawBlob : new Blob([rawBlob], { type: mimeType });
+          const url = window.URL.createObjectURL(blob);
+          return { id: doc._id, url };
+        } catch (e) {
+          const aborted = e instanceof Error && e.name === 'AbortError';
+          return aborted ? null : null;
+        }
+      }));
+
+      if (cancelled) {
+        for (const entry of fetchedEntries) {
+          if (entry?.url) window.URL.revokeObjectURL(entry.url);
+        }
+        return;
+      }
+
+      const nextUrls: Record<string, string> = {};
+      for (const entry of fetchedEntries) {
+        if (!entry?.url) continue;
+        previewUrlCacheRef.current[entry.id] = entry.url;
+        nextUrls[entry.id] = entry.url;
+      }
+
+      if (Object.keys(nextUrls).length) {
+        setImagePreviewUrls((prev) => ({ ...prev, ...nextUrls }));
+      }
+    };
+
+    void loadPreviews();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [imageDocsToPreview, token]);
+
+  useEffect(() => () => {
+    for (const url of Object.values(previewUrlCacheRef.current)) {
+      window.URL.revokeObjectURL(url);
+    }
+  }, []);
 
   const openDocument = async (doc: DossierDocument) => {
     let popup: Window | null = null;
@@ -975,6 +1043,8 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
                                       const badge = getFileBadge(doc);
                                       const visual = getFileVisualMeta(doc);
                                       const VisualIcon = visual.icon;
+                                      const imagePreviewUrl = imagePreviewUrls[doc._id] || '';
+                                      const showImagePreview = isImageDoc(doc) && Boolean(imagePreviewUrl);
 
                                       return viewMode === 'icons' ? (
                                         <div
@@ -1001,15 +1071,31 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
                                               placeItems: 'center',
                                               background: visual.bg,
                                               border: `1px solid ${visual.border}`,
+                                              overflow: 'hidden',
                                             }}
                                           >
-                                            <div style={{ display: 'grid', justifyItems: 'center', gap: 10 }}>
-                                              <div style={{ width: 72, height: 72, borderRadius: 22, background: '#ffffff', display: 'grid', placeItems: 'center', boxShadow: '0 14px 32px -24px rgba(15,23,42,0.35)' }}>
-                                                <VisualIcon size={34} color={visual.color} />
+                                            {showImagePreview ? (
+                                              <img
+                                                src={imagePreviewUrl}
+                                                alt={doc.originalName}
+                                                style={{
+                                                  width: '100%',
+                                                  minHeight: 128,
+                                                  maxHeight: 180,
+                                                  objectFit: 'contain',
+                                                  background: '#f8fafc',
+                                                  display: 'block',
+                                                }}
+                                              />
+                                            ) : (
+                                              <div style={{ display: 'grid', justifyItems: 'center', gap: 10 }}>
+                                                <div style={{ width: 72, height: 72, borderRadius: 22, background: '#ffffff', display: 'grid', placeItems: 'center', boxShadow: '0 14px 32px -24px rgba(15,23,42,0.35)' }}>
+                                                  <VisualIcon size={34} color={visual.color} />
+                                                </div>
+                                                <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.5, color: visual.color }}>{visual.label}</div>
+                                                <div style={{ fontSize: 12, color: theme.bodyText }}>{visual.kind}</div>
                                               </div>
-                                              <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.5, color: visual.color }}>{visual.label}</div>
-                                              <div style={{ fontSize: 12, color: theme.bodyText }}>{visual.kind}</div>
-                                            </div>
+                                            )}
                                           </div>
 
                                           <div style={{ width: '100%', display: 'grid', gap: 6, justifyItems: 'center' }}>
