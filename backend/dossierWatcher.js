@@ -43,11 +43,15 @@ const guessMimeType = (filename = '') => {
   return 'application/octet-stream';
 };
 
+const normalizeFsPath = (value = '') => path.resolve(String(value || ''))
+  .replace(/[\\/]+/g, '/')
+  .replace(/\/+$/, '')
+  .toLowerCase();
+
 const isInsideRoot = (rootAbs, fileAbs) => {
-  const root = path.resolve(rootAbs);
-  const file = path.resolve(fileAbs);
-  const rel = path.relative(root, file);
-  return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  const root = normalizeFsPath(rootAbs);
+  const file = normalizeFsPath(fileAbs);
+  return file !== root && file.startsWith(`${root}/`);
 };
 
 const safeYMD = (d) => {
@@ -83,6 +87,7 @@ const parseFromRelativePath = (relPath, opts = {}) => {
 
 const walkFiles = async (dirAbs) => {
   const out = [];
+  let hadReadError = false;
   const queue = [dirAbs];
   while (queue.length) {
     const cur = queue.pop();
@@ -90,6 +95,7 @@ const walkFiles = async (dirAbs) => {
     try {
       entries = fs.readdirSync(cur, { withFileTypes: true });
     } catch {
+      hadReadError = true;
       continue;
     }
     for (const ent of entries) {
@@ -101,7 +107,7 @@ const walkFiles = async (dirAbs) => {
       }
     }
   }
-  return out;
+  return { files: out, hadReadError };
 };
 
 /**
@@ -112,8 +118,34 @@ const walkFiles = async (dirAbs) => {
  */
 const startDossierWatcher = async ({ rootDir, Dossier, logger = console }) => {
   const rootAbs = path.resolve(rootDir);
+  let isActive = true;
+  let scheduledRescan = null;
+
+  const listIndexedDocs = async () => {
+    const docs = await Dossier.find(
+      { filePath: { $exists: true, $ne: '' } },
+      { _id: 1, filePath: 1 }
+    ).lean();
+
+    return docs.filter((doc) => doc?.filePath && isInsideRoot(rootAbs, doc.filePath));
+  };
+
+  const runUpserts = async (files = [], why) => {
+    const concurrency = 10;
+    let idx = 0;
+    const worker = async () => {
+      while (idx < files.length) {
+        const i = idx;
+        idx += 1;
+        await upsertFile(files[i], why);
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, files.length) }, worker));
+  };
 
   const upsertFile = async (fileAbs, why) => {
+    if (!isActive) return;
     if (!isInsideRoot(rootAbs, fileAbs)) return;
 
     let stat;
@@ -165,42 +197,102 @@ const startDossierWatcher = async ({ rootDir, Dossier, logger = console }) => {
   };
 
   const deleteFile = async (fileAbs, why) => {
+    if (!isActive) return;
     if (!isInsideRoot(rootAbs, fileAbs)) return;
     const rel = path.relative(rootAbs, fileAbs);
     try {
-      await Dossier.deleteOne({ filePath: fileAbs });
-      if (why) logger.log(`[dossier-watcher] delete (${why}): ${rel}`);
+      const targetPath = normalizeFsPath(fileAbs);
+      const indexedDocs = await listIndexedDocs();
+      const matchingIds = indexedDocs
+        .filter((doc) => normalizeFsPath(doc.filePath) === targetPath)
+        .map((doc) => doc._id);
+
+      if (!matchingIds.length) {
+        if (why) logger.log(`[dossier-watcher] delete (${why}): ${rel} (aucun index a supprimer)`);
+        return;
+      }
+
+      await Dossier.deleteMany({ _id: { $in: matchingIds } });
+      if (why) logger.log(`[dossier-watcher] delete (${why}): ${rel} (${matchingIds.length} index supprime(s))`);
     } catch (e) {
       logger.error('[dossier-watcher] delete error:', e?.message || e);
     }
   };
 
-  const rescan = async (why = 'rescan') => {
+  const cleanupMissingFiles = async (currentFiles = [], why) => {
+    const currentFileSet = new Set(currentFiles.map((fileAbs) => normalizeFsPath(fileAbs)));
+    const indexedDocs = await listIndexedDocs();
+
+    const staleDocIds = indexedDocs
+      .filter((doc) => !currentFileSet.has(normalizeFsPath(doc.filePath)))
+      .map((doc) => doc._id);
+
+    if (!staleDocIds.length) {
+      if (why) logger.log(`[dossier-watcher] cleanup (${why}): 0 fichier stale`);
+      return;
+    }
+
+    await Dossier.deleteMany({ _id: { $in: staleDocIds } });
+    if (why) logger.log(`[dossier-watcher] cleanup (${why}): ${staleDocIds.length} fichier(s) stale supprime(s)`);
+  };
+
+  const rescan = async (why = 'rescan', options = {}) => {
+    const strict = options.strict === true;
     try {
       if (fs.existsSync(rootAbs)) {
-        const files = await walkFiles(rootAbs);
+        const { files, hadReadError } = await walkFiles(rootAbs);
         logger.log(`[dossier-watcher] ${why}: ${files.length} fichier(s)`);
-        // Small concurrency without extra deps.
-        const concurrency = 10;
-        let idx = 0;
-        const worker = async () => {
-          while (idx < files.length) {
-            const i = idx;
-            idx += 1;
-            await upsertFile(files[i], why);
+        await runUpserts(files, why);
+        if (hadReadError) {
+          const message = `Rescan incomplet: certains sous-dossiers de ${rootAbs} n'ont pas pu etre lus`;
+          if (strict) {
+            const error = new Error(message);
+            error.statusCode = 409;
+            throw error;
           }
+          logger.warn(`[dossier-watcher] cleanup (${why}) skipped: some subfolders could not be read`);
+        } else {
+          await cleanupMissingFiles(files, why);
+        }
+        return {
+          indexedCount: files.length,
+          exactSyncApplied: !hadReadError,
         };
-        await Promise.all(Array.from({ length: Math.min(concurrency, files.length) }, worker));
       } else {
         logger.warn(`[dossier-watcher] root folder introuvable: ${rootAbs}`);
+        return {
+          indexedCount: 0,
+          exactSyncApplied: false,
+        };
       }
     } catch (e) {
       logger.error(`[dossier-watcher] ${why} error:`, e?.message || e);
+      throw e;
+    }
+  };
+
+  const scheduleRescan = (why) => {
+    if (!isActive) return;
+    if (scheduledRescan) clearTimeout(scheduledRescan);
+    scheduledRescan = setTimeout(() => {
+      scheduledRescan = null;
+      void rescan(why, { strict: false });
+    }, 500);
+  };
+
+  const close = async () => {
+    isActive = false;
+    if (scheduledRescan) {
+      clearTimeout(scheduledRescan);
+      scheduledRescan = null;
+    }
+    if (watcher?.close) {
+      await watcher.close();
     }
   };
 
   // Initial scan (best effort)
-  await rescan('initial');
+  await rescan('initial', { strict: false });
 
   const watcher = chokidar.watch(rootAbs, {
     ignoreInitial: true,
@@ -216,10 +308,16 @@ const startDossierWatcher = async ({ rootDir, Dossier, logger = console }) => {
     .on('add', (p) => upsertFile(p, 'add'))
     .on('change', (p) => upsertFile(p, 'change'))
     .on('unlink', (p) => deleteFile(p, 'unlink'))
+    .on('addDir', (p) => {
+      if (normalizeFsPath(p) !== normalizeFsPath(rootAbs)) scheduleRescan('addDir');
+    })
+    .on('unlinkDir', (p) => {
+      if (normalizeFsPath(p) !== normalizeFsPath(rootAbs)) scheduleRescan('unlinkDir');
+    })
     .on('error', (err) => logger.error('[dossier-watcher] chokidar error:', err?.message || err));
 
   logger.log(`[dossier-watcher] watching: ${rootAbs}`);
-  return { watcher, upsertFile, deleteFile, rescan, rootAbs };
+  return { watcher, upsertFile, deleteFile, rescan, rootAbs, close };
 };
 
 module.exports = { startDossierWatcher, parseFromRelativePath, escapeRegex };

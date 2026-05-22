@@ -155,6 +155,11 @@ const stopDossierWatcher = async () => {
   const activeHandle = dossierWatcherHandle;
   dossierWatcherHandle = null;
 
+  if (activeHandle?.close) {
+    await activeHandle.close();
+    return;
+  }
+
   if (activeHandle?.watcher?.close) {
     await activeHandle.watcher.close();
   }

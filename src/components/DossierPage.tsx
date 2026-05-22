@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, FileText, FileImage, FileCog, File, Grid2x2, List } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, FileText, FileImage, FileCog, File, Grid2x2, List, RotateCw } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { API_BASE_URL } from '../utils/runtimeConfig';
 
@@ -278,8 +278,11 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
   const [clientOptions, setClientOptions] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<DossierViewMode>('list');
+  const [rescanBusy, setRescanBusy] = useState(false);
 
   const token = localStorage.getItem('token') || '';
+  const role = localStorage.getItem('role') || 'user';
+  const isAdmin = role === 'admin';
 
   const [expandedClients, setExpandedClients] = useState<Record<string, boolean>>({});
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
@@ -356,23 +359,48 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     fetchDocuments();
   }, [fetchDocuments]);
 
-  useEffect(() => {
-    const loadOptions = async () => {
-      try {
-        const [clientsRes, projectsRes] = await Promise.all([
-          fetch(`${API}/dossiers/clients`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${API}/dossiers/projects`, { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
-        const clientsData = await readJsonMaybe(clientsRes);
-        const projectsData = await readJsonMaybe(projectsRes);
-        if (clientsRes.ok && Array.isArray(clientsData)) setClientOptions(clientsData);
-        if (projectsRes.ok && Array.isArray(projectsData)) setProjectOptions(projectsData);
-      } catch {
-        // optional
-      }
-    };
-    loadOptions();
+  const loadOptions = useCallback(async () => {
+    try {
+      const [clientsRes, projectsRes] = await Promise.all([
+        fetch(`${API}/dossiers/clients`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/dossiers/projects`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const clientsData = await readJsonMaybe(clientsRes);
+      const projectsData = await readJsonMaybe(projectsRes);
+      if (clientsRes.ok && Array.isArray(clientsData)) setClientOptions(clientsData);
+      if (projectsRes.ok && Array.isArray(projectsData)) setProjectOptions(projectsData);
+    } catch {
+      // optional
+    }
   }, [token]);
+
+  useEffect(() => {
+    loadOptions();
+  }, [loadOptions]);
+
+  const handleRescan = useCallback(async () => {
+    if (!isAdmin || rescanBusy) return;
+    try {
+      setRescanBusy(true);
+      setError('');
+      setMessage('Rescan en cours...');
+
+      const res = await fetch(`${API}/dossiers/rescan`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await readJsonMaybe(res);
+      if (!res.ok) throw new Error(data.message || 'Rescan impossible');
+
+      await Promise.all([fetchDocuments(), loadOptions()]);
+      setMessage(data.message || 'Rescan termine');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur rescan');
+      setMessage('');
+    } finally {
+      setRescanBusy(false);
+    }
+  }, [fetchDocuments, isAdmin, loadOptions, rescanBusy, token]);
 
   const openDocument = async (doc: DossierDocument) => {
     let popup: Window | null = null;
@@ -518,6 +546,33 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
             Synchronisation automatique côté serveur depuis le dossier choisi au premier démarrage de l'application desktop.
           </p>
         </div>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={handleRescan}
+            disabled={rescanBusy}
+            style={{
+              minHeight: 42,
+              padding: '0 16px',
+              borderRadius: 12,
+              border: `1px solid ${theme.actionBorder}`,
+              background: rescanBusy ? theme.buttonBg : theme.actionBg,
+              color: rescanBusy ? theme.buttonText : theme.actionText,
+              cursor: rescanBusy ? 'wait' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              fontWeight: 900,
+              fontSize: 12,
+              boxShadow: theme.blueShadow,
+              opacity: rescanBusy ? 0.75 : 1,
+            }}
+            title="Relancer le scan du dossier surveille"
+          >
+            <RotateCw size={15} />
+            {rescanBusy ? 'Rescan...' : 'Rescan dossiers'}
+          </button>
+        )}
       </div>
       <div style={{ ...cardStyle, padding: 18, marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>

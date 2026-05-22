@@ -55,8 +55,12 @@ const createDossierService = (deps) => {
       error.statusCode = 503;
       throw error;
     }
-    await watcher.rescan('manual-rescan');
-    return { message: 'Rescan termine' };
+    const result = await watcher.rescan('manual-rescan', { strict: true });
+    return {
+      message: `Rescan termine (${Number(result?.indexedCount || 0)} fichier(s) synchronise(s))`,
+      indexedCount: Number(result?.indexedCount || 0),
+      exactSyncApplied: Boolean(result?.exactSyncApplied),
+    };
   };
 
   // Title: Update the watched directory manually.
