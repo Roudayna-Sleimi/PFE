@@ -591,9 +591,38 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     return out;
   }, [filteredDocuments]);
 
-  const toggleClient = (key: string) => setExpandedClients((p) => ({ ...p, [key]: !p[key] }));
-  const toggleProject = (key: string) => setExpandedProjects((p) => ({ ...p, [key]: !p[key] }));
-  const togglePiece = (key: string) => setExpandedPieces((p) => ({ ...p, [key]: !p[key] }));
+  const autoExpandTree = Boolean(project || client || piece);
+
+  const autoExpandedKeys = useMemo(() => {
+    const clients = new Set<string>();
+    const projects = new Set<string>();
+    const pieces = new Set<string>();
+
+    if (!autoExpandTree) return { clients, projects, pieces };
+
+    for (const clientNode of tree) {
+      clients.add(clientNode.key);
+      for (const projectNode of clientNode.projects) {
+        projects.add(projectNode.key);
+        for (const pieceNode of projectNode.pieces) pieces.add(pieceNode.key);
+      }
+    }
+
+    return { clients, projects, pieces };
+  }, [autoExpandTree, tree]);
+
+  const toggleClient = (key: string) => {
+    if (autoExpandTree) return;
+    setExpandedClients((p) => ({ ...p, [key]: !p[key] }));
+  };
+  const toggleProject = (key: string) => {
+    if (autoExpandTree) return;
+    setExpandedProjects((p) => ({ ...p, [key]: !p[key] }));
+  };
+  const togglePiece = (key: string) => {
+    if (autoExpandTree) return;
+    setExpandedPieces((p) => ({ ...p, [key]: !p[key] }));
+  };
 
   return (
     <div style={{ flex: 1, padding: 24, overflowY: 'auto', minWidth: 0, width: '100%' }}>
@@ -792,148 +821,157 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
           <div style={{ padding: '28px 6px', color: theme.bodyText }}>Aucun document.</div>
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
-            {tree.map((c) => (
-              <div key={c.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 14, overflow: 'hidden', background: theme.softBg }}>
-                <button
-                  onClick={() => toggleClient(c.key)}
-                  style={{
-                    width: '100%',
-                    textAlign: 'left',
-                    background: theme.subCardBg,
-                    border: 'none',
-                    color: theme.pageTitle,
-                    cursor: 'pointer',
-                    padding: '12px 14px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 12,
-                    fontWeight: 900,
-                  }}
-                  title="Afficher/masquer"
-                  {...expandedAria(Boolean(expandedClients[c.key]))}
-                >
+            {tree.map((c) => {
+              const clientExpanded = autoExpandTree ? autoExpandedKeys.clients.has(c.key) : Boolean(expandedClients[c.key]);
+
+              return (
+                <div key={c.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 14, overflow: 'hidden', background: theme.softBg }}>
+                  <button
+                    onClick={() => toggleClient(c.key)}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      background: theme.subCardBg,
+                      border: 'none',
+                      color: theme.pageTitle,
+                      cursor: autoExpandTree ? 'default' : 'pointer',
+                      padding: '12px 14px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 12,
+                      fontWeight: 900,
+                    }}
+                    title="Afficher/masquer"
+                    {...expandedAria(clientExpanded)}
+                  >
                   <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                    {expandedClients[c.key] ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
+                    {clientExpanded ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</span>
                   </span>
                   <span style={{ color: theme.label, fontSize: 12, fontWeight: 800 }}>{c.count} fichier(s)</span>
-                </button>
+                  </button>
 
-                {expandedClients[c.key] && (
-                  <div style={{ padding: 12, display: 'grid', gap: 10 }}>
-                    {c.projects.map((p) => (
-                      <div key={p.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 12, overflow: 'hidden', marginLeft: 12, background: theme.softBg }}>
-                        <button
-                          onClick={() => toggleProject(p.key)}
-                          style={{
-                            width: '100%',
-                            textAlign: 'left',
-                            background: theme.nestedBg,
-                            border: 'none',
-                            color: theme.strongText,
-                            cursor: 'pointer',
-                            padding: '10px 12px',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            gap: 12,
-                            fontWeight: 800,
-                          }}
-                          title="Afficher/masquer"
-                          {...expandedAria(Boolean(expandedProjects[p.key]))}
-                        >
+                  {clientExpanded && (
+                    <div style={{ padding: 12, display: 'grid', gap: 10 }}>
+                      {c.projects.map((p) => {
+                        const projectExpanded = autoExpandTree ? autoExpandedKeys.projects.has(p.key) : Boolean(expandedProjects[p.key]);
+
+                        return (
+                          <div key={p.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 12, overflow: 'hidden', marginLeft: 12, background: theme.softBg }}>
+                            <button
+                              onClick={() => toggleProject(p.key)}
+                              style={{
+                                width: '100%',
+                                textAlign: 'left',
+                                background: theme.nestedBg,
+                                border: 'none',
+                                color: theme.strongText,
+                                cursor: autoExpandTree ? 'default' : 'pointer',
+                                padding: '10px 12px',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: 12,
+                                fontWeight: 800,
+                              }}
+                              title="Afficher/masquer"
+                              {...expandedAria(projectExpanded)}
+                            >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                            {expandedProjects[p.key] ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
+                            {projectExpanded ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.label}</span>
                           </span>
                           <span style={{ color: theme.label, fontSize: 12, fontWeight: 800 }}>{p.count}</span>
-                        </button>
+                            </button>
 
-                        {expandedProjects[p.key] && (
-                          <div style={{ padding: 10, display: 'grid', gap: 10 }}>
-                            {p.pieces.map((pi) => (
-                              <div key={pi.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 12, overflow: 'hidden', marginLeft: 12, background: theme.softBg }}>
-                                <div
-                                  style={{
-                                    width: '100%',
-                                    background: theme.softBg,
-                                    color: theme.strongText,
-                                    padding: '10px 12px',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    gap: 12,
-                                  }}
-                                >
-                                  <button
-                                    onClick={() => togglePiece(pi.key)}
-                                    style={{
-                                      flex: 1,
-                                      minWidth: 0,
-                                      textAlign: 'left',
-                                      background: 'transparent',
-                                      border: 'none',
-                                      color: theme.strongText,
-                                      cursor: 'pointer',
-                                      padding: 0,
-                                      display: 'flex',
-                                      justifyContent: 'space-between',
-                                      alignItems: 'center',
-                                      gap: 12,
-                                      fontWeight: 800,
-                                    }}
-                                    title="Afficher/masquer"
-                                    {...expandedAria(Boolean(expandedPieces[pi.key]))}
-                                  >
+                            {projectExpanded && (
+                              <div style={{ padding: 10, display: 'grid', gap: 10 }}>
+                                {p.pieces.map((pi) => {
+                                  const pieceExpanded = autoExpandTree ? autoExpandedKeys.pieces.has(pi.key) : Boolean(expandedPieces[pi.key]);
+
+                                  return (
+                                    <div key={pi.key} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 12, overflow: 'hidden', marginLeft: 12, background: theme.softBg }}>
+                                      <div
+                                        style={{
+                                          width: '100%',
+                                          background: theme.softBg,
+                                          color: theme.strongText,
+                                          padding: '10px 12px',
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center',
+                                          gap: 12,
+                                        }}
+                                      >
+                                        <button
+                                          onClick={() => togglePiece(pi.key)}
+                                          style={{
+                                            flex: 1,
+                                            minWidth: 0,
+                                            textAlign: 'left',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            color: theme.strongText,
+                                            cursor: autoExpandTree ? 'default' : 'pointer',
+                                            padding: 0,
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            gap: 12,
+                                            fontWeight: 800,
+                                          }}
+                                          title="Afficher/masquer"
+                                          {...expandedAria(pieceExpanded)}
+                                        >
                                     <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                      {expandedPieces[pi.key] ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
+                                      {pieceExpanded ? <ChevronDown size={16} color={theme.label} /> : <ChevronRight size={16} color={theme.label} />}
                                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pi.label}</span>
                                     </span>
                                     <span style={{ color: theme.label, fontSize: 12, fontWeight: 800 }}>{pi.docs.length}</span>
-                                  </button>
-                                  {showAddPieceActions && onAddPieceFromDossier && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onAddPieceFromDossier({
-                                        clientLabel: c.label,
-                                        projectLabel: p.label,
-                                        pieceLabel: pi.label,
-                                        docs: pi.docs,
-                                        sourceDoc: pi.docs[0] || null,
-                                      })}
-                                      style={{
-                                        flexShrink: 0,
-                                        padding: '8px 12px',
-                                        borderRadius: 10,
-                                        border: `1px solid ${theme.actionBorder}`,
-                                        background: theme.actionBg,
-                                        color: theme.actionText,
-                                        cursor: 'pointer',
-                                        fontSize: 12,
-                                        fontWeight: 800,
-                                        boxShadow: theme.blueShadow,
-                                      }}
-                                      title={`Ajouter une piece pour ${pi.label}`}
-                                    >
-                                      Ajouter piece
-                                    </button>
-                                  )}
-                                </div>
+                                        </button>
+                                        {showAddPieceActions && onAddPieceFromDossier && (
+                                          <button
+                                            type="button"
+                                            onClick={() => onAddPieceFromDossier({
+                                              clientLabel: c.label,
+                                              projectLabel: p.label,
+                                              pieceLabel: pi.label,
+                                              docs: pi.docs,
+                                              sourceDoc: pi.docs[0] || null,
+                                            })}
+                                            style={{
+                                              flexShrink: 0,
+                                              padding: '8px 12px',
+                                              borderRadius: 10,
+                                              border: `1px solid ${theme.actionBorder}`,
+                                              background: theme.actionBg,
+                                              color: theme.actionText,
+                                              cursor: 'pointer',
+                                              fontSize: 12,
+                                              fontWeight: 800,
+                                              boxShadow: theme.blueShadow,
+                                            }}
+                                            title={`Ajouter une piece pour ${pi.label}`}
+                                          >
+                                            Ajouter piece
+                                          </button>
+                                        )}
+                                      </div>
 
-                                {expandedPieces[pi.key] && (
-                                  <div
-                                    style={{
-                                      padding: 10,
-                                      display: 'grid',
-                                      gap: 12,
-                                      gridTemplateColumns: viewMode === 'icons'
-                                        ? 'repeat(auto-fill, minmax(220px, 1fr))'
-                                        : '1fr',
-                                      alignItems: 'stretch',
-                                    }}
-                                  >
-                                    {pi.docs.map((doc) => {
+                                      {pieceExpanded && (
+                                        <div
+                                          style={{
+                                            padding: 10,
+                                            display: 'grid',
+                                            gap: 12,
+                                            gridTemplateColumns: viewMode === 'icons'
+                                              ? 'repeat(auto-fill, minmax(220px, 1fr))'
+                                              : '1fr',
+                                            alignItems: 'stretch',
+                                          }}
+                                        >
+                                          {pi.docs.map((doc) => {
                                       const badge = getFileBadge(doc);
                                       const visual = getFileVisualMeta(doc);
                                       const VisualIcon = visual.icon;
@@ -1144,19 +1182,22 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
                                         </div>
                                       </div>
                                       );
-                                    })}
-                                  </div>
-                                )}
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
-                            ))}
+                            )}
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
