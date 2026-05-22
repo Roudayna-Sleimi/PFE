@@ -338,25 +338,56 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
     boxShadow: darkMode ? 'none' : 'none',
   }), [darkMode, theme]);
 
+  const requestDocuments = useCallback(async (signal?: AbortSignal) => {
+    const res = await fetch(`${API}/dossiers`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal,
+    });
+    const data = await readJsonMaybe(res);
+    if (!res.ok) throw new Error(data.message || 'Impossible de charger les documents');
+    return Array.isArray(data) ? data : [];
+  }, [token]);
+
   const fetchDocuments = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
 
-      const res = await fetch(`${API}/dossiers`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await readJsonMaybe(res);
-      if (!res.ok) throw new Error(data.message || 'Impossible de charger les documents');
-      setDocuments(Array.isArray(data) ? data : []);
+      const nextDocuments = await requestDocuments();
+      setDocuments(nextDocuments);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur de chargement');
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [requestDocuments]);
 
   useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const loadInitialDocuments = async () => {
+      try {
+        const nextDocuments = await requestDocuments(controller.signal);
+        if (cancelled) return;
+        setDocuments(nextDocuments);
+        setError('');
+      } catch (e) {
+        if (cancelled) return;
+        const aborted = e instanceof Error && e.name === 'AbortError';
+        if (!aborted) setError(e instanceof Error ? e.message : 'Erreur de chargement');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadInitialDocuments();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [requestDocuments]);
 
   const handleRescan = useCallback(async () => {
     if (!isAdmin || rescanBusy) return;
@@ -384,9 +415,12 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
 
   const projectOptions = useMemo(() => {
     const names = new Set<string>();
-    for (const doc of documents) names.add(getProjectLabel(doc));
+    for (const doc of documents) {
+      if (client && getClientLabel(doc) !== client) continue;
+      names.add(getProjectLabel(doc));
+    }
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [documents]);
+  }, [documents, client]);
 
   const clientOptions = useMemo(() => {
     const names = new Set<string>();
@@ -620,7 +654,6 @@ const DossierPage: React.FC<DossierPageProps> = ({ showAddPieceActions = false, 
               value={project}
               onChange={(e) => {
                 setProject(e.target.value);
-                setClient('');
                 setPiece('');
               }}
               style={inputStyle}
